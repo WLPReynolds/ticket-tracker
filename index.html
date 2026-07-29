@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>8-Day Ticket</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#14161f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="8-Day Ticket">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  @font-face {
+    font-family: 'DSDigital';
+  }
+  :root{
+    --board: #14161f;
+    --board-2: #1c1f2c;
+    --tile: #23273a;
+    --tile-punched: #f2a93b;
+    --tile-punched-2: #ffcf7a;
+    --ink: #e9e6da;
+    --ink-dim: #9a9db0;
+    --amber: #f2a93b;
+    --amber-dim: #8a6a30;
+    --line: #33384d;
+    --danger: #e05a4e;
+    --good: #6fbf8a;
+  }
+  *{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background: var(--board);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    min-height:100vh;
+    padding-bottom: 40px;
+  }
+  .mono{
+    font-family: 'Courier New', 'Space Mono', monospace;
+  }
+  header.top{
+    padding: 22px 20px 14px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--board-2), var(--board));
+  }
+  .eyebrow{
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--amber);
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  h1{
+    font-size: 22px;
+    margin: 0;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+  }
+  .today-date{
+    color: var(--ink-dim);
+    font-size: 14px;
+    margin-top: 2px;
+  }
+
+  .board-card{
+    margin: 18px 16px 0;
+    background: var(--board-2);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px 18px 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .board-card::before{
+    content:"";
+    position:absolute; top:0; left:0; right:0; height:3px;
+    background: repeating-linear-gradient(90deg, var(--amber-dim) 0 10px, transparent 10px 20px);
+    opacity: 0.6;
+  }
+
+  .flip-row{
+    display:flex;
+    justify-content:center;
+    align-items: baseline;
+    gap: 10px;
+    margin: 6px 0 18px;
+  }
+  .flip-tile{
+    width: 74px;
+    height: 96px;
+    background: linear-gradient(180deg, #2c3146, #1c1f2c);
+    border-radius: 8px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size: 54px;
+    font-weight: 800;
+    color: var(--amber);
+    box-shadow: inset 0 0 0 1px var(--line), 0 6px 14px rgba(0,0,0,0.4);
+    position: relative;
+  }
+  .flip-tile::after{
+    content:"";
+    position:absolute; left:0; right:0; top:50%;
+    height:1px;
+    background: rgba(0,0,0,0.5);
+  }
+  .flip-sep{
+    font-size: 40px;
+    color: var(--ink-dim);
+    font-weight: 300;
+  }
+  .flip-of8{
+    display:flex; flex-direction:column; align-items:center;
+  }
+  .flip-of8 .num{
+    font-size: 40px;
+    font-weight: 300;
+    color: var(--ink-dim);
+  }
+  .flip-of8 .label{
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+  }
+
+  .punch-row{
+    display:flex;
+    justify-content:center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .punch{
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 2px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 11px;
+    color: var(--ink-dim);
+    font-weight: 700;
+    transition: all 0.2s;
+  }
+  .punch.done{
+    background: var(--amber);
+    border-color: var(--amber);
+    color: #14161f;
+  }
+  .punch.today-marker{
+    box-shadow: 0 0 0 3px rgba(242,169,59,0.35);
+  }
+
+  .day-progress-label{
+    text-align:center;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin-bottom: 6px;
+  }
+  .day-progress-track{
+    height: 5px;
+    background: var(--tile);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 4px;
+  }
+  .day-progress-fill{
+    height: 100%;
+    background: linear-gradient(90deg, var(--amber-dim), var(--amber));
+  }
+
+  .status-banner{
+    margin-top: 16px;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 14px;
+    font-weight: 700;
+    text-align: center;
+    letter-spacing: 0.3px;
+  }
+  .status-banner.renew{
+    background: rgba(224,90,78,0.15);
+    color: #ff8b7e;
+    border: 1px solid rgba(224,90,78,0.4);
+  }
+  .status-banner.ok{
+    background: rgba(111,191,138,0.12);
+    color: var(--good);
+    border: 1px solid rgba(111,191,138,0.3);
+  }
+  .status-banner.skip{
+    background: rgba(154,157,176,0.1);
+    color: var(--ink-dim);
+    border: 1px solid var(--line);
+  }
+
+  .section-label{
+    margin: 26px 16px 10px;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    font-weight: 700;
+  }
+
+  .holiday-card{
+    margin: 18px 16px 0;
+    background: linear-gradient(135deg, #2a3b4a, #1c2a35);
+    border: 1px solid #3a5468;
+    border-radius: 14px;
+    padding: 16px 18px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .holiday-count{
+    font-size: 36px;
+    font-weight: 800;
+    color: #7fc9e8;
+    font-family: 'Courier New', monospace;
+    min-width: 50px;
+  }
+  .holiday-label{
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--ink-dim);
+    font-weight: 700;
+  }
+  .holiday-date{
+    font-size: 14px;
+    color: var(--ink);
+    margin-top: 2px;
+  }
+
+  .comment-card{
+    margin: 0 16px;
+    background: var(--board-2);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+  }
+  .chip-row{
+    display:flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .chip{
+    padding: 7px 13px;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    background: var(--tile);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 600;
+    cursor:pointer;
+    user-select:none;
+  }
+  .chip.active{
+    background: var(--amber);
+    color: #14161f;
+    border-color: var(--amber);
+  }
+  input[type=text]{
+    width: 100%;
+    background: var(--tile);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    margin-top: 4px;
+  }
+  input[type=text]::placeholder{ color: var(--ink-dim); }
+  input[type=date]{
+    width: 100%;
+    background: var(--tile);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    color-scheme: dark;
+  }
+
+  .day-list{
+    margin: 0 16px;
+    background: var(--board-2);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .day-row{
+    display:flex;
+    align-items:center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+  }
+  .day-row:last-child{ border-bottom:none; }
+  .day-row.is-today{
+    background: rgba(242,169,59,0.07);
+  }
+  .day-row .count-badge{
+    width: 30px; height:30px;
+    border-radius: 7px;
+    background: var(--tile);
+    display:flex; align-items:center; justify-content:center;
+    font-weight: 800;
+    font-size: 14px;
+    color: var(--ink-dim);
+    flex-shrink:0;
+  }
+  .day-row .count-badge.eight{
+    background: var(--amber);
+    color: #14161f;
+  }
+  .day-row .count-badge.weekend{
+    opacity: 0.4;
+  }
+  .day-row .info{ flex:1; min-width:0; }
+  .day-row .dname{
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .day-row .dname .sub{
+    font-weight: 400;
+    color: var(--ink-dim);
+    font-size: 12px;
+    margin-left: 6px;
+  }
+  .day-row .comment-tag{
+    font-size: 12px;
+    color: var(--amber);
+    margin-top: 2px;
+  }
+  .day-row .arrow{
+    color: var(--ink-dim);
+    font-size: 18px;
+  }
+
+  .save-btn{
+    width:100%;
+    margin-top: 10px;
+    background: var(--amber);
+    color: #14161f;
+    border:none;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 800;
+    cursor:pointer;
+  }
+  .save-btn:active{ transform: scale(0.98); }
+
+  .settings-link{
+    text-align:center;
+    margin-top: 24px;
+    font-size: 12px;
+    color: var(--ink-dim);
+    text-decoration: underline;
+    cursor:pointer;
+  }
+
+  .modal-overlay{
+    position: fixed; inset:0;
+    background: rgba(0,0,0,0.6);
+    display:flex; align-items:flex-end;
+    z-index: 50;
+  }
+  .modal{
+    background: var(--board-2);
+    width:100%;
+    border-radius: 16px 16px 0 0;
+    padding: 20px 18px 28px;
+    border-top: 1px solid var(--line);
+  }
+  .modal h3{ margin:0 0 4px; font-size:16px; }
+  .modal .sub{ color: var(--ink-dim); font-size:13px; margin-bottom:14px; }
+  .modal-close{
+    text-align:center;
+    margin-top: 14px;
+    color: var(--ink-dim);
+    font-size: 13px;
+    cursor:pointer;
+  }
+  .loading{
+    text-align:center;
+    padding: 60px 20px;
+    color: var(--ink-dim);
+  }
+</style>
+</head>
+<body>
+<div id="app" class="loading">Loading your ticket…</div>
+
+<script>
+const PRESET_TAGS = ['WFH', 'HOLIDAY', 'HOSPITAL', 'BEREAVEMENT'];
+
+// Optional one-off import of past comments, e.g. from an old spreadsheet.
+// Left empty here deliberately — this file is public. See import-seed-data.js
+// (kept out of the GitHub repo) for how to load personal history in privately.
+const SEED_COMMENTS = {};
+
+function fmtKey(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function parseKey(k){
+  const [y,m,d] = k.split('-').map(Number);
+  return new Date(y, m-1, d);
+}
+function isWeekend(d){
+  const wd = d.getDay(); // 0 Sun, 6 Sat
+  return wd === 0 || wd === 6;
+}
+function addDays(d, n){
+  const nd = new Date(d);
+  nd.setDate(nd.getDate()+n);
+  return nd;
+}
+function dayNameShort(d){
+  return d.toLocaleDateString('en-GB', { weekday: 'short' });
+}
+function dateLabel(d){
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+function dateLabelShort(d){
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+const PERIOD_LENGTH = 28; // ticket valid for 28 calendar days
+const USES_PER_PERIOD = 8; // 8 day-passes within that window
+const DEFAULT_PERIOD_START = '2026-07-29'; // ticket bought tonight, starts tomorrow
+
+let comments = {}; // dateKey -> comment string
+let periodStart = DEFAULT_PERIOD_START; // date the current ticket window began
+let loaded = false;
+
+async function loadData(){
+  try{
+    const c = localStorage.getItem('ticket-comments');
+    comments = c ? JSON.parse(c) : {};
+  }catch(e){ comments = {}; }
+  try{
+    const p = localStorage.getItem('ticket-period-start');
+    periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
+  }catch(e){ periodStart = DEFAULT_PERIOD_START; }
+
+  // One-time import of the comments from the original spreadsheet.
+  // Only fills in dates that don't already have a comment, and only runs once.
+  let alreadySeeded = false;
+  try{
+    const s = localStorage.getItem('ticket-seed-imported');
+    alreadySeeded = !!(s && JSON.parse(s));
+  }catch(e){ alreadySeeded = false; /* key not found yet — expected on first run */ }
+
+  if (!alreadySeeded){
+    let changed = false;
+    for (const key in SEED_COMMENTS){
+      if (!comments[key]){
+        comments[key] = SEED_COMMENTS[key];
+        changed = true;
+      }
+    }
+    if (changed) await saveComments();
+    try{ localStorage.setItem('ticket-seed-imported', JSON.stringify(true)); }catch(e){}
+  }
+
+  loaded = true;
+}
+
+async function saveComments(){
+  try{ localStorage.setItem('ticket-comments', JSON.stringify(comments)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function savePeriodStart(){
+  try{ localStorage.setItem('ticket-period-start', JSON.stringify(periodStart)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+
+// Find the first date after 'afterDate' (exclusive) that actually needs a ticket
+// (a weekday with no comment). Capped to avoid runaway loops.
+function findNextTravelDay(afterDate){
+  let d = addDays(afterDate, 1);
+  let guard = 0;
+  while (guard < 400){
+    if (!isWeekend(d) && (comments[fmtKey(d)] || '').trim() === ''){
+      return d;
+    }
+    d = addDays(d, 1);
+    guard++;
+  }
+  return d;
+}
+
+// Compute per-day state from periodStart up to targetDate inclusive.
+// Ticket periods run up to 28 calendar days OR 8 used days, whichever comes first.
+// Once a period ends, the next one doesn't start until the next day actually
+// needed (skipping weekends/comment days) — you buy the ticket the day before
+// you next need it, not automatically the day after the old one runs out.
+// Returns a map dateKey -> { usedCount, daysElapsed, periodEnded, lostDays,
+//   unusedRemaining, inGap, buyFlag }
+function computeStates(targetDate){
+  const map = {};
+  let segStart = parseKey(periodStart);
+  if (fmtKey(segStart) > fmtKey(targetDate)) return map; // nothing to show yet
+
+  while (fmtKey(segStart) <= fmtKey(targetDate)){
+    let cursor = new Date(segStart);
+    let usedCount = 0;
+    let daysElapsed = 0;
+    let periodEndDate = null;
+    let finalLostDays = false;
+    let finalUnusedRemaining = 0;
+
+    while (true){
+      const key = fmtKey(cursor);
+      daysElapsed += 1;
+      const weekend = isWeekend(cursor);
+      const comment = (comments[key] || '').trim();
+      if (!weekend && comment === ''){
+        usedCount += 1;
+      }
+      const hitUses = usedCount >= USES_PER_PERIOD;
+      const hitDays = daysElapsed >= PERIOD_LENGTH;
+      const periodEnded = hitUses || hitDays;
+      const lostDays = hitDays && !hitUses;
+
+      if (fmtKey(cursor) <= fmtKey(targetDate)){
+        map[key] = {
+          usedCount, daysElapsed, periodEnded, lostDays,
+          unusedRemaining: USES_PER_PERIOD - usedCount,
+          inGap: false, buyFlag: false
+        };
+      }
+
+      if (periodEnded){
+        periodEndDate = new Date(cursor);
+        finalLostDays = lostDays;
+        finalUnusedRemaining = USES_PER_PERIOD - usedCount;
+        break;
+      }
+      if (fmtKey(cursor) >= fmtKey(targetDate)){
+        periodEndDate = null; // period still ongoing beyond our range — nothing more to compute
+        break;
+      }
+      cursor = addDays(cursor, 1);
+    }
+
+    if (!periodEndDate) break;
+
+    const nextTravel = findNextTravelDay(periodEndDate);
+    const buyFlagDate = addDays(nextTravel, -1);
+
+    // mark any days between the old period ending and the next ticket starting
+    // as "gap" days — no active ticket needed
+    let gcursor = addDays(periodEndDate, 1);
+    while (fmtKey(gcursor) < fmtKey(nextTravel) && fmtKey(gcursor) <= fmtKey(targetDate)){
+      const key = fmtKey(gcursor);
+      map[key] = Object.assign({usedCount: 0, daysElapsed: 0, periodEnded: false, lostDays: false, unusedRemaining: 0}, map[key], {inGap: true});
+      gcursor = addDays(gcursor, 1);
+    }
+
+    // flag the day before the next real travel day as the day to buy the ticket
+    if (fmtKey(buyFlagDate) <= fmtKey(targetDate)){
+      const bKey = fmtKey(buyFlagDate);
+      map[bKey] = Object.assign({usedCount: 0, daysElapsed: 0, periodEnded: false, inGap: (fmtKey(buyFlagDate) > fmtKey(periodEndDate))}, map[bKey], {
+        buyFlag: true,
+        lostDays: finalLostDays,
+        unusedRemaining: finalUnusedRemaining
+      });
+    }
+
+    segStart = nextTravel;
+  }
+  return map;
+}
+
+function getRange(centerDate, before, after){
+  const days = [];
+  for (let i=-before; i<=after; i++){
+    days.push(addDays(centerDate, i));
+  }
+  return days;
+}
+
+let state = {
+  today: new Date(),
+  editingKey: null,
+  showRecalibrate: false,
+  daysAhead: 13,
+};
+const MAX_DAYS_AHEAD = 120;
+const DAYS_AHEAD_STEP = 14;
+
+function findNextHoliday(todayKey){
+  let best = null;
+  for (const key in comments){
+    if (key <= todayKey) continue;
+    if ((comments[key] || '').trim().toUpperCase() === 'HOLIDAY'){
+      if (!best || key < best) best = key;
+    }
+  }
+  return best;
+}
+
+function render(){
+  const app = document.getElementById('app');
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const todayKey = fmtKey(today);
+  const rangeEnd = addDays(today, state.daysAhead);
+  const states = computeStates(rangeEnd);
+  const todayState = states[todayKey];
+  const todayComment = (comments[todayKey] || '').trim();
+  const todayIsWeekend = isWeekend(today);
+  const beforePeriod = !todayState;
+
+  const nextHolidayKey = findNextHoliday(todayKey);
+  let holidayHtml = '';
+  if (nextHolidayKey){
+    const hDate = parseKey(nextHolidayKey);
+    const daysUntil = Math.round((hDate - today) / 86400000);
+    holidayHtml = `
+      <div class="holiday-card">
+        <div class="holiday-count">${daysUntil}</div>
+        <div class="holiday-info">
+          <div class="holiday-label">Day${daysUntil===1?'':'s'} until your next holiday</div>
+          <div class="holiday-date">${dateLabel(hDate)}</div>
+        </div>
+      </div>`;
+  }
+
+  let statusHtml = '';
+  if (beforePeriod){
+    statusHtml = `<div class="status-banner skip">This ticket starts ${dateLabel(parseKey(periodStart))}</div>`;
+  } else if (todayState.buyFlag){
+    const lostMsg = todayState.lostDays ? ` (${todayState.unusedRemaining} unused day${todayState.unusedRemaining===1?'':'s'} lost)` : '';
+    statusHtml = `<div class="status-banner renew">🚆 Buy your ticket tonight for tomorrow${lostMsg}</div>`;
+  } else if (todayState.inGap){
+    statusHtml = `<div class="status-banner skip">No ticket needed yet — nothing due until you next travel</div>`;
+  } else if (todayIsWeekend){
+    statusHtml = `<div class="status-banner skip">Weekend — no ticket needed &middot; day ${todayState.daysElapsed} of 28</div>`;
+  } else if (todayComment !== ''){
+    statusHtml = `<div class="status-banner skip">Marked "${escapeHtml(todayComment)}" — not counted &middot; day ${todayState.daysElapsed} of 28</div>`;
+  } else {
+    statusHtml = `<div class="status-banner ok">${todayState.unusedRemaining} use${todayState.unusedRemaining===1?'':'s'} left &middot; day ${todayState.daysElapsed} of 28</div>`;
+  }
+
+  const todayCountDisplay = (beforePeriod || todayState.inGap) ? '–' : String(todayState.usedCount);
+  const punches = [];
+  for (let i=1;i<=8;i++){
+    punches.push(!beforePeriod && !todayState.inGap && i <= todayState.usedCount);
+  }
+  const dayProgressPct = (beforePeriod || todayState.inGap) ? 0 : Math.round((todayState.daysElapsed / PERIOD_LENGTH) * 100);
+
+  const days = getRange(today, 3, state.daysAhead);
+  const rows = days.map(d => {
+    const key = fmtKey(d);
+    const s = states[key];
+    const weekend = isWeekend(d);
+    const comment = (comments[key] || '').trim();
+    const isToday = key === todayKey;
+    if (!s){
+      return `
+        <div class="day-row" data-key="${key}">
+          <div class="count-badge">–</div>
+          <div class="info">
+            <div class="dname">${dayNameShort(d)} ${dateLabelShort(d)}</div>
+            <div class="comment-tag" style="color:var(--ink-dim)">Before this ticket</div>
+          </div>
+          <div class="arrow">›</div>
+        </div>`;
+    }
+    const badgeClass = s.buyFlag ? 'eight' : ((weekend || s.inGap) ? 'weekend' : '');
+    const badgeText = (weekend || s.inGap) ? '–' : s.usedCount;
+    let tag = '';
+    if (comment && s.buyFlag) tag = `${escapeHtml(comment)} · Buy ticket${s.lostDays ? ` · ${s.unusedRemaining} lost` : ''}`;
+    else if (comment) tag = escapeHtml(comment);
+    else if (s.buyFlag) tag = s.lostDays ? `Buy ticket · ${s.unusedRemaining} lost` : 'Buy ticket';
+    else if (weekend) tag = 'Weekend';
+    return `
+      <div class="day-row ${isToday?'is-today':''}" data-key="${key}">
+        <div class="count-badge ${badgeClass}">${badgeText}</div>
+        <div class="info">
+          <div class="dname">${dayNameShort(d)} ${dateLabelShort(d)} ${isToday?'<span class="sub">Today</span>':''}</div>
+          ${tag ? `<div class="comment-tag">${tag}</div>` : ''}
+        </div>
+        <div class="arrow">›</div>
+      </div>
+    `;
+  }).join('');
+
+  app.className = '';
+  app.innerHTML = `
+    <header class="top">
+      <div class="eyebrow">Season Ticket Tracker</div>
+      <h1>8-Day Ticket</h1>
+      <div class="today-date">${dateLabel(today)}</div>
+    </header>
+
+    <div class="board-card">
+      <div class="flip-row">
+        <div class="flip-tile">${todayCountDisplay}</div>
+        <div class="flip-of8">
+          <div class="num">/8</div>
+        </div>
+      </div>
+      <div class="punch-row">
+        ${punches.map((p,i)=>`<div class="punch ${p?'done':''}">${i+1}</div>`).join('')}
+      </div>
+      <div class="day-progress-label">Day ${beforePeriod ? 0 : todayState.daysElapsed} of 28</div>
+      <div class="day-progress-track"><div class="day-progress-fill" style="width:${dayProgressPct}%"></div></div>
+      ${statusHtml}
+    </div>
+
+    ${holidayHtml}
+
+    <div class="section-label">Today's comment</div>
+    <div class="comment-card" id="today-comment-card">
+      <div class="chip-row" id="chip-row"></div>
+      <input type="text" id="custom-comment" placeholder="Or type your own (e.g. Dentist)" value="${escapeHtml(todayComment && !PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment : '')}" />
+      <button class="save-btn" id="save-today-btn">Save</button>
+    </div>
+
+    <div class="section-label">Upcoming &amp; recent days</div>
+    <div class="day-list">${rows}</div>
+    ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="settings-link" id="show-more-link">Show more days</div>` : ''}
+
+    <div class="settings-link" id="recalibrate-link">Just bought a new ticket? Set start date</div>
+    <div class="settings-link" id="import-history-link">Import historical data</div>
+  `;
+
+  // wire up chip row for today
+  const chipRow = document.getElementById('chip-row');
+  let selectedPreset = PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment.toUpperCase() : null;
+  chipRow.innerHTML = PRESET_TAGS.map(tag => `<div class="chip ${selectedPreset===tag?'active':''}" data-tag="${tag}">${tag}</div>`).join('') +
+    `<div class="chip ${!selectedPreset && !todayComment ? '' : (!selectedPreset && todayComment ? '' : '')}" data-tag="__clear">Clear</div>`;
+
+  chipRow.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const tag = chip.dataset.tag;
+      if (tag === '__clear'){
+        comments[todayKey] = '';
+      } else {
+        comments[todayKey] = tag;
+        document.getElementById('custom-comment').value = '';
+      }
+      saveComments().then(render);
+    });
+  });
+
+  document.getElementById('save-today-btn').addEventListener('click', () => {
+    const val = document.getElementById('custom-comment').value.trim();
+    if (val !== ''){
+      comments[todayKey] = val;
+      saveComments().then(render);
+    }
+  });
+
+  document.querySelectorAll('.day-row').forEach(row => {
+    row.addEventListener('click', () => openDayEditor(row.dataset.key));
+  });
+
+  document.getElementById('recalibrate-link').addEventListener('click', openRecalibrate);
+  document.getElementById('import-history-link').addEventListener('click', openImportHistory);
+
+  const showMoreBtn = document.getElementById('show-more-link');
+  if (showMoreBtn){
+    showMoreBtn.addEventListener('click', () => {
+      state.daysAhead = Math.min(state.daysAhead + DAYS_AHEAD_STEP, MAX_DAYS_AHEAD);
+      render();
+    });
+  }
+}
+
+function escapeHtml(s){
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function openDayEditor(key){
+  const d = parseKey(key);
+  const weekend = isWeekend(d);
+  const current = comments[key] || '';
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${dateLabel(d)}</h3>
+      <div class="sub">${weekend ? 'Weekend day — always skipped' : 'Add a reason this day doesn\'t count (or leave blank for a normal travel day)'}</div>
+      <div class="chip-row" id="modal-chip-row">
+        ${PRESET_TAGS.map(tag => `<div class="chip ${current.toUpperCase()===tag?'active':''}" data-tag="${tag}">${tag}</div>`).join('')}
+        <div class="chip" data-tag="__clear">Clear</div>
+      </div>
+      <input type="text" id="modal-custom-comment" placeholder="Or type your own" value="${escapeHtml(current && !PRESET_TAGS.includes(current.toUpperCase()) ? current : '')}" />
+      <button class="save-btn" id="modal-save-btn">Save</button>
+      <div class="modal-close" id="modal-close-btn">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelectorAll('#modal-chip-row .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const tag = chip.dataset.tag;
+      if (tag === '__clear'){
+        comments[key] = '';
+      } else {
+        comments[key] = tag;
+        document.getElementById('modal-custom-comment').value = '';
+      }
+      saveComments().then(() => { document.body.removeChild(overlay); render(); });
+    });
+  });
+  document.getElementById('modal-save-btn').addEventListener('click', () => {
+    const val = document.getElementById('modal-custom-comment').value.trim();
+    if (val !== ''){
+      comments[key] = val;
+      saveComments().then(() => { document.body.removeChild(overlay); render(); });
+    } else {
+      document.body.removeChild(overlay);
+    }
+  });
+  document.getElementById('modal-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openRecalibrate(){
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const suggested = fmtKey(addDays(today, 1));
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Set ticket start date</h3>
+      <div class="sub">Every time you buy a new ticket, set the date it starts. Your 8 uses and 28-day window will be tracked fresh from that date.</div>
+      <input type="date" id="period-start-input" value="${suggested}" style="margin-bottom:12px;" />
+      <button class="save-btn" id="period-start-save">Set as new ticket start</button>
+      <div class="modal-close" id="recal-close-btn">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('period-start-save').addEventListener('click', () => {
+    const val = document.getElementById('period-start-input').value;
+    if (val){
+      periodStart = val;
+      savePeriodStart().then(() => { document.body.removeChild(overlay); render(); });
+    }
+  });
+  document.getElementById('recal-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openImportHistory(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Import historical data</h3>
+      <div class="sub">Paste a JSON object of date → comment entries, e.g. from an old spreadsheet export. Existing entries for the same date are kept as-is; only blank dates get filled in.</div>
+      <textarea id="import-textarea" rows="8" style="width:100%; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:'Courier New',monospace; font-size:13px; margin-bottom:12px;" placeholder='{"2025-09-26": "WFH", "2025-11-10": "HOLIDAY"}'></textarea>
+      <div id="import-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;"></div>
+      <button class="save-btn" id="import-save-btn">Import</button>
+      <div class="modal-close" id="import-close-btn">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('import-save-btn').addEventListener('click', async () => {
+    const raw = document.getElementById('import-textarea').value.trim();
+    const status = document.getElementById('import-status');
+    if (!raw){
+      status.textContent = 'Paste some JSON first.';
+      status.style.color = 'var(--danger)';
+      return;
+    }
+    let parsed;
+    try{
+      parsed = JSON.parse(raw);
+    }catch(e){
+      status.textContent = 'That is not valid JSON — check for missing quotes or commas.';
+      status.style.color = 'var(--danger)';
+      return;
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)){
+      status.textContent = 'Expected a JSON object of "YYYY-MM-DD": "comment" pairs.';
+      status.style.color = 'var(--danger)';
+      return;
+    }
+    let added = 0;
+    for (const key in parsed){
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+      if (!comments[key]){
+        comments[key] = String(parsed[key]);
+        added++;
+      }
+    }
+    await saveComments();
+    document.body.removeChild(overlay);
+    render();
+  });
+
+  document.getElementById('import-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+(async function init(){
+  await loadData();
+  render();
+})();
+
+if ('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {
+      /* offline support just won't be available; app still works online */
+    });
+  });
+}
+</script>
+</body>
+</html>
