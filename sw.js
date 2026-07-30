@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ticket-tracker-v1';
+const CACHE_NAME = 'ticket-tracker-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -24,23 +24,25 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Cache-first for app shell assets, falling back to network.
-// Network-first would also work here, but this app has no server API
-// calls at all, so cache-first keeps it fast and fully offline-capable.
+// Network-first for the app's own files: always try to fetch the latest
+// version first, so updates show up the moment you reopen the app with a
+// connection. Only falls back to the last cached copy if the network
+// request fails (i.e. genuinely offline). Cross-origin requests (e.g. the
+// bank holidays API) are left alone below so the app's own fetch logic
+// handles them directly.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return; // let the browser handle it normally
+
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return (
-        cached ||
-        fetch(event.request)
-          .then((response) => {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-            return response;
-          })
-          .catch(() => cached)
-      );
-    })
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
