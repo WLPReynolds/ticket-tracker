@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ticket-tracker-v2';
+const CACHE_NAME = 'ticket-tracker-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -36,8 +36,12 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return; // let the browser handle it normally
 
+  // 'no-store' bypasses the browser's own HTTP disk cache too, not just the
+  // service worker's Cache API — GitHub Pages/its CDN can otherwise serve a
+  // cached response for a short window after a deploy, which looked
+  // identical to a stuck service worker but was actually a separate cache.
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then((response) => {
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
