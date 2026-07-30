@@ -201,6 +201,14 @@
     border: 1px solid var(--line);
   }
 
+  .next-buy-line{
+    margin-top: 8px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    letter-spacing: 0.2px;
+  }
+
   .section-label{
     margin: 26px 16px 10px;
     font-size: 11px;
@@ -752,6 +760,24 @@ function render(){
   }
   const dayProgressPct = (beforePeriod || todayState.inGap) ? 0 : Math.round((todayState.daysElapsed / PERIOD_LENGTH) * 100);
 
+  // Next buy-ticket date, found independently of how far the visible day
+  // list currently scrolls — so it's always accurate even before you've
+  // tapped "Show more days". Not shown if today itself is the buy day,
+  // since the status banner above already covers that case.
+  let nextBuyHtml = '';
+  if (!beforePeriod){
+    const buySearchStates = computeStates(addDays(today, 40));
+    let nextBuyKey = null;
+    for (const key in buySearchStates){
+      if (key >= todayKey && buySearchStates[key].buyFlag){
+        if (!nextBuyKey || key < nextBuyKey) nextBuyKey = key;
+      }
+    }
+    if (nextBuyKey && nextBuyKey !== todayKey){
+      nextBuyHtml = `<div class="next-buy-line">Next ticket due ${dateLabelShort(parseKey(nextBuyKey))}</div>`;
+    }
+  }
+
   const days = getRange(today, 3, state.daysAhead);
   const rows = days.map(d => {
     const key = fmtKey(d);
@@ -811,6 +837,7 @@ function render(){
       <div class="day-progress-label">Day ${beforePeriod ? 0 : todayState.daysElapsed} of 28</div>
       <div class="day-progress-track"><div class="day-progress-fill" style="width:${dayProgressPct}%"></div></div>
       ${statusHtml}
+      ${nextBuyHtml}
     </div>
 
     ${holidayHtml}
