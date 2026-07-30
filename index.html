@@ -44,10 +44,48 @@
     font-family: 'Courier New', 'Space Mono', monospace;
   }
   header.top{
+    position: relative;
     padding: 22px 20px 14px;
     border-bottom: 1px solid var(--line);
     background: linear-gradient(180deg, var(--board-2), var(--board));
   }
+  .menu-btn{
+    position: absolute;
+    top: 18px;
+    right: 16px;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--tile);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: 18px;
+    color: var(--ink);
+    z-index: 20;
+  }
+  .menu-dropdown{
+    position: absolute;
+    top: 60px;
+    right: 16px;
+    background: var(--board-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+    z-index: 30;
+    min-width: 240px;
+    overflow: hidden;
+  }
+  .menu-dropdown .settings-link{
+    margin: 0;
+    padding: 13px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .menu-dropdown .settings-link:last-child{ border-bottom: none; }
   .eyebrow{
     font-size: 11px;
     letter-spacing: 3px;
@@ -459,6 +497,7 @@ let purchases = []; // [{date: 'YYYY-MM-DD', cost: number}, ...] — one entry p
 let lastKnownPrice = 153.60; // prefilled into the recalibrate cost field
 let parkingCost = 6.39; // default daily parking estimate
 let dismissedMonths = {}; // monthKey ('YYYY-MM') -> true, for the monthly estimate card
+let menuOpen = false; // whether the hamburger dropdown is currently open
 let loaded = false;
 
 async function loadData(){
@@ -892,6 +931,14 @@ function render(){
       <div class="eyebrow">Season Ticket Tracker</div>
       <h1>8-Day Ticket</h1>
       <div class="today-date">${dateLabel(today)}</div>
+      <div class="menu-btn" id="menu-btn">&#9776;</div>
+      ${menuOpen ? `
+      <div class="menu-dropdown" id="menu-dropdown">
+        <div class="settings-link" id="recalibrate-link">Just bought a new ticket? Set start date</div>
+        <div class="settings-link" id="import-history-link">Import historical data</div>
+        <div class="settings-link" id="parking-cost-link">Set daily parking cost (currently £${parkingCost.toFixed(2)})</div>
+        ${monthEstimateDismissed ? `<div class="settings-link" id="restore-estimate-link">Show ${payWindowLabel} estimate again</div>` : ''}
+      </div>` : ''}
     </header>
 
     <div class="board-card">
@@ -947,11 +994,6 @@ function render(){
     <div class="section-label">Upcoming &amp; recent days</div>
     <div class="day-list">${rows}</div>
     ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="settings-link" id="show-more-link">Show more days</div>` : ''}
-
-    <div class="settings-link" id="recalibrate-link">Just bought a new ticket? Set start date</div>
-    <div class="settings-link" id="import-history-link">Import historical data</div>
-    <div class="settings-link" id="parking-cost-link">Set daily parking cost (currently £${parkingCost.toFixed(2)})</div>
-    ${monthEstimateDismissed ? `<div class="settings-link" id="restore-estimate-link">Show ${payWindowLabel} estimate again</div>` : ''}
   `;
 
   // wire up chip row for today
@@ -1003,9 +1045,31 @@ function render(){
     row.addEventListener('click', () => openDayEditor(row.dataset.key));
   });
 
-  document.getElementById('recalibrate-link').addEventListener('click', openRecalibrate);
-  document.getElementById('import-history-link').addEventListener('click', openImportHistory);
-  document.getElementById('parking-cost-link').addEventListener('click', openParkingCostEditor);
+  document.getElementById('menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    menuOpen = !menuOpen;
+    render();
+  });
+  if (menuOpen){
+    // close the dropdown if the person taps anywhere outside it
+    setTimeout(() => {
+      document.addEventListener('click', function closeMenu(e){
+        const dropdown = document.getElementById('menu-dropdown');
+        const btn = document.getElementById('menu-btn');
+        if (!dropdown || (!dropdown.contains(e.target) && e.target !== btn)){
+          document.removeEventListener('click', closeMenu);
+          if (menuOpen){ menuOpen = false; render(); }
+        }
+      });
+    }, 0);
+  }
+
+  const recalibrateLink = document.getElementById('recalibrate-link');
+  if (recalibrateLink) recalibrateLink.addEventListener('click', () => { menuOpen = false; openRecalibrate(); });
+  const importHistoryLink = document.getElementById('import-history-link');
+  if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; openImportHistory(); });
+  const parkingCostLink = document.getElementById('parking-cost-link');
+  if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; openParkingCostEditor(); });
 
   const dismissBtn = document.getElementById('month-estimate-dismiss');
   if (dismissBtn){
@@ -1019,6 +1083,7 @@ function render(){
   const restoreLink = document.getElementById('restore-estimate-link');
   if (restoreLink){
     restoreLink.addEventListener('click', async () => {
+      menuOpen = false;
       delete dismissedMonths[estMonthKey];
       await saveDismissedMonths();
       render();
