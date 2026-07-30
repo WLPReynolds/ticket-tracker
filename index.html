@@ -445,6 +445,7 @@ const USES_PER_PERIOD = 8; // 8 day-passes within that window
 const DEFAULT_PERIOD_START = '2026-07-29'; // ticket bought tonight, starts tomorrow
 
 let comments = {}; // dateKey -> comment string
+let travelOverrides = {}; // dateKey -> true, for days with a comment that were still travelled
 let periodStart = DEFAULT_PERIOD_START; // date the current ticket window began
 let loaded = false;
 
@@ -453,6 +454,10 @@ async function loadData(){
     const c = localStorage.getItem('ticket-comments');
     comments = c ? JSON.parse(c) : {};
   }catch(e){ comments = {}; }
+  try{
+    const o = localStorage.getItem('ticket-travel-overrides');
+    travelOverrides = o ? JSON.parse(o) : {};
+  }catch(e){ travelOverrides = {}; }
   try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
@@ -483,6 +488,10 @@ async function loadData(){
 
 async function saveComments(){
   try{ localStorage.setItem('ticket-comments', JSON.stringify(comments)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveTravelOverrides(){
+  try{ localStorage.setItem('ticket-travel-overrides', JSON.stringify(travelOverrides)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePeriodStart(){
@@ -530,7 +539,9 @@ function findNextTravelDay(afterDate){
   let d = addDays(afterDate, 1);
   let guard = 0;
   while (guard < 400){
-    if (!isWeekend(d) && (comments[fmtKey(d)] || '').trim() === ''){
+    const key = fmtKey(d);
+    const isTravel = (comments[key] || '').trim() === '' || travelOverrides[key];
+    if (!isWeekend(d) && isTravel){
       return d;
     }
     d = addDays(d, 1);
@@ -564,7 +575,8 @@ function computeStates(targetDate){
       daysElapsed += 1;
       const weekend = isWeekend(cursor);
       const comment = (comments[key] || '').trim();
-      if (!weekend && comment === ''){
+      const isTravel = comment === '' || travelOverrides[key];
+      if (!weekend && isTravel){
         usedCount += 1;
       }
       const hitUses = usedCount >= USES_PER_PERIOD;
@@ -704,10 +716,11 @@ function render(){
     statusHtml = `<div class="status-banner skip">No ticket needed yet — nothing due until you next travel</div>`;
   } else if (todayIsWeekend){
     statusHtml = `<div class="status-banner skip">Weekend — no ticket needed &middot; day ${todayState.daysElapsed} of 28</div>`;
-  } else if (todayComment !== ''){
+  } else if (todayComment !== '' && !travelOverrides[todayKey]){
     statusHtml = `<div class="status-banner skip">Marked "${escapeHtml(todayComment)}" — not counted &middot; day ${todayState.daysElapsed} of 28</div>`;
   } else {
-    statusHtml = `<div class="status-banner ok">${todayState.unusedRemaining} use${todayState.unusedRemaining===1?'':'s'} left &middot; day ${todayState.daysElapsed} of 28</div>`;
+    const overrideNote = (todayComment !== '' && travelOverrides[todayKey]) ? ` &middot; marked "${escapeHtml(todayComment)}" but counted` : '';
+    statusHtml = `<div class="status-banner ok">${todayState.unusedRemaining} use${todayState.unusedRemaining===1?'':'s'} left &middot; day ${todayState.daysElapsed} of 28${overrideNote}</div>`;
   }
 
   const todayCountDisplay = (beforePeriod || todayState.inGap) ? '–' : String(todayState.usedCount);
@@ -738,8 +751,9 @@ function render(){
     const badgeClass = s.buyFlag ? 'eight' : ((weekend || s.inGap) ? 'weekend' : '');
     const badgeText = (weekend || s.inGap) ? '–' : s.usedCount;
     let tag = '';
-    if (comment && s.buyFlag) tag = `${escapeHtml(comment)} · Buy ticket${s.lostDays ? ` · ${s.unusedRemaining} lost` : ''}`;
-    else if (comment) tag = escapeHtml(comment);
+    const overridden = comment !== '' && !!travelOverrides[key];
+    if (comment && s.buyFlag) tag = `${escapeHtml(comment)}${overridden ? ' &middot; counted' : ''} · Buy ticket${s.lostDays ? ` · ${s.unusedRemaining} lost` : ''}`;
+    else if (comment) tag = escapeHtml(comment) + (overridden ? ' &middot; counted' : '');
     else if (s.buyFlag) tag = s.lostDays ? `Buy ticket · ${s.unusedRemaining} lost` : 'Buy ticket';
     else if (weekend) tag = 'Weekend';
     return `
@@ -783,6 +797,11 @@ function render(){
     <div class="comment-card" id="today-comment-card">
       <div class="chip-row" id="chip-row"></div>
       <input type="text" id="custom-comment" placeholder="Or type your own (e.g. Dentist)" value="${escapeHtml(todayComment && !PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment : '')}" />
+      ${!todayIsWeekend ? `
+      <label style="display:flex; align-items:center; gap:8px; margin:10px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
+        <input type="checkbox" id="today-override-checkbox" ${travelOverrides[todayKey] ? 'checked' : ''} style="width:16px; height:16px;" />
+        I still used the ticket today
+      </label>` : ''}
       <button class="save-btn" id="save-today-btn">Save</button>
     </div>
 
@@ -801,23 +820,32 @@ function render(){
     `<div class="chip ${!selectedPreset && !todayComment ? '' : (!selectedPreset && todayComment ? '' : '')}" data-tag="__clear">Clear</div>`;
 
   chipRow.querySelectorAll('.chip').forEach(chip => {
-    chip.addEventListener('click', () => {
+    chip.addEventListener('click', async () => {
       const tag = chip.dataset.tag;
+      const cb = document.getElementById('today-override-checkbox');
       if (tag === '__clear'){
         comments[todayKey] = '';
+        delete travelOverrides[todayKey];
       } else {
         comments[todayKey] = tag;
         document.getElementById('custom-comment').value = '';
+        if (cb && cb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
       }
-      saveComments().then(render);
+      await saveComments();
+      await saveTravelOverrides();
+      render();
     });
   });
 
-  document.getElementById('save-today-btn').addEventListener('click', () => {
+  document.getElementById('save-today-btn').addEventListener('click', async () => {
     const val = document.getElementById('custom-comment').value.trim();
+    const cb = document.getElementById('today-override-checkbox');
     if (val !== ''){
       comments[todayKey] = val;
-      saveComments().then(render);
+      if (cb && cb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
+      await saveComments();
+      await saveTravelOverrides();
+      render();
     }
   });
 
@@ -858,29 +886,46 @@ function openDayEditor(key){
         <div class="chip" data-tag="__clear">Clear</div>
       </div>
       <input type="text" id="modal-custom-comment" placeholder="Or type your own" value="${escapeHtml(current && !PRESET_TAGS.includes(current.toUpperCase()) ? current : '')}" />
+      ${!weekend ? `
+      <label style="display:flex; align-items:center; gap:8px; margin:12px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
+        <input type="checkbox" id="modal-override-checkbox" ${travelOverrides[key] ? 'checked' : ''} style="width:16px; height:16px;" />
+        I still used the ticket this day
+      </label>` : ''}
       <button class="save-btn" id="modal-save-btn">Save</button>
       <div class="modal-close" id="modal-close-btn">Cancel</div>
     </div>
   `;
   document.body.appendChild(overlay);
 
+  function getOverrideChecked(){
+    const cb = document.getElementById('modal-override-checkbox');
+    return cb ? cb.checked : false;
+  }
+
   overlay.querySelectorAll('#modal-chip-row .chip').forEach(chip => {
-    chip.addEventListener('click', () => {
+    chip.addEventListener('click', async () => {
       const tag = chip.dataset.tag;
       if (tag === '__clear'){
         comments[key] = '';
+        delete travelOverrides[key];
       } else {
         comments[key] = tag;
         document.getElementById('modal-custom-comment').value = '';
+        if (getOverrideChecked()) travelOverrides[key] = true; else delete travelOverrides[key];
       }
-      saveComments().then(() => { document.body.removeChild(overlay); render(); });
+      await saveComments();
+      await saveTravelOverrides();
+      document.body.removeChild(overlay); render();
     });
   });
-  document.getElementById('modal-save-btn').addEventListener('click', () => {
+  document.getElementById('modal-save-btn').addEventListener('click', async () => {
     const val = document.getElementById('modal-custom-comment').value.trim();
     if (val !== ''){
       comments[key] = val;
-      saveComments().then(() => { document.body.removeChild(overlay); render(); });
+      if (getOverrideChecked()) travelOverrides[key] = true; else delete travelOverrides[key];
+      await saveComments();
+      await saveTravelOverrides();
+      document.body.removeChild(overlay); render();
     } else {
       document.body.removeChild(overlay);
     }
