@@ -490,6 +490,40 @@ async function savePeriodStart(){
   catch(e){ /* save failed silently; will retry next change */ }
 }
 
+// Runs on every app open. Fetches official UK bank holiday dates and fills
+// them in as "BANK HOLIDAY" on any date that doesn't already have a comment.
+// Never overwrites an existing entry. If offline, falls back to the last
+// successful fetch (cached locally) so nothing breaks without a connection.
+async function syncBankHolidays(){
+  let events = null;
+
+  try{
+    const resp = await fetch('https://www.gov.uk/bank-holidays.json');
+    if (resp.ok){
+      const data = await resp.json();
+      events = (data['england-and-wales'] && data['england-and-wales'].events) || [];
+      try{ localStorage.setItem('bank-holidays-cache', JSON.stringify(events)); }catch(e){}
+    }
+  }catch(e){ /* offline or blocked — fall back to cache below */ }
+
+  if (!events){
+    try{
+      const cached = localStorage.getItem('bank-holidays-cache');
+      events = cached ? JSON.parse(cached) : [];
+    }catch(e){ events = []; }
+  }
+
+  let changed = false;
+  for (const ev of events){
+    if (ev && ev.date && !comments[ev.date]){
+      comments[ev.date] = 'BANK HOLIDAY';
+      changed = true;
+    }
+  }
+  if (changed) await saveComments();
+  return changed;
+}
+
 // Find the first date after 'afterDate' (exclusive) that actually needs a ticket
 // (a weekday with no comment). Capped to avoid runaway loops.
 function findNextTravelDay(afterDate){
@@ -616,6 +650,24 @@ function findNextHoliday(todayKey){
   return best;
 }
 
+// Counts working days strictly between `from` and `to` (both exclusive) —
+// i.e. the days you actually still have to work through before `to` arrives.
+// Weekends and dates tagged BANK HOLIDAY don't count; everything else
+// (including WFH days) still counts as a working day.
+function countWorkingDaysUntil(from, to){
+  let count = 0;
+  let d = addDays(from, 1);
+  while (d < to){
+    if (!isWeekend(d)){
+      const key = fmtKey(d);
+      const tag = (comments[key] || '').trim().toUpperCase();
+      if (tag !== 'BANK HOLIDAY') count++;
+    }
+    d = addDays(d, 1);
+  }
+  return count;
+}
+
 function render(){
   const app = document.getElementById('app');
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
@@ -631,12 +683,12 @@ function render(){
   let holidayHtml = '';
   if (nextHolidayKey){
     const hDate = parseKey(nextHolidayKey);
-    const daysUntil = Math.round((hDate - today) / 86400000);
+    const daysUntil = countWorkingDaysUntil(today, hDate);
     holidayHtml = `
       <div class="holiday-card">
         <div class="holiday-count">${daysUntil}</div>
         <div class="holiday-info">
-          <div class="holiday-label">Day${daysUntil===1?'':'s'} until your next holiday</div>
+          <div class="holiday-label">Working day${daysUntil===1?'':'s'} until your next holiday</div>
           <div class="holiday-date">${dateLabel(hDate)}</div>
         </div>
       </div>`;
@@ -925,6 +977,10 @@ function openImportHistory(){
 (async function init(){
   await loadData();
   render();
+
+  // Check for bank holidays after the initial render so startup isn't
+  // delayed by a network call. Re-render only if new dates were filled in.
+  syncBankHolidays().then((changed) => { if (changed) render(); });
 })();
 
 if ('serviceWorker' in navigator){
