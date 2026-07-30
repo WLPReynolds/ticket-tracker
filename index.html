@@ -492,6 +492,16 @@
   }
   .modal h3{ margin:0 0 4px; font-size:16px; }
   .modal .sub{ color: var(--ink-dim); font-size:13px; margin-bottom:14px; }
+
+  .cal-overlay{
+    align-items: flex-start;
+    padding-top: 60px;
+  }
+  .cal-modal{
+    border-radius: 16px;
+    border-top: 1px solid var(--line);
+    margin: 0 12px;
+  }
   .modal-close{
     text-align:center;
     margin-top: 14px;
@@ -1126,13 +1136,13 @@ function render(){
   }
 
   const calendarViewLink = document.getElementById('calendar-view-link');
-  if (calendarViewLink) calendarViewLink.addEventListener('click', () => { menuOpen = false; openCalendarView(); });
+  if (calendarViewLink) calendarViewLink.addEventListener('click', () => { menuOpen = false; render(); openCalendarView(); });
   const recalibrateLink = document.getElementById('recalibrate-link');
-  if (recalibrateLink) recalibrateLink.addEventListener('click', () => { menuOpen = false; openRecalibrate(); });
+  if (recalibrateLink) recalibrateLink.addEventListener('click', () => { menuOpen = false; render(); openRecalibrate(); });
   const importHistoryLink = document.getElementById('import-history-link');
-  if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; openImportHistory(); });
+  if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
   const parkingCostLink = document.getElementById('parking-cost-link');
-  if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; openParkingCostEditor(); });
+  if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; render(); openParkingCostEditor(); });
 
   const dismissBtn = document.getElementById('month-estimate-dismiss');
   if (dismissBtn){
@@ -1272,9 +1282,9 @@ function openParkingCostEditor(){
 
 function openCalendarView(){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'modal-overlay cal-overlay';
   overlay.innerHTML = `
-    <div class="modal">
+    <div class="modal cal-modal">
       <div class="cal-nav">
         <div class="cal-nav-btn" id="cal-prev">&#8249;</div>
         <div class="cal-nav-title" id="cal-title"></div>
