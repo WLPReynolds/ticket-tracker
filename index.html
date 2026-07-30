@@ -849,6 +849,15 @@ function render(){
     }
   });
 
+  const todayOverrideCb = document.getElementById('today-override-checkbox');
+  if (todayOverrideCb){
+    todayOverrideCb.addEventListener('change', async () => {
+      if (todayOverrideCb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
+      await saveTravelOverrides();
+      render();
+    });
+  }
+
   document.querySelectorAll('.day-row').forEach(row => {
     row.addEventListener('click', () => openDayEditor(row.dataset.key));
   });
@@ -900,6 +909,15 @@ function openDayEditor(key){
   function getOverrideChecked(){
     const cb = document.getElementById('modal-override-checkbox');
     return cb ? cb.checked : false;
+  }
+
+  const modalOverrideCb = document.getElementById('modal-override-checkbox');
+  if (modalOverrideCb){
+    modalOverrideCb.addEventListener('change', async () => {
+      if (modalOverrideCb.checked) travelOverrides[key] = true; else delete travelOverrides[key];
+      await saveTravelOverrides();
+      render(); // safe: this overlay is attached to document.body, not #app, so it survives re-render
+    });
   }
 
   overlay.querySelectorAll('#modal-chip-row .chip').forEach(chip => {
