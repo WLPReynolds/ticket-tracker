@@ -457,6 +457,8 @@ let travelOverrides = {}; // dateKey -> true, for days with a comment that were 
 let periodStart = DEFAULT_PERIOD_START; // date the current ticket window began
 let purchases = []; // [{date: 'YYYY-MM-DD', cost: number}, ...] — one entry per ticket bought
 let lastKnownPrice = 153.60; // prefilled into the recalibrate cost field
+let parkingCost = 6.39; // default daily parking estimate
+let dismissedMonths = {}; // monthKey ('YYYY-MM') -> true, for the monthly estimate card
 let loaded = false;
 
 async function loadData(){
@@ -476,6 +478,14 @@ async function loadData(){
     const lp = localStorage.getItem('ticket-last-price');
     lastKnownPrice = lp ? JSON.parse(lp) : 153.60;
   }catch(e){ lastKnownPrice = 153.60; }
+  try{
+    const pc = localStorage.getItem('ticket-parking-cost');
+    parkingCost = pc ? JSON.parse(pc) : 6.39;
+  }catch(e){ parkingCost = 6.39; }
+  try{
+    const dm = localStorage.getItem('ticket-dismissed-months');
+    dismissedMonths = dm ? JSON.parse(dm) : {};
+  }catch(e){ dismissedMonths = {}; }
   try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
@@ -518,6 +528,14 @@ async function savePurchases(){
 }
 async function saveLastKnownPrice(){
   try{ localStorage.setItem('ticket-last-price', JSON.stringify(lastKnownPrice)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveParkingCost(){
+  try{ localStorage.setItem('ticket-parking-cost', JSON.stringify(parkingCost)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveDismissedMonths(){
+  try{ localStorage.setItem('ticket-dismissed-months', JSON.stringify(dismissedMonths)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePeriodStart(){
@@ -583,6 +601,19 @@ function findNextTravelDay(afterDate){
 // you next need it, not automatically the day after the old one runs out.
 // Returns a map dateKey -> { usedCount, daysElapsed, periodEnded, lostDays,
 //   unusedRemaining, inGap, buyFlag }
+// Finds the actual pay date for a given month: the 28th, walked backward
+// a day at a time over weekends and bank holidays until it lands on a
+// working day.
+function getPayDate(year, monthIndex){
+  let d = new Date(year, monthIndex, 28);
+  while (true){
+    const key = fmtKey(d);
+    const isBankHoliday = (comments[key] || '').trim().toUpperCase() === 'BANK HOLIDAY';
+    if (!isWeekend(d) && !isBankHoliday) return d;
+    d = addDays(d, -1);
+  }
+}
+
 function computeStates(targetDate){
   const map = {};
   let segStart = parseKey(periodStart);
@@ -779,6 +810,45 @@ function render(){
   }
 
   const days = getRange(today, 3, state.daysAhead);
+
+  // Monthly cost estimate — how many tickets and parking days are likely
+  // needed within the current pay period. The window runs from the most
+  // recent payday up to (but not including) the next one, so the card
+  // naturally resets and reappears right on payday itself, rather than
+  // on an unrelated calendar date.
+  const thisMonthPayDate = getPayDate(today.getFullYear(), today.getMonth());
+  let adjMonth = today.getMonth(), adjYear = today.getFullYear();
+  let currentPayDate, nextPayDate;
+  if (fmtKey(today) >= fmtKey(thisMonthPayDate)){
+    // payday has already happened this month — we're in the window it opened
+    currentPayDate = thisMonthPayDate;
+    adjMonth += 1; if (adjMonth > 11){ adjMonth = 0; adjYear += 1; }
+    nextPayDate = getPayDate(adjYear, adjMonth);
+  } else {
+    // payday hasn't happened yet this month — still in last month's window
+    adjMonth -= 1; if (adjMonth < 0){ adjMonth = 11; adjYear -= 1; }
+    currentPayDate = getPayDate(adjYear, adjMonth);
+    nextPayDate = thisMonthPayDate;
+  }
+  const estMonthKey = fmtKey(currentPayDate); // dismiss/reset key — one per pay period
+  const estWindowStart = currentPayDate;
+  const estWindowEnd = addDays(nextPayDate, -1);
+  const estMonthStates = computeStates(estWindowEnd);
+  let estTicketCount = 0;
+  let estParkingDays = 0;
+  for (let d = new Date(estWindowStart); d <= estWindowEnd; d = addDays(d, 1)){
+    const key = fmtKey(d);
+    if (estMonthStates[key] && estMonthStates[key].buyFlag) estTicketCount++;
+    const weekend = isWeekend(d);
+    const comment = (comments[key] || '').trim();
+    const isTravel = comment === '' || travelOverrides[key];
+    if (!weekend && isTravel) estParkingDays++;
+  }
+  const estTicketCost = estTicketCount * lastKnownPrice;
+  const estParkingCost = estParkingDays * parkingCost;
+  const estTotal = estTicketCost + estParkingCost;
+  const payWindowLabel = `${dateLabelShort(estWindowStart)} – ${dateLabelShort(estWindowEnd)}`;
+  const monthEstimateDismissed = !!dismissedMonths[estMonthKey];
   const rows = days.map(d => {
     const key = fmtKey(d);
     const s = states[key];
@@ -840,6 +910,18 @@ function render(){
       ${nextBuyHtml}
     </div>
 
+    ${monthEstimateDismissed ? '' : `
+    <div class="holiday-card" id="month-estimate-card">
+      <div class="holiday-info" style="width:100%;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div class="holiday-label">${payWindowLabel} — set aside on payday</div>
+          <span id="month-estimate-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
+        </div>
+        <div class="holiday-date" style="font-size:22px; font-weight:600; color:var(--amber);">£${estTotal.toFixed(2)}</div>
+        <div class="holiday-label" style="margin-top:2px;">${estTicketCount} ticket${estTicketCount===1?'':'s'} (£${estTicketCost.toFixed(2)}) + ${estParkingDays} parking day${estParkingDays===1?'':'s'} (£${estParkingCost.toFixed(2)})</div>
+      </div>
+    </div>`}
+
     ${holidayHtml}
 
     <div class="holiday-card" id="spending-card" style="cursor:pointer;">
@@ -868,6 +950,8 @@ function render(){
 
     <div class="settings-link" id="recalibrate-link">Just bought a new ticket? Set start date</div>
     <div class="settings-link" id="import-history-link">Import historical data</div>
+    <div class="settings-link" id="parking-cost-link">Set daily parking cost (currently £${parkingCost.toFixed(2)})</div>
+    ${monthEstimateDismissed ? `<div class="settings-link" id="restore-estimate-link">Show ${payWindowLabel} estimate again</div>` : ''}
   `;
 
   // wire up chip row for today
@@ -921,6 +1005,25 @@ function render(){
 
   document.getElementById('recalibrate-link').addEventListener('click', openRecalibrate);
   document.getElementById('import-history-link').addEventListener('click', openImportHistory);
+  document.getElementById('parking-cost-link').addEventListener('click', openParkingCostEditor);
+
+  const dismissBtn = document.getElementById('month-estimate-dismiss');
+  if (dismissBtn){
+    dismissBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      dismissedMonths[estMonthKey] = true;
+      await saveDismissedMonths();
+      render();
+    });
+  }
+  const restoreLink = document.getElementById('restore-estimate-link');
+  if (restoreLink){
+    restoreLink.addEventListener('click', async () => {
+      delete dismissedMonths[estMonthKey];
+      await saveDismissedMonths();
+      render();
+    });
+  }
   document.getElementById('spending-card').addEventListener('click', openManagePurchases);
 
   const showMoreBtn = document.getElementById('show-more-link');
@@ -1007,6 +1110,33 @@ function openDayEditor(key){
     }
   });
   document.getElementById('modal-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openParkingCostEditor(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Daily parking cost</h3>
+      <div class="sub">Used to estimate what to set aside each month, on days you might drive in.</div>
+      <input type="number" id="parking-cost-input" value="${parkingCost.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
+      <button class="save-btn" id="parking-cost-save">Save</button>
+      <div class="modal-close" id="parking-cost-close">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('parking-cost-save').addEventListener('click', async () => {
+    const val = parseFloat(document.getElementById('parking-cost-input').value);
+    if (!isNaN(val) && val >= 0){
+      parkingCost = val;
+      await saveParkingCost();
+      document.body.removeChild(overlay); render();
+    }
+  });
+  document.getElementById('parking-cost-close').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
