@@ -459,6 +459,31 @@
     color: var(--ink-dim);
     font-size: 18px;
   }
+  .rail-blob{
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--amber);
+    margin-left: 8px;
+    vertical-align: middle;
+    cursor: pointer;
+  }
+  .rail-detail-row{
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+  }
+  .rail-detail-row:last-child{ border-bottom: none; }
+  .rail-col-header{
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin: 14px 0 6px;
+  }
 
   .save-btn{
     width:100%;
@@ -595,6 +620,24 @@ let lastKnownPrice = 153.60; // prefilled into the recalibrate cost field
 let parkingCost = 6.39; // default daily parking estimate
 let dismissedMonths = {}; // monthKey ('YYYY-MM') -> true, for the monthly estimate card
 let menuOpen = false; // whether the hamburger dropdown is currently open
+
+// Rail performance / delay repay feature
+const RAIL_WORKER_URL = 'https://rail-performance-proxy.wayne-lee-paul-reynolds.workers.dev';
+const DELAY_REPAY_THRESHOLD_MINUTES = 15;
+let railDaysBack = 3; // how far back the day list currently scrolls; grows via "Show earlier days"
+const RAIL_DAYS_BACK_STEP = 7;
+const RAIL_MAX_DAYS_BACK = 28; // matches Avanti's Delay Repay claim deadline
+let railTrains = []; // [{ key, direction: 'AM'|'PM', fromLoc, toLoc, time, label, optional }]
+let railPerfCache = {}; // { "YYYY-MM-DD": { trainKey: { delayMinutes, onTime } } }
+let railSyncInProgress = false;
+
+const DEFAULT_RAIL_TRAINS = [
+  { key: 'am-0808', direction: 'AM', fromLoc: 'CRE', toLoc: 'WGN', time: '0808', label: '08:08', optional: false },
+  { key: 'am-0727', direction: 'AM', fromLoc: 'CRE', toLoc: 'WGN', time: '0727', label: '07:27', optional: true },
+  { key: 'pm-1731', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1731', label: '17:31', optional: false },
+  { key: 'pm-1631', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1631', label: '16:31', optional: true },
+  { key: 'pm-1831', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1831', label: '18:31', optional: true },
+];
 let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
 let loaded = false;
 
@@ -639,6 +682,14 @@ async function loadData(){
     const ln = localStorage.getItem('ticket-last-notified-buy-key');
     lastNotifiedBuyKey = ln ? JSON.parse(ln) : null;
   }catch(e){ lastNotifiedBuyKey = null; }
+  try{
+    const rt = localStorage.getItem('rail-trains');
+    railTrains = rt ? JSON.parse(rt) : DEFAULT_RAIL_TRAINS.slice();
+  }catch(e){ railTrains = DEFAULT_RAIL_TRAINS.slice(); }
+  try{
+    const rc = localStorage.getItem('rail-perf-cache');
+    railPerfCache = rc ? JSON.parse(rc) : {};
+  }catch(e){ railPerfCache = {}; }
   try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
@@ -707,6 +758,14 @@ async function saveLastNotifiedBuyKey(){
   try{ localStorage.setItem('ticket-last-notified-buy-key', JSON.stringify(lastNotifiedBuyKey)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
+async function saveRailTrains(){
+  try{ localStorage.setItem('rail-trains', JSON.stringify(railTrains)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveRailPerfCache(){
+  try{ localStorage.setItem('rail-perf-cache', JSON.stringify(railPerfCache)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
 async function savePeriodStart(){
   try{ localStorage.setItem('ticket-period-start', JSON.stringify(periodStart)); }
   catch(e){ /* save failed silently; will retry next change */ }
@@ -716,6 +775,80 @@ async function savePeriodStart(){
 // them in as "BANK HOLIDAY" on any date that doesn't already have a comment.
 // Never overwrites an existing entry. If offline, falls back to the last
 // successful fetch (cached locally) so nothing breaks without a connection.
+// Returns true if a date is one where a delay repay claim could plausibly
+// apply: an actual past weekday travel day (not a weekend, not tagged
+// WFH/HOLIDAY/etc unless overridden, and strictly before today).
+function isEligibleRailDay(d, todayKeyParam){
+  const key = fmtKey(d);
+  if (key >= todayKeyParam) return false; // only completed past journeys
+  if (isWeekend(d)) return false;
+  const comment = (comments[key] || '').trim();
+  return comment === '' || !!travelOverrides[key];
+}
+
+// Checks the currently visible past-day window for any eligible travel
+// days that don't yet have performance data cached, and fetches just
+// those from the Worker. Loops to handle the Worker's own truncation
+// (its 50-subrequest-per-call ceiling) until everything's covered or no
+// further progress is being made.
+async function railSyncMissingDates(){
+  if (railSyncInProgress) return;
+  if (!railTrains || railTrains.length === 0) return;
+  if (RAIL_WORKER_URL.includes('YOUR-WORKER-NAME')) return; // not configured yet
+
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const todayKeyLocal = fmtKey(today);
+  const oldestVisible = addDays(today, -railDaysBack);
+
+  const neededDates = [];
+  for (let d = new Date(oldestVisible); d < today; d = addDays(d, 1)){
+    if (!isEligibleRailDay(d, todayKeyLocal)) continue;
+    const key = fmtKey(d);
+    const cached = railPerfCache[key];
+    const hasAllTrains = cached && railTrains.every(t => cached[t.key] !== undefined);
+    if (!hasAllTrains) neededDates.push(key);
+  }
+  if (neededDates.length === 0) return;
+
+  railSyncInProgress = true;
+  try{
+    let remaining = neededDates;
+    let guard = 0;
+    while (remaining.length > 0 && guard < 8){
+      guard++;
+      let response;
+      try{
+        const resp = await fetch(RAIL_WORKER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trains: railTrains.map(t => ({ key: t.key, fromLoc: t.fromLoc, toLoc: t.toLoc, time: t.time })),
+            dates: remaining
+          })
+        });
+        if (!resp.ok) break;
+        response = await resp.json();
+      }catch(e){ break; }
+
+      const trainResults = response.trainResults || {};
+      for (const trainKey in trainResults){
+        for (const date in trainResults[trainKey]){
+          if (!railPerfCache[date]) railPerfCache[date] = {};
+          railPerfCache[date][trainKey] = trainResults[trainKey][date];
+        }
+      }
+      await saveRailPerfCache();
+      render();
+
+      const truncated = response.truncatedDates || [];
+      if (truncated.length === remaining.length) break; // no progress — stop rather than loop forever
+      remaining = truncated;
+    }
+  } finally {
+    railSyncInProgress = false;
+  }
+}
+
 async function syncBankHolidays(){
   let events = null;
 
@@ -1094,6 +1227,7 @@ function render(){
     { id: 'calendar-view-link', label: 'Calendar view', weight: 0 },
     { id: 'recalibrate-link', label: 'Just bought a new ticket? Set start date', weight: 0 },
     { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
+    { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
   ];
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
     menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
@@ -1185,7 +1319,7 @@ function render(){
     }
   }
 
-  const days = getRange(today, 3, state.daysAhead);
+  const days = getRange(today, railDaysBack, state.daysAhead);
 
   // Monthly cost estimate — how many tickets and parking days are likely
   // needed within the selected pay period. Offset 0 is the current period
@@ -1238,11 +1372,21 @@ function render(){
     else if (comment) tag = escapeHtml(comment) + (overridden ? ' &middot; counted' : '');
     else if (s.buyFlag) tag = s.lostDays ? `Buy ticket · ${s.unusedRemaining} lost` : 'Buy ticket';
     else if (weekend) tag = 'Weekend';
+
+    let railBlobHtml = '';
+    if (isEligibleRailDay(d, todayKey)){
+      const dayPerf = railPerfCache[key];
+      if (dayPerf){
+        const hasDelay = railTrains.some(t => dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
+        if (hasDelay) railBlobHtml = `<span class="rail-blob" data-rail-key="${key}" title="Possible delay repay claim"></span>`;
+      }
+    }
+
     return `
       <div class="day-row ${isToday?'is-today':''}" data-key="${key}">
         <div class="count-badge ${badgeClass}">${badgeText}</div>
         <div class="info">
-          <div class="dname">${dayNameShort(d)} ${dateLabelShort(d)} ${isToday?'<span class="sub">Today</span>':''}</div>
+          <div class="dname">${dayNameShort(d)} ${dateLabelShort(d)} ${isToday?'<span class="sub">Today</span>':''}${railBlobHtml}</div>
           ${tag ? `<div class="comment-tag">${tag}</div>` : ''}
         </div>
         <div class="arrow">›</div>
@@ -1321,6 +1465,7 @@ function render(){
 
     <div class="section-label">Upcoming &amp; recent days</div>
     <div class="day-list">${rows}</div>
+    ${railDaysBack < RAIL_MAX_DAYS_BACK ? `<div class="settings-link" id="show-earlier-link">Show earlier days</div>` : ''}
     ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="settings-link" id="show-more-link">Show more days</div>` : ''}
   `;
 
@@ -1370,7 +1515,14 @@ function render(){
   }
 
   document.querySelectorAll('.day-row').forEach(row => {
-    row.addEventListener('click', () => openDayEditor(row.dataset.key));
+    row.addEventListener('click', (e) => {
+      if (e.target.classList.contains('rail-blob')){
+        e.stopPropagation();
+        openRailDetail(e.target.dataset.railKey);
+      } else {
+        openDayEditor(row.dataset.key);
+      }
+    });
   });
 
   document.getElementById('menu-btn').addEventListener('click', (e) => {
@@ -1400,6 +1552,9 @@ function render(){
   if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
   const parkingCostLink = document.getElementById('parking-cost-link');
   if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; render(); openParkingCostEditor(); });
+
+  const railConfigLink = document.getElementById('rail-config-link');
+  if (railConfigLink) railConfigLink.addEventListener('click', () => { menuOpen = false; render(); openRailConfig(); });
 
   const enableNotificationsLink = document.getElementById('enable-notifications-link');
   if (enableNotificationsLink){
@@ -1492,6 +1647,14 @@ function render(){
     showMoreBtn.addEventListener('click', () => {
       state.daysAhead = Math.min(state.daysAhead + DAYS_AHEAD_STEP, MAX_DAYS_AHEAD);
       render();
+    });
+  }
+  const showEarlierBtn = document.getElementById('show-earlier-link');
+  if (showEarlierBtn){
+    showEarlierBtn.addEventListener('click', () => {
+      railDaysBack = Math.min(railDaysBack + RAIL_DAYS_BACK_STEP, RAIL_MAX_DAYS_BACK);
+      render();
+      railSyncMissingDates();
     });
   }
 }
@@ -1598,6 +1761,120 @@ function openParkingCostEditor(){
     }
   });
   document.getElementById('parking-cost-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openRailConfig(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  function buildSectionHtml(direction, title, fromLoc, toLoc){
+    const trains = railTrains.filter(t => t.direction === direction);
+    const rows = trains.map(t => `
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <input type="time" class="rail-time-input" data-key="${t.key}" value="${t.time.slice(0,2)}:${t.time.slice(2,4)}" style="flex:1;" />
+        <span class="modal-close" data-remove-key="${t.key}" style="margin:0; font-size:13px;">Remove</span>
+      </div>`).join('');
+    return `
+      <div class="rail-col-header">${title} (${fromLoc} → ${toLoc})</div>
+      <div id="rail-section-${direction}">${rows}</div>
+      <div class="settings-link" id="rail-add-${direction}" style="margin-top:4px; margin-bottom:16px;">+ Add another time</div>
+    `;
+  }
+
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Usual trains</h3>
+      <div class="sub">Used to check delay repay eligibility on your travel days. Add every time you sometimes catch, not just your default.</div>
+      ${buildSectionHtml('AM', 'Morning', 'CRE', 'WGN')}
+      ${buildSectionHtml('PM', 'Evening', 'WGN', 'CRE')}
+      <button class="save-btn" id="rail-config-save">Save</button>
+      <div class="modal-close" id="rail-config-close">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  function addTrain(direction){
+    const fromLoc = direction === 'AM' ? 'CRE' : 'WGN';
+    const toLoc = direction === 'AM' ? 'WGN' : 'CRE';
+    const key = `${direction.toLowerCase()}-${Date.now()}`;
+    railTrains.push({ key, direction, fromLoc, toLoc, time: direction === 'AM' ? '0800' : '1700', label: direction === 'AM' ? '08:00' : '17:00', optional: true });
+    document.body.removeChild(overlay);
+    openRailConfig(); // rebuild the modal fresh with the new row
+  }
+
+  document.getElementById('rail-add-AM').addEventListener('click', () => addTrain('AM'));
+  document.getElementById('rail-add-PM').addEventListener('click', () => addTrain('PM'));
+
+  overlay.querySelectorAll('[data-remove-key]').forEach(el => {
+    el.addEventListener('click', () => {
+      railTrains = railTrains.filter(t => t.key !== el.dataset.removeKey);
+      document.body.removeChild(overlay);
+      openRailConfig();
+    });
+  });
+
+  document.getElementById('rail-config-save').addEventListener('click', async () => {
+    overlay.querySelectorAll('.rail-time-input').forEach(input => {
+      const train = railTrains.find(t => t.key === input.dataset.key);
+      if (train && input.value){
+        train.time = input.value.replace(':', '');
+        train.label = input.value;
+      }
+    });
+    await saveRailTrains();
+    document.body.removeChild(overlay);
+    railSyncMissingDates(); // new/changed trains mean previously-cached days may now be incomplete
+    render();
+  });
+  document.getElementById('rail-config-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openRailDetail(key){
+  const d = parseKey(key);
+  const dayPerf = railPerfCache[key] || {};
+  const amTrains = railTrains.filter(t => t.direction === 'AM');
+  const pmTrains = railTrains.filter(t => t.direction === 'PM');
+
+  function rowsFor(trains){
+    return trains.map(t => {
+      const perf = dayPerf[t.key];
+      if (!perf){
+        return `<div class="rail-detail-row"><span>${t.label}</span><span style="color:var(--ink-dim);">No data</span></div>`;
+      }
+      const late = perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES;
+      const color = late ? '#ff8b7e' : 'var(--good)';
+      const text = perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+      return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
+    }).join('');
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${dateLabel(d)}</h3>
+      <div class="sub">Performance for your configured trains this day.</div>
+      <div style="display:flex; gap:24px;">
+        <div style="flex:1;">
+          <div class="rail-col-header">Morning</div>
+          ${amTrains.length ? rowsFor(amTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+        </div>
+        <div style="flex:1;">
+          <div class="rail-col-header">Evening</div>
+          ${pmTrains.length ? rowsFor(pmTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+        </div>
+      </div>
+      <div class="modal-close" id="rail-detail-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('rail-detail-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
@@ -1868,6 +2145,7 @@ function openImportHistory(){
   // Check for bank holidays after the initial render so startup isn't
   // delayed by a network call. Re-render only if new dates were filled in.
   syncBankHolidays().then((changed) => { if (changed) render(); });
+  railSyncMissingDates();
 })();
 
 if ('serviceWorker' in navigator){
