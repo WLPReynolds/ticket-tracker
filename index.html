@@ -520,7 +520,7 @@
 <div id="app" class="loading">Loading your ticket…</div>
 
 <script>
-const PRESET_TAGS = ['WFH', 'HOLIDAY', 'HOSPITAL', 'BEREAVEMENT'];
+const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 
 // Optional one-off import of past comments, e.g. from an old spreadsheet.
 // Left empty here deliberately — this file is public. See import-seed-data.js
@@ -568,6 +568,7 @@ let lastKnownPrice = 153.60; // prefilled into the recalibrate cost field
 let parkingCost = 6.39; // default daily parking estimate
 let dismissedMonths = {}; // monthKey ('YYYY-MM') -> true, for the monthly estimate card
 let menuOpen = false; // whether the hamburger dropdown is currently open
+let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
 let loaded = false;
 
 async function loadData(){
@@ -721,6 +722,36 @@ function getPayDate(year, monthIndex){
     if (!isWeekend(d) && !isBankHoliday) return d;
     d = addDays(d, -1);
   }
+}
+
+// Returns {start, end} for the pay period `offset` periods away from the one
+// containing `baseDate`. offset 0 = the period baseDate currently falls in,
+// 1 = the next period, 2 = the one after that, etc. Negative offsets look
+// backward. A period runs from one payday up to (not including) the next.
+function getPayPeriodByOffset(baseDate, offset){
+  let year = baseDate.getFullYear(), month = baseDate.getMonth();
+  const thisMonthPay = getPayDate(year, month);
+  let currentPayDate, nextPayDate;
+  if (fmtKey(baseDate) >= fmtKey(thisMonthPay)){
+    currentPayDate = thisMonthPay;
+    let nm = month + 1, ny = year; if (nm > 11){ nm = 0; ny++; }
+    nextPayDate = getPayDate(ny, nm);
+  } else {
+    let pm = month - 1, py = year; if (pm < 0){ pm = 11; py--; }
+    currentPayDate = getPayDate(py, pm);
+    nextPayDate = thisMonthPay;
+  }
+  for (let i = 0; i < offset; i++){
+    const nm = nextPayDate.getMonth() + 1, ny = nextPayDate.getFullYear();
+    currentPayDate = nextPayDate;
+    nextPayDate = getPayDate(nm > 11 ? ny + 1 : ny, nm > 11 ? 0 : nm);
+  }
+  for (let i = 0; i < -offset; i++){
+    const pm = currentPayDate.getMonth() - 1, py = currentPayDate.getFullYear();
+    nextPayDate = currentPayDate;
+    currentPayDate = getPayDate(pm < 0 ? py - 1 : py, pm < 0 ? 11 : pm);
+  }
+  return { start: currentPayDate, end: addDays(nextPayDate, -1) };
 }
 
 function computeStates(targetDate){
@@ -921,27 +952,14 @@ function render(){
   const days = getRange(today, 3, state.daysAhead);
 
   // Monthly cost estimate — how many tickets and parking days are likely
-  // needed within the current pay period. The window runs from the most
-  // recent payday up to (but not including) the next one, so the card
-  // naturally resets and reappears right on payday itself, rather than
-  // on an unrelated calendar date.
-  const thisMonthPayDate = getPayDate(today.getFullYear(), today.getMonth());
-  let adjMonth = today.getMonth(), adjYear = today.getFullYear();
-  let currentPayDate, nextPayDate;
-  if (fmtKey(today) >= fmtKey(thisMonthPayDate)){
-    // payday has already happened this month — we're in the window it opened
-    currentPayDate = thisMonthPayDate;
-    adjMonth += 1; if (adjMonth > 11){ adjMonth = 0; adjYear += 1; }
-    nextPayDate = getPayDate(adjYear, adjMonth);
-  } else {
-    // payday hasn't happened yet this month — still in last month's window
-    adjMonth -= 1; if (adjMonth < 0){ adjMonth = 11; adjYear -= 1; }
-    currentPayDate = getPayDate(adjYear, adjMonth);
-    nextPayDate = thisMonthPayDate;
-  }
-  const estMonthKey = fmtKey(currentPayDate); // dismiss/reset key — one per pay period
-  const estWindowStart = currentPayDate;
-  const estWindowEnd = addDays(nextPayDate, -1);
+  // needed within the selected pay period. Offset 0 is the current period
+  // (most recent payday up to, but not including, the next one); the
+  // card's own nav arrows let you preview future periods without
+  // affecting the automatic dismiss/reset behaviour of the current one.
+  const estPeriod = getPayPeriodByOffset(today, estimateOffset);
+  const estWindowStart = estPeriod.start;
+  const estWindowEnd = estPeriod.end;
+  const estMonthKey = fmtKey(getPayPeriodByOffset(today, 0).start); // dismiss/reset key always tracks the CURRENT period, regardless of what's being previewed
   const estMonthStates = computeStates(estWindowEnd);
   let estTicketCount = 0;
   let estParkingDays = 0;
@@ -957,7 +975,10 @@ function render(){
   const estParkingCost = estParkingDays * parkingCost;
   const estTotal = estTicketCost + estParkingCost;
   const payWindowLabel = `${dateLabelShort(estWindowStart)} – ${dateLabelShort(estWindowEnd)}`;
+  const currentPeriod = getPayPeriodByOffset(today, 0);
+  const currentPeriodLabel = `${dateLabelShort(currentPeriod.start)} – ${dateLabelShort(currentPeriod.end)}`;
   const monthEstimateDismissed = !!dismissedMonths[estMonthKey];
+  const showEstimateCard = estimateOffset !== 0 || !monthEstimateDismissed;
   const rows = days.map(d => {
     const key = fmtKey(d);
     const s = states[key];
@@ -1008,7 +1029,7 @@ function render(){
         <div class="settings-link" id="recalibrate-link">Just bought a new ticket? Set start date</div>
         <div class="settings-link" id="import-history-link">Import historical data</div>
         <div class="settings-link" id="parking-cost-link">Set daily parking cost (currently £${parkingCost.toFixed(2)})</div>
-        ${monthEstimateDismissed ? `<div class="settings-link" id="restore-estimate-link">Show ${payWindowLabel} estimate again</div>` : ''}
+        ${monthEstimateDismissed ? `<div class="settings-link" id="restore-estimate-link">Show ${currentPeriodLabel} estimate again</div>` : ''}
       </div>` : ''}
     </header>
 
@@ -1028,19 +1049,19 @@ function render(){
       ${nextBuyHtml}
     </div>
 
-    ${monthEstimateDismissed ? '' : `
+    ${!showEstimateCard ? '' : `
     <div class="holiday-card" id="month-estimate-card">
       <div class="holiday-info" style="width:100%;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-          <div class="holiday-label">${payWindowLabel} — set aside on payday</div>
-          <span id="month-estimate-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
+        <div style="display:flex; justify-content:center; align-items:center; gap:10px;">
+          <span class="cal-nav-btn" id="estimate-prev" style="width:26px; height:26px; font-size:14px;">&#8249;</span>
+          <div class="holiday-label" style="margin:0;">${payWindowLabel}${estimateOffset===0 ? ' — set aside on payday' : ''}</div>
+          <span class="cal-nav-btn" id="estimate-next" style="width:26px; height:26px; font-size:14px;">&#8250;</span>
+          ${estimateOffset===0 ? `<span id="month-estimate-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px; margin-left:2px;">&times;</span>` : ''}
         </div>
-        <div class="holiday-date" style="font-size:22px; font-weight:600; color:var(--amber);">£${estTotal.toFixed(2)}</div>
-        <div class="holiday-label" style="margin-top:2px;">${estTicketCount} ticket${estTicketCount===1?'':'s'} (£${estTicketCost.toFixed(2)}) + ${estParkingDays} parking day${estParkingDays===1?'':'s'} (£${estParkingCost.toFixed(2)})</div>
+        <div class="holiday-date" style="text-align:center; font-size:22px; font-weight:600; color:var(--amber);">£${estTotal.toFixed(2)}</div>
+        <div class="holiday-label" style="text-align:center; margin-top:2px;">${estTicketCount} ticket${estTicketCount===1?'':'s'} (£${estTicketCost.toFixed(2)}) + ${estParkingDays} parking day${estParkingDays===1?'':'s'} (£${estParkingCost.toFixed(2)})</div>
       </div>
     </div>`}
-
-    ${holidayHtml}
 
     <div class="holiday-card" id="spending-card" style="cursor:pointer;">
       <div class="holiday-info" style="width:100%;">
@@ -1050,10 +1071,12 @@ function render(){
       </div>
     </div>
 
+    ${holidayHtml}
+
     <div class="section-label">Today's comment</div>
     <div class="comment-card" id="today-comment-card">
       <div class="chip-row" id="chip-row"></div>
-      <input type="text" id="custom-comment" placeholder="Or type your own (e.g. Dentist)" value="${escapeHtml(todayComment && !PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment : '')}" />
+      <input type="text" id="custom-comment" placeholder="Or type your own" value="${escapeHtml(todayComment && !PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment : '')}" />
       ${!todayIsWeekend ? `
       <label style="display:flex; align-items:center; gap:8px; margin:10px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
         <input type="checkbox" id="today-override-checkbox" ${travelOverrides[todayKey] ? 'checked' : ''} style="width:16px; height:16px;" />
@@ -1153,10 +1176,25 @@ function render(){
       render();
     });
   }
+  const estimatePrevBtn = document.getElementById('estimate-prev');
+  if (estimatePrevBtn){
+    estimatePrevBtn.addEventListener('click', () => {
+      estimateOffset = Math.max(0, estimateOffset - 1);
+      render();
+    });
+  }
+  const estimateNextBtn = document.getElementById('estimate-next');
+  if (estimateNextBtn){
+    estimateNextBtn.addEventListener('click', () => {
+      estimateOffset = Math.min(24, estimateOffset + 1);
+      render();
+    });
+  }
   const restoreLink = document.getElementById('restore-estimate-link');
   if (restoreLink){
     restoreLink.addEventListener('click', async () => {
       menuOpen = false;
+      estimateOffset = 0;
       delete dismissedMonths[estMonthKey];
       await saveDismissedMonths();
       render();
