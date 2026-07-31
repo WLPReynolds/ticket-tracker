@@ -978,7 +978,7 @@ function render(){
   const currentPeriod = getPayPeriodByOffset(today, 0);
   const currentPeriodLabel = `${dateLabelShort(currentPeriod.start)} – ${dateLabelShort(currentPeriod.end)}`;
   const monthEstimateDismissed = !!dismissedMonths[estMonthKey];
-  const showEstimateCard = estimateOffset !== 0 || !monthEstimateDismissed;
+  const showEstimateCard = !monthEstimateDismissed;
   const rows = days.map(d => {
     const key = fmtKey(d);
     const s = states[key];
@@ -1052,14 +1052,17 @@ function render(){
     ${!showEstimateCard ? '' : `
     <div class="holiday-card" id="month-estimate-card">
       <div class="holiday-info" style="width:100%;">
-        <div style="display:flex; justify-content:center; align-items:center; gap:10px;">
-          <span class="cal-nav-btn" id="estimate-prev" style="width:26px; height:26px; font-size:14px;">&#8249;</span>
-          <div class="holiday-label" style="margin:0;">${payWindowLabel}${estimateOffset===0 ? ' — set aside on payday' : ''}</div>
-          <span class="cal-nav-btn" id="estimate-next" style="width:26px; height:26px; font-size:14px;">&#8250;</span>
-          ${estimateOffset===0 ? `<span id="month-estimate-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px; margin-left:2px;">&times;</span>` : ''}
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div class="holiday-label">Set aside on payday</div>
+          <span id="month-estimate-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
         </div>
-        <div class="holiday-date" style="text-align:center; font-size:22px; font-weight:600; color:var(--amber);">£${estTotal.toFixed(2)}</div>
-        <div class="holiday-label" style="text-align:center; margin-top:2px;">${estTicketCount} ticket${estTicketCount===1?'':'s'} (£${estTicketCost.toFixed(2)}) + ${estParkingDays} parking day${estParkingDays===1?'':'s'} (£${estParkingCost.toFixed(2)})</div>
+        <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+          <span class="cal-nav-btn" id="estimate-prev" style="width:24px; height:24px; font-size:13px;">&#8249;</span>
+          <div class="holiday-label" style="margin:0; font-weight:600; color:var(--ink);">${payWindowLabel}</div>
+          <span class="cal-nav-btn" id="estimate-next" style="width:24px; height:24px; font-size:13px;">&#8250;</span>
+        </div>
+        <div class="holiday-date" style="font-size:22px; font-weight:600; color:var(--amber); margin-top:8px;">£${estTotal.toFixed(2)}</div>
+        <div class="holiday-label" style="margin-top:2px;">${estTicketCount} ticket${estTicketCount===1?'':'s'} (£${estTicketCost.toFixed(2)}) + ${estParkingDays} parking day${estParkingDays===1?'':'s'} (£${estParkingCost.toFixed(2)})</div>
       </div>
     </div>`}
 
