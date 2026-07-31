@@ -306,6 +306,11 @@
     font-size: 12.5px;
     color: var(--amber);
     letter-spacing: 0.2px;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .section-label{
@@ -476,6 +481,11 @@
     color: var(--ink-dim);
     text-decoration: underline;
     cursor:pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .modal-overlay{
@@ -535,6 +545,7 @@ let lastNotifiedBuyKey = null; // the buy date we last notified/synced for, to d
 let googleTokenClient = null; // lazily-initialized GIS token client
 let cachedAccessToken = null;
 let cachedTokenExpiry = 0;
+let gcalLastSyncFailed = false; // transient, not persisted — just for this session's UI feedback
 
 // Optional one-off import of past comments, e.g. from an old spreadsheet.
 // Left empty here deliberately — this file is public. See import-seed-data.js
@@ -874,6 +885,7 @@ async function syncGoogleCalendarEvent(dateKey){
     summary: 'Buy train ticket',
     start: { dateTime: `${dateKey}T20:00:00`, timeZone: 'Europe/London' },
     end: { dateTime: `${dateKey}T20:15:00`, timeZone: 'Europe/London' },
+    colorId: '10', // Google Calendar's "Basil" — appears as green, matching the user's usual task color
     reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] }
   };
   const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -1126,12 +1138,21 @@ function render(){
       if (lastNotifiedBuyKey !== null){ // don't notify on the very first-ever load
         showLocalNotification('Ticket buy date updated', `Now due ${dateLabelShort(parseKey(nextBuyKey))}`);
       }
-      if (gcalEnabled){ gcalPendingSync = true; saveGcalPendingSync(); }
+      if (gcalEnabled){
+        gcalPendingSync = true; saveGcalPendingSync();
+        // Try a fully silent update first — if a cached token from a
+        // recent connection/tap is still valid, this succeeds with no
+        // popup or interaction needed at all. Only if that's not
+        // possible (token expired) does the manual prompt below stay
+        // visible, since getting a fresh token needs a real tap.
+        syncGoogleCalendarEvent(nextBuyKey).then((ok) => { if (ok) render(); });
+      }
       lastNotifiedBuyKey = nextBuyKey;
       saveLastNotifiedBuyKey();
     }
     if (gcalEnabled && gcalPendingSync && nextBuyKey){
-      calendarPromptHtml = `<div class="next-buy-line" id="calendar-sync-prompt" style="cursor:pointer; text-decoration:underline;">Tap to update Google Calendar</div>`;
+      const promptLabel = gcalLastSyncFailed ? 'Couldn\'t update Google Calendar — tap to retry' : 'Tap to update Google Calendar';
+      calendarPromptHtml = `<div class="next-buy-line" id="calendar-sync-prompt" style="cursor:pointer; text-decoration:underline;">${promptLabel}</div>`;
     }
   }
 
@@ -1390,7 +1411,9 @@ function render(){
   if (calendarSyncPrompt){
     calendarSyncPrompt.addEventListener('click', async () => {
       const nb = findNextBuyDateKey(today, todayKey);
-      if (nb) await syncGoogleCalendarEvent(nb);
+      let ok = false;
+      if (nb) ok = await syncGoogleCalendarEvent(nb);
+      gcalLastSyncFailed = !ok;
       render();
     });
   }
