@@ -12,6 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="8-Day Ticket">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   @font-face {
     font-family: 'DSDigital';
@@ -522,6 +523,19 @@
 <script>
 const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 
+// Replace this with your own OAuth client ID from Google Cloud Console
+// to enable the Google Calendar sync feature. Safe to be public — a
+// client ID is not a secret, unlike an API key or password.
+const GOOGLE_CLIENT_ID = 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com';
+
+let gcalEnabled = false; // whether the person has connected Google Calendar
+let gcalEventId = null; // the calendar event ID for the current buy-ticket reminder, if any
+let gcalPendingSync = false; // true when the buy date changed since the calendar was last updated
+let lastNotifiedBuyKey = null; // the buy date we last notified/synced for, to detect changes
+let googleTokenClient = null; // lazily-initialized GIS token client
+let cachedAccessToken = null;
+let cachedTokenExpiry = 0;
+
 // Optional one-off import of past comments, e.g. from an old spreadsheet.
 // Left empty here deliberately — this file is public. See import-seed-data.js
 // (kept out of the GitHub repo) for how to load personal history in privately.
@@ -597,6 +611,22 @@ async function loadData(){
     dismissedMonths = dm ? JSON.parse(dm) : {};
   }catch(e){ dismissedMonths = {}; }
   try{
+    const ge = localStorage.getItem('gcal-enabled');
+    gcalEnabled = ge ? JSON.parse(ge) : false;
+  }catch(e){ gcalEnabled = false; }
+  try{
+    const gi = localStorage.getItem('gcal-event-id');
+    gcalEventId = gi ? JSON.parse(gi) : null;
+  }catch(e){ gcalEventId = null; }
+  try{
+    const gp = localStorage.getItem('gcal-pending-sync');
+    gcalPendingSync = gp ? JSON.parse(gp) : false;
+  }catch(e){ gcalPendingSync = false; }
+  try{
+    const ln = localStorage.getItem('ticket-last-notified-buy-key');
+    lastNotifiedBuyKey = ln ? JSON.parse(ln) : null;
+  }catch(e){ lastNotifiedBuyKey = null; }
+  try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
   }catch(e){ periodStart = DEFAULT_PERIOD_START; }
@@ -646,6 +676,22 @@ async function saveParkingCost(){
 }
 async function saveDismissedMonths(){
   try{ localStorage.setItem('ticket-dismissed-months', JSON.stringify(dismissedMonths)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveGcalEnabled(){
+  try{ localStorage.setItem('gcal-enabled', JSON.stringify(gcalEnabled)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveGcalEventId(){
+  try{ localStorage.setItem('gcal-event-id', JSON.stringify(gcalEventId)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveGcalPendingSync(){
+  try{ localStorage.setItem('gcal-pending-sync', JSON.stringify(gcalPendingSync)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveLastNotifiedBuyKey(){
+  try{ localStorage.setItem('ticket-last-notified-buy-key', JSON.stringify(lastNotifiedBuyKey)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePeriodStart(){
@@ -752,6 +798,112 @@ function getPayPeriodByOffset(baseDate, offset){
     currentPayDate = getPayDate(pm < 0 ? py - 1 : py, pm < 0 ? 11 : pm);
   }
   return { start: currentPayDate, end: addDays(nextPayDate, -1) };
+}
+
+// Finds the next date flagged as a ticket-buy day, searching well beyond
+// the visible day list so it's accurate regardless of scroll position.
+function findNextBuyDateKey(today, todayKeyParam){
+  const buySearchStates = computeStates(addDays(today, 40));
+  let nextBuyKey = null;
+  for (const key in buySearchStates){
+    if (key >= todayKeyParam && buySearchStates[key].buyFlag){
+      if (!nextBuyKey || key < nextBuyKey) nextBuyKey = key;
+    }
+  }
+  return nextBuyKey;
+}
+
+// Shows a local notification via the service worker, which is the more
+// reliable path for installed PWAs on Android compared to the plain
+// Notification constructor.
+async function showLocalNotification(title, body){
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    reg.showNotification(title, { body, icon: 'icons/icon-192.png' });
+  }catch(e){ /* notification failed silently — not critical */ }
+}
+
+function ensureGoogleTokenClient(){
+  if (!googleTokenClient && window.google && google.accounts && google.accounts.oauth2){
+    googleTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/calendar.events',
+      callback: () => {} // overridden per-request below
+    });
+  }
+  return googleTokenClient;
+}
+
+// Gets a valid Google access token, reusing a cached one if it hasn't
+// expired yet. Must be called from within a genuine user gesture (a
+// click handler) the first time, or the browser may block the consent
+// popup — this is why calendar syncing happens via a tappable prompt
+// rather than automatically in the background.
+function getGoogleAccessToken(){
+  return new Promise((resolve) => {
+    if (cachedAccessToken && Date.now() < cachedTokenExpiry){
+      resolve(cachedAccessToken);
+      return;
+    }
+    const client = ensureGoogleTokenClient();
+    if (!client){ resolve(null); return; }
+    client.callback = (resp) => {
+      if (resp && resp.access_token){
+        cachedAccessToken = resp.access_token;
+        cachedTokenExpiry = Date.now() + (resp.expires_in ? resp.expires_in * 1000 : 3000000) - 60000;
+        resolve(cachedAccessToken);
+      } else {
+        resolve(null);
+      }
+    };
+    client.requestAccessToken({ prompt: '' });
+  });
+}
+
+// Creates or updates the single "Buy train ticket" calendar event for the
+// given date, at 8pm with an immediate popup reminder. Reuses the same
+// event (updating its date) rather than creating a new one each time, so
+// old reminders don't pile up. If the stored event was deleted manually,
+// falls back to creating a fresh one rather than failing silently forever.
+async function syncGoogleCalendarEvent(dateKey){
+  const token = await getGoogleAccessToken();
+  if (!token) return false;
+
+  const eventBody = {
+    summary: 'Buy train ticket',
+    start: { dateTime: `${dateKey}T20:00:00`, timeZone: 'Europe/London' },
+    end: { dateTime: `${dateKey}T20:15:00`, timeZone: 'Europe/London' },
+    reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] }
+  };
+  const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  try{
+    if (gcalEventId){
+      const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${gcalEventId}`, {
+        method: 'PATCH', headers, body: JSON.stringify(eventBody)
+      });
+      if (resp.status === 404){
+        gcalEventId = null; // stale — someone deleted it manually; fall through to create fresh
+      } else if (!resp.ok){
+        return false;
+      }
+    }
+    if (!gcalEventId){
+      const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        method: 'POST', headers, body: JSON.stringify(eventBody)
+      });
+      if (!resp.ok) return false;
+      const data = await resp.json();
+      gcalEventId = data.id;
+      await saveGcalEventId();
+    }
+    gcalPendingSync = false;
+    await saveGcalPendingSync();
+    return true;
+  }catch(e){
+    return false; // left pending — will retry next time the prompt is tapped
+  }
 }
 
 function computeStates(targetDate){
@@ -899,6 +1051,14 @@ function render(){
     { id: 'recalibrate-link', label: 'Just bought a new ticket? Set start date', weight: 0 },
     { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
   ];
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
+    menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
+  }
+  if (gcalEnabled){
+    menuItems.push({ id: 'disconnect-gcal-link', label: 'Disconnect Google Calendar', weight: 0 });
+  } else {
+    menuItems.push({ id: 'connect-gcal-link', label: 'Connect Google Calendar', weight: 0 });
+  }
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
   menuItems.push({ id: 'import-history-link', label: 'Import historical data', weight: 100 });
   menuItems.sort((a, b) => a.weight - b.weight);
@@ -952,16 +1112,26 @@ function render(){
   // tapped "Show more days". Not shown if today itself is the buy day,
   // since the status banner above already covers that case.
   let nextBuyHtml = '';
+  let calendarPromptHtml = '';
   if (!beforePeriod){
-    const buySearchStates = computeStates(addDays(today, 40));
-    let nextBuyKey = null;
-    for (const key in buySearchStates){
-      if (key >= todayKey && buySearchStates[key].buyFlag){
-        if (!nextBuyKey || key < nextBuyKey) nextBuyKey = key;
-      }
-    }
+    const nextBuyKey = findNextBuyDateKey(today, todayKey);
     if (nextBuyKey && nextBuyKey !== todayKey){
       nextBuyHtml = `<div class="next-buy-line">Next ticket due ${dateLabelShort(parseKey(nextBuyKey))}</div>`;
+    }
+    // If the predicted buy date has changed since we last checked, let
+    // the person know and flag the calendar for an update. This only
+    // runs when the app is actually open — there's no way to notify
+    // reliably while it's closed without a server pushing to it.
+    if (nextBuyKey && nextBuyKey !== lastNotifiedBuyKey){
+      if (lastNotifiedBuyKey !== null){ // don't notify on the very first-ever load
+        showLocalNotification('Ticket buy date updated', `Now due ${dateLabelShort(parseKey(nextBuyKey))}`);
+      }
+      if (gcalEnabled){ gcalPendingSync = true; saveGcalPendingSync(); }
+      lastNotifiedBuyKey = nextBuyKey;
+      saveLastNotifiedBuyKey();
+    }
+    if (gcalEnabled && gcalPendingSync && nextBuyKey){
+      calendarPromptHtml = `<div class="next-buy-line" id="calendar-sync-prompt" style="cursor:pointer; text-decoration:underline;">Tap to update Google Calendar</div>`;
     }
   }
 
@@ -1057,6 +1227,7 @@ function render(){
       <div class="day-progress-track"><div class="day-progress-fill" style="width:${dayProgressPct}%"></div></div>
       ${statusHtml}
       ${nextBuyHtml}
+      ${calendarPromptHtml}
     </div>
 
     ${!showEstimateCard ? '' : `
@@ -1179,6 +1350,50 @@ function render(){
   if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
   const parkingCostLink = document.getElementById('parking-cost-link');
   if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; render(); openParkingCostEditor(); });
+
+  const enableNotificationsLink = document.getElementById('enable-notifications-link');
+  if (enableNotificationsLink){
+    enableNotificationsLink.addEventListener('click', () => {
+      menuOpen = false;
+      Notification.requestPermission().then(() => render());
+    });
+  }
+
+  const connectGcalLink = document.getElementById('connect-gcal-link');
+  if (connectGcalLink){
+    connectGcalLink.addEventListener('click', async () => {
+      menuOpen = false; render();
+      if (GOOGLE_CLIENT_ID.includes('YOUR_CLIENT_ID')){
+        alert('Google Calendar isn\'t set up yet. See the setup notes for what\'s needed.');
+        return;
+      }
+      const token = await getGoogleAccessToken();
+      if (token){
+        gcalEnabled = true;
+        await saveGcalEnabled();
+        const nb = findNextBuyDateKey(today, todayKey);
+        if (nb){ gcalPendingSync = true; await syncGoogleCalendarEvent(nb); }
+        render();
+      }
+    });
+  }
+  const disconnectGcalLink = document.getElementById('disconnect-gcal-link');
+  if (disconnectGcalLink){
+    disconnectGcalLink.addEventListener('click', async () => {
+      menuOpen = false;
+      gcalEnabled = false;
+      await saveGcalEnabled();
+      render();
+    });
+  }
+  const calendarSyncPrompt = document.getElementById('calendar-sync-prompt');
+  if (calendarSyncPrompt){
+    calendarSyncPrompt.addEventListener('click', async () => {
+      const nb = findNextBuyDateKey(today, todayKey);
+      if (nb) await syncGoogleCalendarEvent(nb);
+      render();
+    });
+  }
 
   const dismissBtn = document.getElementById('month-estimate-dismiss');
   if (dismissBtn){
