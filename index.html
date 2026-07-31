@@ -888,6 +888,22 @@ function render(){
   const todayIsWeekend = isWeekend(today);
   const beforePeriod = !todayState;
 
+  // Hamburger menu items, built as a weighted list so ordering is
+  // controlled by 'weight' rather than by where an item happens to sit in
+  // this template — new items default to the main group, and anything
+  // given a high weight (like Import historical data) always sorts to
+  // the bottom, however many other items get added later.
+  const earlyDismissedCheck = !!dismissedMonths[fmtKey(getPayPeriodByOffset(today, 0).start)];
+  const menuItems = [
+    { id: 'calendar-view-link', label: 'Calendar view', weight: 0 },
+    { id: 'recalibrate-link', label: 'Just bought a new ticket? Set start date', weight: 0 },
+    { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
+  ];
+  if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
+  menuItems.push({ id: 'import-history-link', label: 'Import historical data', weight: 100 });
+  menuItems.sort((a, b) => a.weight - b.weight);
+  const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
+
   const nextHolidayKey = findNextHoliday(todayKey);
   let holidayHtml = '';
   if (nextHolidayKey){
@@ -975,8 +991,6 @@ function render(){
   const estParkingCost = estParkingDays * parkingCost;
   const estTotal = estTicketCost + estParkingCost;
   const payWindowLabel = `${dateLabelShort(estWindowStart)} – ${dateLabelShort(estWindowEnd)}`;
-  const currentPeriod = getPayPeriodByOffset(today, 0);
-  const currentPeriodLabel = `${dateLabelShort(currentPeriod.start)} – ${dateLabelShort(currentPeriod.end)}`;
   const monthEstimateDismissed = !!dismissedMonths[estMonthKey];
   const showEstimateCard = !monthEstimateDismissed;
   const rows = days.map(d => {
@@ -1025,11 +1039,7 @@ function render(){
       <div class="menu-btn" id="menu-btn">&#9776;</div>
       ${menuOpen ? `
       <div class="menu-dropdown" id="menu-dropdown">
-        <div class="settings-link" id="calendar-view-link">Calendar view</div>
-        <div class="settings-link" id="recalibrate-link">Just bought a new ticket? Set start date</div>
-        <div class="settings-link" id="import-history-link">Import historical data</div>
-        <div class="settings-link" id="parking-cost-link">Set daily parking cost (currently £${parkingCost.toFixed(2)})</div>
-        ${monthEstimateDismissed ? `<div class="settings-link" id="restore-estimate-link">Show ${currentPeriodLabel} estimate again</div>` : ''}
+        ${menuItemsHtml}
       </div>` : ''}
     </header>
 
