@@ -546,6 +546,8 @@ let googleTokenClient = null; // lazily-initialized GIS token client
 let cachedAccessToken = null;
 let cachedTokenExpiry = 0;
 let gcalLastSyncFailed = false; // transient, not persisted — just for this session's UI feedback
+let scheduledBuyKey = null; // the buy-date candidate currently waiting out the debounce timer
+let buyDateChangeTimer = null; // the pending debounce timeout handle
 
 // Optional one-off import of past comments, e.g. from an old spreadsheet.
 // Left empty here deliberately — this file is public. See import-seed-data.js
@@ -879,7 +881,7 @@ function getGoogleAccessToken(){
 // falls back to creating a fresh one rather than failing silently forever.
 async function syncGoogleCalendarEvent(dateKey){
   const token = await getGoogleAccessToken();
-  if (!token) return false;
+  if (!token) return { ok: false, reason: 'no-token' };
 
   const eventBody = {
     summary: 'Buy train ticket',
@@ -891,6 +893,8 @@ async function syncGoogleCalendarEvent(dateKey){
   const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   try{
+    let method = null;
+    const usedEventId = gcalEventId;
     if (gcalEventId){
       const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${gcalEventId}`, {
         method: 'PATCH', headers, body: JSON.stringify(eventBody)
@@ -898,24 +902,52 @@ async function syncGoogleCalendarEvent(dateKey){
       if (resp.status === 404){
         gcalEventId = null; // stale — someone deleted it manually; fall through to create fresh
       } else if (!resp.ok){
-        return false;
+        return { ok: false, reason: `patch-failed-${resp.status}`, eventId: usedEventId, dateKey };
+      } else {
+        method = 'updated';
       }
     }
     if (!gcalEventId){
       const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
         method: 'POST', headers, body: JSON.stringify(eventBody)
       });
-      if (!resp.ok) return false;
+      if (!resp.ok) return { ok: false, reason: `create-failed-${resp.status}`, dateKey };
       const data = await resp.json();
       gcalEventId = data.id;
       await saveGcalEventId();
+      method = 'created';
     }
     gcalPendingSync = false;
     await saveGcalPendingSync();
-    return true;
+    return { ok: true, method, eventId: gcalEventId, dateKey };
   }catch(e){
-    return false; // left pending — will retry next time the prompt is tapped
+    return { ok: false, reason: `exception: ${e.message}`, dateKey }; // left pending — will retry next time the prompt is tapped
   }
+}
+
+// Fires 10 seconds after the buy date last changed, not 10 seconds after
+// it was first noticed — each further change resets the clock (see the
+// scheduling logic in render()). Re-derives the buy date fresh at fire
+// time rather than trusting the value from whenever it was scheduled,
+// in case something shifted again in the meantime.
+async function fireBuyDateChangeActions(){
+  const freshToday = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const freshTodayKey = fmtKey(freshToday);
+  const freshNext = findNextBuyDateKey(freshToday, freshTodayKey);
+  if (freshNext && freshNext !== lastNotifiedBuyKey){
+    if (lastNotifiedBuyKey !== null){ // don't notify on the very first-ever load
+      showLocalNotification('Ticket buy date updated', `Now due ${dateLabelShort(parseKey(freshNext))}`);
+    }
+    if (gcalEnabled){
+      gcalPendingSync = true; saveGcalPendingSync();
+      syncGoogleCalendarEvent(freshNext).then((result) => { if (result.ok) render(); });
+    }
+    lastNotifiedBuyKey = freshNext;
+    saveLastNotifiedBuyKey();
+    render();
+  }
+  scheduledBuyKey = null;
+  buyDateChangeTimer = null;
 }
 
 function computeStates(targetDate){
@@ -1130,25 +1162,22 @@ function render(){
     if (nextBuyKey && nextBuyKey !== todayKey){
       nextBuyHtml = `<div class="next-buy-line">Next ticket due ${dateLabelShort(parseKey(nextBuyKey))}</div>`;
     }
-    // If the predicted buy date has changed since we last checked, let
-    // the person know and flag the calendar for an update. This only
-    // runs when the app is actually open — there's no way to notify
-    // reliably while it's closed without a server pushing to it.
+    // If the predicted buy date has changed since we last checked, wait
+    // 10 seconds before actually notifying/syncing — if another change
+    // comes in before that (e.g. tagging several holiday days in a row),
+    // the timer resets rather than firing once per edit.
     if (nextBuyKey && nextBuyKey !== lastNotifiedBuyKey){
-      if (lastNotifiedBuyKey !== null){ // don't notify on the very first-ever load
-        showLocalNotification('Ticket buy date updated', `Now due ${dateLabelShort(parseKey(nextBuyKey))}`);
+      if (nextBuyKey !== scheduledBuyKey){
+        scheduledBuyKey = nextBuyKey;
+        if (buyDateChangeTimer) clearTimeout(buyDateChangeTimer);
+        buyDateChangeTimer = setTimeout(fireBuyDateChangeActions, 10000);
       }
-      if (gcalEnabled){
-        gcalPendingSync = true; saveGcalPendingSync();
-        // Try a fully silent update first — if a cached token from a
-        // recent connection/tap is still valid, this succeeds with no
-        // popup or interaction needed at all. Only if that's not
-        // possible (token expired) does the manual prompt below stay
-        // visible, since getting a fresh token needs a real tap.
-        syncGoogleCalendarEvent(nextBuyKey).then((ok) => { if (ok) render(); });
-      }
-      lastNotifiedBuyKey = nextBuyKey;
-      saveLastNotifiedBuyKey();
+    } else if (buyDateChangeTimer){
+      // the change was undone (e.g. tag removed again) before the timer
+      // fired — cancel it rather than notifying about a non-change
+      clearTimeout(buyDateChangeTimer);
+      buyDateChangeTimer = null;
+      scheduledBuyKey = null;
     }
     if (gcalEnabled && gcalPendingSync && nextBuyKey){
       const promptLabel = gcalLastSyncFailed ? 'Couldn\'t update Google Calendar — tap to retry' : 'Tap to update Google Calendar';
@@ -1411,9 +1440,14 @@ function render(){
   if (calendarSyncPrompt){
     calendarSyncPrompt.addEventListener('click', async () => {
       const nb = findNextBuyDateKey(today, todayKey);
-      let ok = false;
-      if (nb) ok = await syncGoogleCalendarEvent(nb);
-      gcalLastSyncFailed = !ok;
+      let result = { ok: false, reason: 'no-buy-date-found' };
+      if (nb) result = await syncGoogleCalendarEvent(nb);
+      gcalLastSyncFailed = !result.ok;
+      if (result.ok){
+        alert(`Calendar ${result.method} for ${result.dateKey}\nEvent ID: ${result.eventId}`);
+      } else {
+        alert(`Calendar update failed: ${result.reason}${result.eventId ? `\nEvent ID used: ${result.eventId}` : ''}`);
+      }
       render();
     });
   }
