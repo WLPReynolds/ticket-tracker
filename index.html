@@ -147,6 +147,16 @@
     background: var(--amber);
     margin-top: 3px;
   }
+  .cal-dot-row{
+    display: flex;
+    gap: 3px;
+  }
+  .cal-dot-delay{
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #ff8b7e;
+    margin-top: 3px;
+  }
   .eyebrow{
     font-size: 11px;
     letter-spacing: 3px;
@@ -538,7 +548,7 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    margin: 10px 0;
+    margin: 10px 16px;
     padding: 10px;
     font-size: 13px;
     font-weight: 600;
@@ -1970,8 +1980,18 @@ function openCalendarView(){
       const weekend = isWeekend(d);
       const isToday = key === todayKeyLocal;
       const hasEntry = !!(comments[key] || '').trim();
+      let hasDelay = false;
+      if (isEligibleRailDay(d, todayKeyLocal)){
+        const dayPerf = railPerfCache[key];
+        if (dayPerf){
+          hasDelay = railTrains.some(t => dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
+        }
+      }
+      const dots = (hasEntry || hasDelay)
+        ? `<span class="cal-dot-row">${hasEntry ? '<span class="cal-dot"></span>' : ''}${hasDelay ? '<span class="cal-dot-delay"></span>' : ''}</span>`
+        : '';
       cells += `<div class="cal-day ${weekend ? 'weekend' : ''} ${isToday ? 'today' : ''}">
-        <span>${day}</span>${hasEntry ? '<span class="cal-dot"></span>' : ''}
+        <span>${day}</span>${dots}
       </div>`;
     }
     document.getElementById('cal-grid').innerHTML = cells;
