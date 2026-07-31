@@ -417,6 +417,11 @@
     padding: 12px 14px;
     border-bottom: 1px solid var(--line);
     cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
   .day-row:last-child{ border-bottom:none; }
   .day-row.is-today{
@@ -468,6 +473,11 @@
     margin-left: 8px;
     vertical-align: middle;
     cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
   .rail-detail-row{
     display: flex;
@@ -511,6 +521,34 @@
     -webkit-touch-callout: none;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
+  }
+
+  .day-nav-btn{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 10px 0;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    background: var(--tile);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .day-nav-btn:active{
+    background: rgba(255,255,255,0.06);
+  }
+  .day-nav-btn .arrow-icon{
+    color: var(--amber);
+    font-size: 14px;
   }
 
   .modal-overlay{
@@ -1464,9 +1502,9 @@ function render(){
     </div>
 
     <div class="section-label">Upcoming &amp; recent days</div>
+    ${railDaysBack < RAIL_MAX_DAYS_BACK ? `<div class="day-nav-btn" id="show-earlier-link"><span class="arrow-icon">&#8593;</span> Show earlier days</div>` : ''}
     <div class="day-list">${rows}</div>
-    ${railDaysBack < RAIL_MAX_DAYS_BACK ? `<div class="settings-link" id="show-earlier-link">Show earlier days</div>` : ''}
-    ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="settings-link" id="show-more-link">Show more days</div>` : ''}
+    ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="day-nav-btn" id="show-more-link">Show more days <span class="arrow-icon">&#8595;</span></div>` : ''}
   `;
 
   // wire up chip row for today
@@ -1771,7 +1809,7 @@ function openRailConfig(){
   overlay.className = 'modal-overlay';
 
   function buildSectionHtml(direction, title, fromLoc, toLoc){
-    const trains = railTrains.filter(t => t.direction === direction);
+    const trains = railTrains.filter(t => t.direction === direction).sort((a, b) => a.time.localeCompare(b.time));
     const rows = trains.map(t => `
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
         <input type="time" class="rail-time-input" data-key="${t.key}" value="${t.time.slice(0,2)}:${t.time.slice(2,4)}" style="flex:1;" />
@@ -1838,8 +1876,8 @@ function openRailConfig(){
 function openRailDetail(key){
   const d = parseKey(key);
   const dayPerf = railPerfCache[key] || {};
-  const amTrains = railTrains.filter(t => t.direction === 'AM');
-  const pmTrains = railTrains.filter(t => t.direction === 'PM');
+  const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
+  const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a, b) => a.time.localeCompare(b.time));
 
   function rowsFor(trains){
     return trains.map(t => {
