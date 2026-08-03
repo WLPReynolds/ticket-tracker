@@ -701,6 +701,47 @@ const DEFAULT_RAIL_TRAINS = [
   { key: 'pm-1631', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1631', label: '16:31', optional: true },
   { key: 'pm-1831', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1831', label: '18:31', optional: true },
 ];
+
+// Approximate station coordinates — precise enough for a rough geofencing
+// test; worth refining with a proper lookup later if this becomes a real
+// feature rather than a proof of concept.
+const STATION_COORDS = {
+  CRE: { lat: 53.0896, lon: -2.4333, name: 'Crewe' },
+  WGN: { lat: 53.5459, lon: -2.6329, name: 'Wigan North Western' },
+};
+
+// Haversine formula — great-circle distance between two lat/lon points, in km.
+function distanceKm(lat1, lon1, lat2, lon2){
+  const R = 6371;
+  const toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function testLocationDistance(){
+  if (!navigator.geolocation){
+    alert('Geolocation is not available in this browser.');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      const lines = [`Your location: ${latitude.toFixed(5)}, ${longitude.toFixed(5)} (accuracy ±${Math.round(accuracy)}m)`, ''];
+      for (const code in STATION_COORDS){
+        const s = STATION_COORDS[code];
+        const km = distanceKm(latitude, longitude, s.lat, s.lon);
+        lines.push(`${s.name} (${code}): ${km.toFixed(2)} km away`);
+      }
+      alert(lines.join('\n'));
+    },
+    (err) => {
+      alert(`Couldn't get your location: ${err.message}`);
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+}
 let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
 let loaded = false;
 
@@ -1291,6 +1332,7 @@ function render(){
     { id: 'recalibrate-link', label: 'Just bought a new ticket? Set start date', weight: 0 },
     { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
+    { id: 'test-location-link', label: '(Test) Check distance to stations', weight: 0 },
   ];
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
     menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
@@ -1622,6 +1664,9 @@ function render(){
 
   const railConfigLink = document.getElementById('rail-config-link');
   if (railConfigLink) railConfigLink.addEventListener('click', () => { menuOpen = false; render(); openRailConfig(); });
+
+  const testLocationLink = document.getElementById('test-location-link');
+  if (testLocationLink) testLocationLink.addEventListener('click', () => { menuOpen = false; render(); testLocationDistance(); });
 
   const enableNotificationsLink = document.getElementById('enable-notifications-link');
   if (enableNotificationsLink){
