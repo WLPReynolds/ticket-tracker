@@ -154,8 +154,10 @@
   .cal-dot-delay{
     width: 5px; height: 5px;
     border-radius: 50%;
-    background: #ff8b7e;
+    background: transparent;
+    border: 1.3px solid #ff8b7e;
     margin-top: 3px;
+    box-sizing: border-box;
   }
   .eyebrow{
     font-size: 11px;
@@ -432,6 +434,9 @@
     -webkit-touch-callout: none;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
+  }
+  .day-row.no-click{
+    cursor: default;
   }
   .day-row:last-child{ border-bottom:none; }
   .day-row.is-today{
@@ -1441,13 +1446,13 @@ function render(){
     }
 
     return `
-      <div class="day-row ${isToday?'is-today':''}" data-key="${key}">
+      <div class="day-row ${isToday?'is-today':''} ${weekend?'no-click':''}" data-key="${key}" data-weekend="${weekend ? '1' : '0'}">
         <div class="count-badge ${badgeClass}">${badgeText}</div>
         <div class="info">
           <div class="dname">${dayNameShort(d)} ${dateLabelShort(d)} ${isToday?'<span class="sub">Today</span>':''}${railBlobHtml}</div>
           ${tag ? `<div class="comment-tag">${tag}</div>` : ''}
         </div>
-        <div class="arrow">›</div>
+        ${weekend ? '' : '<div class="arrow">›</div>'}
       </div>
     `;
   }).join('');
@@ -1509,17 +1514,17 @@ function render(){
 
     ${holidayHtml}
 
+    ${todayIsWeekend ? '' : `
     <div class="section-label">Today's comment</div>
     <div class="comment-card" id="today-comment-card">
       <div class="chip-row" id="chip-row"></div>
       <input type="text" id="custom-comment" placeholder="Or type your own" value="${escapeHtml(todayComment && !PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment : '')}" />
-      ${!todayIsWeekend ? `
       <label style="display:flex; align-items:center; gap:8px; margin:10px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
         <input type="checkbox" id="today-override-checkbox" ${travelOverrides[todayKey] ? 'checked' : ''} style="width:16px; height:16px;" />
         I still used the ticket today
-      </label>` : ''}
+      </label>
       <button class="save-btn" id="save-today-btn">Save</button>
-    </div>
+    </div>`}
 
     <div class="section-label">Upcoming &amp; recent days</div>
     ${railDaysBack < RAIL_MAX_DAYS_BACK ? `<div class="day-nav-btn" id="show-earlier-link"><span class="arrow-icon">&#8593;</span> Show earlier days</div>` : ''}
@@ -1527,49 +1532,51 @@ function render(){
     ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="day-nav-btn" id="show-more-link">Show more days <span class="arrow-icon">&#8595;</span></div>` : ''}
   `;
 
-  // wire up chip row for today
+  // wire up chip row for today (only exists on non-weekend days)
   const chipRow = document.getElementById('chip-row');
-  let selectedPreset = PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment.toUpperCase() : null;
-  chipRow.innerHTML = PRESET_TAGS.map(tag => `<div class="chip ${selectedPreset===tag?'active':''}" data-tag="${tag}">${tag}</div>`).join('') +
-    `<div class="chip ${!selectedPreset && !todayComment ? '' : (!selectedPreset && todayComment ? '' : '')}" data-tag="__clear">Clear</div>`;
+  if (chipRow){
+    let selectedPreset = PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment.toUpperCase() : null;
+    chipRow.innerHTML = PRESET_TAGS.map(tag => `<div class="chip ${selectedPreset===tag?'active':''}" data-tag="${tag}">${tag}</div>`).join('') +
+      `<div class="chip ${!selectedPreset && !todayComment ? '' : (!selectedPreset && todayComment ? '' : '')}" data-tag="__clear">Clear</div>`;
 
-  chipRow.querySelectorAll('.chip').forEach(chip => {
-    chip.addEventListener('click', async () => {
-      const tag = chip.dataset.tag;
+    chipRow.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', async () => {
+        const tag = chip.dataset.tag;
+        const cb = document.getElementById('today-override-checkbox');
+        if (tag === '__clear'){
+          comments[todayKey] = '';
+          delete travelOverrides[todayKey];
+        } else {
+          comments[todayKey] = tag;
+          document.getElementById('custom-comment').value = '';
+          if (cb && cb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
+        }
+        await saveComments();
+        await saveTravelOverrides();
+        render();
+      });
+    });
+
+    document.getElementById('save-today-btn').addEventListener('click', async () => {
+      const val = document.getElementById('custom-comment').value.trim();
       const cb = document.getElementById('today-override-checkbox');
-      if (tag === '__clear'){
-        comments[todayKey] = '';
-        delete travelOverrides[todayKey];
-      } else {
-        comments[todayKey] = tag;
-        document.getElementById('custom-comment').value = '';
+      if (val !== ''){
+        comments[todayKey] = val;
         if (cb && cb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
+        await saveComments();
+        await saveTravelOverrides();
+        render();
       }
-      await saveComments();
-      await saveTravelOverrides();
-      render();
     });
-  });
 
-  document.getElementById('save-today-btn').addEventListener('click', async () => {
-    const val = document.getElementById('custom-comment').value.trim();
-    const cb = document.getElementById('today-override-checkbox');
-    if (val !== ''){
-      comments[todayKey] = val;
-      if (cb && cb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
-      await saveComments();
-      await saveTravelOverrides();
-      render();
+    const todayOverrideCb = document.getElementById('today-override-checkbox');
+    if (todayOverrideCb){
+      todayOverrideCb.addEventListener('change', async () => {
+        if (todayOverrideCb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
+        await saveTravelOverrides();
+        render();
+      });
     }
-  });
-
-  const todayOverrideCb = document.getElementById('today-override-checkbox');
-  if (todayOverrideCb){
-    todayOverrideCb.addEventListener('change', async () => {
-      if (todayOverrideCb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
-      await saveTravelOverrides();
-      render();
-    });
   }
 
   document.querySelectorAll('.day-row').forEach(row => {
@@ -1577,6 +1584,8 @@ function render(){
       if (e.target.classList.contains('rail-blob')){
         e.stopPropagation();
         openRailDetail(e.target.dataset.railKey);
+      } else if (row.dataset.weekend === '1'){
+        // weekends have nothing to tag — no editor to open
       } else {
         openDayEditor(row.dataset.key);
       }
