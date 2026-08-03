@@ -681,6 +681,7 @@ let periodStart = DEFAULT_PERIOD_START; // date the current ticket window began
 let purchases = []; // [{date: 'YYYY-MM-DD', cost: number}, ...] — one entry per ticket bought
 let lastKnownPrice = 153.60; // prefilled into the recalibrate cost field
 let parkingCost = 6.39; // default daily parking estimate
+let dayReturnPrice = 21.00; // used by the ticket purchase advisor to compare against the season ticket
 let dismissedMonths = {}; // monthKey ('YYYY-MM') -> true, for the monthly estimate card
 let menuOpen = false; // whether the hamburger dropdown is currently open
 
@@ -767,6 +768,10 @@ async function loadData(){
     parkingCost = pc ? JSON.parse(pc) : 6.39;
   }catch(e){ parkingCost = 6.39; }
   try{
+    const dr = localStorage.getItem('ticket-day-return-price');
+    dayReturnPrice = dr ? JSON.parse(dr) : 21.00;
+  }catch(e){ dayReturnPrice = 21.00; }
+  try{
     const dm = localStorage.getItem('ticket-dismissed-months');
     dismissedMonths = dm ? JSON.parse(dm) : {};
   }catch(e){ dismissedMonths = {}; }
@@ -840,6 +845,10 @@ async function saveLastKnownPrice(){
 }
 async function saveParkingCost(){
   try{ localStorage.setItem('ticket-parking-cost', JSON.stringify(parkingCost)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveDayReturnPrice(){
+  try{ localStorage.setItem('ticket-day-return-price', JSON.stringify(dayReturnPrice)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveDismissedMonths(){
@@ -1187,6 +1196,34 @@ async function fireBuyDateChangeActions(){
   buyDateChangeTimer = null;
 }
 
+// Computes the end of the *actual* current ticket period only — no
+// chaining into imagined future cycles. This is the real boundary of what
+// you've actually paid for; anything past it needs either a logged single
+// ticket for that specific day, or a fresh season ticket purchase.
+function getRealPeriodEnd(){
+  let cursor = parseKey(periodStart);
+  let usedCount = 0, daysElapsed = 0;
+  while (true){
+    const key = fmtKey(cursor);
+    daysElapsed += 1;
+    const weekend = isWeekend(cursor);
+    const comment = (comments[key] || '').trim();
+    const isTravel = comment === '' || travelOverrides[key];
+    if (!weekend && isTravel) usedCount += 1;
+    const hitUses = usedCount >= USES_PER_PERIOD;
+    const hitDays = daysElapsed >= PERIOD_LENGTH;
+    if (hitUses || hitDays){
+      return { endDate: new Date(cursor), lostDays: hitDays && !hitUses, unusedRemaining: USES_PER_PERIOD - usedCount };
+    }
+    cursor = addDays(cursor, 1);
+  }
+}
+
+// Returns the single-ticket purchase record for an exact date, if any.
+function getSingleTicketForDate(key){
+  return purchases.find(p => p.date === key && p.type === 'single');
+}
+
 function computeStates(targetDate){
   const map = {};
   let segStart = parseKey(periodStart);
@@ -1330,8 +1367,11 @@ function render(){
   const menuItems = [
     { id: 'calendar-view-link', label: 'Calendar view', weight: 0 },
     { id: 'recalibrate-link', label: 'Just bought a new ticket? Set start date', weight: 0 },
+    { id: 'log-single-link', label: 'Log a single ticket', weight: 0 },
     { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
+    { id: 'day-return-price-link', label: `Set day return price (currently £${dayReturnPrice.toFixed(2)})`, weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
+    { id: 'stats-link', label: 'View stats', weight: 0 },
     { id: 'test-location-link', label: '(Test) Check distance to stations', weight: 0 },
   ];
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
@@ -1366,9 +1406,23 @@ function render(){
   const yearToDatePurchases = purchases.filter(p => parseKey(p.date).getFullYear() === currentYear);
   const yearToDateTotal = yearToDatePurchases.reduce((sum, p) => sum + p.cost, 0);
 
+  const realPeriodEnd = beforePeriod ? null : getRealPeriodEnd();
+  const isPhantomToday = !beforePeriod && fmtKey(today) > fmtKey(realPeriodEnd.endDate);
+
   let statusHtml = '';
   if (beforePeriod){
     statusHtml = `<div class="status-banner skip">This ticket starts ${dateLabel(parseKey(periodStart))}</div>`;
+  } else if (isPhantomToday){
+    const singleToday = getSingleTicketForDate(todayKey);
+    if (todayIsWeekend){
+      statusHtml = `<div class="status-banner skip">Weekend — no ticket needed</div>`;
+    } else if (singleToday){
+      statusHtml = `<div class="status-banner ok">Single ticket used today (£${singleToday.cost.toFixed(2)})</div>`;
+    } else if (todayComment !== '' && !travelOverrides[todayKey]){
+      statusHtml = `<div class="status-banner skip">Marked "${escapeHtml(todayComment)}" — not counted</div>`;
+    } else {
+      statusHtml = `<div class="status-banner renew">No active season ticket — log a single ticket, or buy your next one</div>`;
+    }
   } else if (todayState.buyFlag){
     const lostMsg = todayState.lostDays ? ` (${todayState.unusedRemaining} unused day${todayState.unusedRemaining===1?'':'s'} lost)` : '';
     statusHtml = `<div class="status-banner renew">🚆 Buy your ticket tonight for tomorrow${lostMsg}</div>`;
@@ -1469,11 +1523,27 @@ function render(){
           <div class="arrow">›</div>
         </div>`;
     }
-    const badgeClass = s.buyFlag ? 'eight' : ((weekend || s.inGap) ? 'weekend' : '');
-    const badgeText = (weekend || s.inGap) ? '–' : s.usedCount;
+    const isPastPhantom = !weekend && !beforePeriod && key <= todayKey && key > fmtKey(realPeriodEnd.endDate);
+    const singleForDay = isPastPhantom ? getSingleTicketForDate(key) : null;
+
+    let badgeClass, badgeText;
+    if (isPastPhantom){
+      badgeClass = singleForDay ? 'eight' : 'weekend';
+      badgeText = singleForDay ? 'S' : '–';
+    } else {
+      badgeClass = s.buyFlag ? 'eight' : ((weekend || s.inGap) ? 'weekend' : '');
+      badgeText = (weekend || s.inGap) ? '–' : s.usedCount;
+    }
+
     let tag = '';
     const overridden = comment !== '' && !!travelOverrides[key];
-    if (comment && s.buyFlag) tag = `${escapeHtml(comment)}${overridden ? ' &middot; counted' : ''} · Buy ticket${s.lostDays ? ` · ${s.unusedRemaining} lost` : ''}`;
+    if (isPastPhantom){
+      if (comment && singleForDay) tag = `${escapeHtml(comment)} &middot; Single ticket (£${singleForDay.cost.toFixed(2)})`;
+      else if (singleForDay) tag = `Single ticket (£${singleForDay.cost.toFixed(2)})`;
+      else if (comment) tag = escapeHtml(comment) + (overridden ? ' &middot; counted' : '');
+      else tag = 'No active ticket';
+    }
+    else if (comment && s.buyFlag) tag = `${escapeHtml(comment)}${overridden ? ' &middot; counted' : ''} · Buy ticket${s.lostDays ? ` · ${s.unusedRemaining} lost` : ''}`;
     else if (comment) tag = escapeHtml(comment) + (overridden ? ' &middot; counted' : '');
     else if (s.buyFlag) tag = s.lostDays ? `Buy ticket · ${s.unusedRemaining} lost` : 'Buy ticket';
     else if (weekend) tag = 'Weekend';
@@ -1657,13 +1727,21 @@ function render(){
   if (calendarViewLink) calendarViewLink.addEventListener('click', () => { menuOpen = false; render(); openCalendarView(); });
   const recalibrateLink = document.getElementById('recalibrate-link');
   if (recalibrateLink) recalibrateLink.addEventListener('click', () => { menuOpen = false; render(); openRecalibrate(); });
+  const logSingleLink = document.getElementById('log-single-link');
+  if (logSingleLink) logSingleLink.addEventListener('click', () => { menuOpen = false; render(); openLogSingleTicket(); });
   const importHistoryLink = document.getElementById('import-history-link');
   if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
   const parkingCostLink = document.getElementById('parking-cost-link');
   if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; render(); openParkingCostEditor(); });
 
+  const dayReturnPriceLink = document.getElementById('day-return-price-link');
+  if (dayReturnPriceLink) dayReturnPriceLink.addEventListener('click', () => { menuOpen = false; render(); openDayReturnPriceEditor(); });
+
   const railConfigLink = document.getElementById('rail-config-link');
   if (railConfigLink) railConfigLink.addEventListener('click', () => { menuOpen = false; render(); openRailConfig(); });
+
+  const statsLink = document.getElementById('stats-link');
+  if (statsLink) statsLink.addEventListener('click', () => { menuOpen = false; render(); openStatsView(); });
 
   const testLocationLink = document.getElementById('test-location-link');
   if (testLocationLink) testLocationLink.addEventListener('click', () => { menuOpen = false; render(); testLocationDistance(); });
@@ -1878,6 +1956,33 @@ function openParkingCostEditor(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
+function openDayReturnPriceEditor(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Day return price</h3>
+      <div class="sub">Used by the ticket purchase advisor to compare against your season ticket.</div>
+      <input type="number" id="day-return-price-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
+      <button class="save-btn" id="day-return-price-save">Save</button>
+      <div class="modal-close" id="day-return-price-close">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('day-return-price-save').addEventListener('click', async () => {
+    const val = parseFloat(document.getElementById('day-return-price-input').value);
+    if (!isNaN(val) && val >= 0){
+      dayReturnPrice = val;
+      await saveDayReturnPrice();
+      document.body.removeChild(overlay); render();
+    }
+  });
+  document.getElementById('day-return-price-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
 function openRailConfig(){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -2080,8 +2185,8 @@ function openManagePurchases(){
     }
     return sorted.map(p => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
-        <span>${dateLabelShort(parseKey(p.date))} — £${p.cost.toFixed(2)}</span>
-        <span class="modal-close" data-del="${p.date}" style="margin:0; font-size:13px;">Remove</span>
+        <span>${dateLabelShort(parseKey(p.date))} — £${p.cost.toFixed(2)}${p.type === 'single' ? ' <span style="color:var(--ink-dim); font-size:12px;">(single)</span>' : ''}</span>
+        <span class="modal-close" data-del-date="${p.date}" data-del-type="${p.type || 'season'}" style="margin:0; font-size:13px;">Remove</span>
       </div>`).join('');
   }
 
@@ -2107,9 +2212,10 @@ function openManagePurchases(){
 
   function refreshList(){
     document.getElementById('purchases-list').innerHTML = buildListHtml();
-    overlay.querySelectorAll('[data-del]').forEach(el => {
+    overlay.querySelectorAll('[data-del-date]').forEach(el => {
       el.addEventListener('click', async () => {
-        purchases = purchases.filter(p => p.date !== el.dataset.del);
+        const delType = el.dataset.delType === 'single' ? 'single' : undefined;
+        purchases = purchases.filter(p => !(p.date === el.dataset.delDate && (p.type || undefined) === delType));
         await savePurchases();
         refreshList();
         render();
@@ -2165,6 +2271,126 @@ function openManagePurchases(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
+// Stats registry — each entry is self-contained: an id, a section it
+// belongs to, and a compute() function returning a display string. New
+// features should add their own entry here rather than the stats screen
+// itself needing to change shape as the app grows.
+const STAT_DEFINITIONS = [
+  {
+    id: 'lifetime-spent', section: 'Tickets', label: 'Total spent (all time)',
+    compute: () => `£${purchases.reduce((sum, p) => sum + p.cost, 0).toFixed(2)}`
+  },
+  {
+    id: 'tickets-bought', section: 'Tickets', label: 'Tickets bought',
+    compute: () => String(purchases.length)
+  },
+  {
+    id: 'avg-ticket-cost', section: 'Tickets', label: 'Average ticket cost',
+    compute: () => purchases.length ? `£${(purchases.reduce((s,p)=>s+p.cost,0)/purchases.length).toFixed(2)}` : '—'
+  },
+  {
+    id: 'ticket-wastage', section: 'Tickets', label: 'Average unused journeys per ticket',
+    compute: () => {
+      if (purchases.length < 2) return 'Not enough history yet';
+      const sorted = [...purchases].sort((a,b) => a.date < b.date ? -1 : 1);
+      const todayKeyLocal = fmtKey(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()));
+      let totalUnused = 0, periodsCounted = 0;
+      for (let i = 0; i < sorted.length - 1; i++){
+        const start = sorted[i].date;
+        const nextStart = sorted[i+1].date;
+        const gapDays = Math.round((parseKey(nextStart) - parseKey(start)) / 86400000);
+        const windowLen = Math.min(28, gapDays);
+        if (nextStart > todayKeyLocal) continue; // period not fully elapsed yet
+        const used = Math.min(8, estimateTravelDaysInWindow(start, windowLen));
+        totalUnused += Math.max(0, 8 - used);
+        periodsCounted++;
+      }
+      if (periodsCounted === 0) return 'Not enough history yet';
+      return (totalUnused / periodsCounted).toFixed(1);
+    }
+  },
+  {
+    id: 'wfh-days', section: 'Working patterns', label: 'WFH days logged (all time)',
+    compute: () => String(Object.values(comments).filter(c => (c||'').trim().toUpperCase() === 'WFH').length)
+  },
+  {
+    id: 'holiday-days', section: 'Working patterns', label: 'Holiday days logged (all time)',
+    compute: () => String(Object.values(comments).filter(c => (c||'').trim().toUpperCase() === 'HOLIDAY').length)
+  },
+  {
+    id: 'bank-holidays', section: 'Working patterns', label: 'Bank holidays auto-tagged',
+    compute: () => String(Object.values(comments).filter(c => (c||'').trim().toUpperCase() === 'BANK HOLIDAY').length)
+  },
+  {
+    id: 'delay-days', section: 'Delay repay', label: 'Possible claim days found',
+    compute: () => {
+      let count = 0;
+      for (const date in railPerfCache){
+        const dayPerf = railPerfCache[date];
+        if (railTrains.some(t => dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES)) count++;
+      }
+      return String(count);
+    }
+  },
+  {
+    id: 'worst-delay', section: 'Delay repay', label: 'Worst single delay recorded',
+    compute: () => {
+      let worst = 0;
+      for (const date in railPerfCache){
+        for (const trainKey in railPerfCache[date]){
+          const dm = railPerfCache[date][trainKey].delayMinutes;
+          if (dm > worst) worst = dm;
+        }
+      }
+      return worst > 0 ? `${worst} minutes` : 'None recorded yet';
+    }
+  },
+];
+
+function openStatsView(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const sections = {};
+  STAT_DEFINITIONS.forEach(stat => {
+    if (!sections[stat.section]) sections[stat.section] = [];
+    let value;
+    try{ value = stat.compute(); }catch(e){ value = '—'; }
+    sections[stat.section].push({ label: stat.label, value });
+  });
+  const sectionsHtml = Object.keys(sections).map(sectionName => `
+    <div class="rail-col-header">${sectionName}</div>
+    ${sections[sectionName].map(s => `
+      <div class="rail-detail-row"><span>${s.label}</span><span style="color:var(--amber); font-weight:600;">${s.value}</span></div>
+    `).join('')}
+  `).join('');
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Your stats</h3>
+      <div class="sub">A running summary across everything the app is tracking.</div>
+      ${sectionsHtml}
+      <div class="modal-close" id="stats-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('stats-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function estimateTravelDaysInWindow(startDateStr, windowLength){
+  const start = parseKey(startDateStr);
+  let count = 0;
+  for (let i = 0; i < windowLength; i++){
+    const d = addDays(start, i);
+    if (isWeekend(d)) continue;
+    const key = fmtKey(d);
+    const comment = (comments[key] || '').trim();
+    if (comment === '' || travelOverrides[key]) count++;
+  }
+  return count;
+}
+
 function openRecalibrate(){
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const suggested = fmtKey(addDays(today, 1));
@@ -2177,11 +2403,37 @@ function openRecalibrate(){
       <input type="date" id="period-start-input" value="${suggested}" style="margin-bottom:12px;" />
       <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost of this ticket (£)</label>
       <input type="number" id="period-cost-input" value="${lastKnownPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
+      <div id="advisor-note" style="font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:14px; display:none;"></div>
       <button class="save-btn" id="period-start-save">Set as new ticket start</button>
       <div class="modal-close" id="recal-close-btn">Cancel</div>
     </div>
   `;
   document.body.appendChild(overlay);
+
+  function updateAdvisor(){
+    const startVal = document.getElementById('period-start-input').value;
+    const costVal = parseFloat(document.getElementById('period-cost-input').value);
+    const note = document.getElementById('advisor-note');
+    if (!startVal || isNaN(costVal)){ note.style.display = 'none'; return; }
+    const estDays = estimateTravelDaysInWindow(startVal, 28);
+    const singlesCost = estDays * dayReturnPrice;
+    note.style.display = 'block';
+    if (singlesCost < costVal && estDays < 8){
+      note.style.background = 'rgba(224,90,78,0.12)';
+      note.style.border = '1px solid rgba(224,90,78,0.35)';
+      note.style.color = '#ff8b7e';
+      note.innerHTML = `Based on days already planned, you're likely to need ~${estDays} travel day${estDays===1?'':'s'} in this window. At £${dayReturnPrice.toFixed(2)} a day return, singles would cost £${singlesCost.toFixed(2)} vs £${costVal.toFixed(2)} for this ticket — singles may be cheaper this time.`;
+    } else {
+      note.style.background = 'rgba(111,191,138,0.1)';
+      note.style.border = '1px solid rgba(111,191,138,0.3)';
+      note.style.color = 'var(--good)';
+      note.innerHTML = `Based on days already planned, you're likely to need ~${estDays} travel day${estDays===1?'':'s'} in this window. The season ticket looks like the better value (£${costVal.toFixed(2)} vs £${singlesCost.toFixed(2)} for singles).`;
+    }
+  }
+  document.getElementById('period-start-input').addEventListener('change', updateAdvisor);
+  document.getElementById('period-cost-input').addEventListener('input', updateAdvisor);
+  updateAdvisor();
+
   document.getElementById('period-start-save').addEventListener('click', async () => {
     const val = document.getElementById('period-start-input').value;
     const costVal = parseFloat(document.getElementById('period-cost-input').value);
@@ -2200,6 +2452,43 @@ function openRecalibrate(){
     }
   });
   document.getElementById('recal-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openLogSingleTicket(){
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const suggested = fmtKey(addDays(today, 1)); // defaults to tomorrow, since singles are often bought the evening before
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Log a single ticket</h3>
+      <div class="sub">For a day return bought instead of using your season ticket — doesn't affect your 8-use/28-day tracking, just logs the cost and marks that day as covered.</div>
+      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Date this ticket is for</label>
+      <input type="date" id="single-date-input" value="${suggested}" style="margin-bottom:12px;" />
+      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost (£)</label>
+      <input type="number" id="single-cost-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
+      <button class="save-btn" id="single-save-btn">Log this ticket</button>
+      <div class="modal-close" id="single-close-btn">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('single-save-btn').addEventListener('click', async () => {
+    const dateVal = document.getElementById('single-date-input').value;
+    const costVal = parseFloat(document.getElementById('single-cost-input').value);
+    if (dateVal && !isNaN(costVal) && costVal >= 0){
+      purchases = purchases.filter(p => !(p.date === dateVal && p.type === 'single')); // replace any existing single for this date
+      purchases.push({ date: dateVal, cost: costVal, type: 'single' });
+      purchases.sort((a, b) => a.date < b.date ? -1 : 1);
+      dayReturnPrice = costVal; // remember for next time, same pattern as the season ticket price
+      await savePurchases();
+      await saveDayReturnPrice();
+      document.body.removeChild(overlay); render();
+    }
+  });
+  document.getElementById('single-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
