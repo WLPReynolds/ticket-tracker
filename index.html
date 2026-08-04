@@ -632,6 +632,7 @@ const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
+let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
 let gcalEventId = null; // the calendar event ID for the current buy-ticket reminder, if any
 let gcalPendingSync = false; // true when the buy date changed since the calendar was last updated
 let lastNotifiedBuyKey = null; // the buy date we last notified/synced for, to detect changes
@@ -785,6 +786,10 @@ async function loadData(){
     gcalEnabled = ge ? JSON.parse(ge) : false;
   }catch(e){ gcalEnabled = false; }
   try{
+    const pe = localStorage.getItem('preferred-google-email');
+    preferredGoogleEmail = pe ? JSON.parse(pe) : '';
+  }catch(e){ preferredGoogleEmail = ''; }
+  try{
     const gi = localStorage.getItem('gcal-event-id');
     gcalEventId = gi ? JSON.parse(gi) : null;
   }catch(e){ gcalEventId = null; }
@@ -862,6 +867,10 @@ async function saveDismissedMonths(){
 }
 async function saveGcalEnabled(){
   try{ localStorage.setItem('gcal-enabled', JSON.stringify(gcalEnabled)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function savePreferredGoogleEmail(){
+  try{ localStorage.setItem('preferred-google-email', JSON.stringify(preferredGoogleEmail)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveGcalEventId(){
@@ -1090,11 +1099,13 @@ async function showLocalNotification(title, body){
 
 function ensureGoogleTokenClient(){
   if (!googleTokenClient && window.google && google.accounts && google.accounts.oauth2){
-    googleTokenClient = google.accounts.oauth2.initTokenClient({
+    const config = {
       client_id: GOOGLE_CLIENT_ID,
       scope: 'https://www.googleapis.com/auth/calendar.events',
       callback: () => {} // overridden per-request below
-    });
+    };
+    if (preferredGoogleEmail) config.login_hint = preferredGoogleEmail;
+    googleTokenClient = google.accounts.oauth2.initTokenClient(config);
   }
   return googleTokenClient;
 }
@@ -1375,6 +1386,7 @@ function render(){
     { id: 'log-single-link', label: 'Log a single ticket', weight: 0 },
     { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
     { id: 'day-return-price-link', label: `Set day return price (currently £${dayReturnPrice.toFixed(2)})`, weight: 0 },
+    { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
     { id: 'test-location-link', label: '(Test) Check distance to stations', weight: 0 },
@@ -1743,6 +1755,9 @@ function render(){
   const dayReturnPriceLink = document.getElementById('day-return-price-link');
   if (dayReturnPriceLink) dayReturnPriceLink.addEventListener('click', () => { menuOpen = false; render(); openDayReturnPriceEditor(); });
 
+  const preferredGoogleLink = document.getElementById('preferred-google-link');
+  if (preferredGoogleLink) preferredGoogleLink.addEventListener('click', () => { menuOpen = false; render(); openPreferredGoogleEditor(); });
+
   const railConfigLink = document.getElementById('rail-config-link');
   if (railConfigLink) railConfigLink.addEventListener('click', () => { menuOpen = false; render(); openRailConfig(); });
 
@@ -1985,6 +2000,32 @@ function openDayReturnPriceEditor(){
     }
   });
   document.getElementById('day-return-price-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openPreferredGoogleEditor(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Preferred Google account</h3>
+      <div class="sub">If you have more than one Google account, entering the email here skips the account picker when connecting to Calendar.</div>
+      <input type="email" id="preferred-google-input" value="${escapeHtml(preferredGoogleEmail)}" placeholder="you@gmail.com" style="margin-bottom:12px;" />
+      <button class="save-btn" id="preferred-google-save">Save</button>
+      <div class="modal-close" id="preferred-google-close">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('preferred-google-save').addEventListener('click', async () => {
+    preferredGoogleEmail = document.getElementById('preferred-google-input').value.trim();
+    await savePreferredGoogleEmail();
+    googleTokenClient = null; // force a fresh client next time, so the new hint actually takes effect
+    cachedAccessToken = null; // any cached token was for the old hint context — don't reuse it
+    document.body.removeChild(overlay); render();
+  });
+  document.getElementById('preferred-google-close').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
