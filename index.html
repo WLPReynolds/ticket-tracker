@@ -137,6 +137,11 @@
     color: var(--ink);
     background: var(--tile);
     position: relative;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
   .cal-day.weekend{ color: var(--ink-dim); background: transparent; }
   .cal-day.empty{ background: transparent; }
@@ -2052,24 +2057,72 @@ function openRailConfig(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
+function railDetailRows(trains, dayPerf){
+  return trains.map(t => {
+    const perf = dayPerf[t.key];
+    if (!perf){
+      return `<div class="rail-detail-row"><span>${t.label}</span><span style="color:var(--ink-dim);">No data</span></div>`;
+    }
+    const late = perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES;
+    const color = late ? '#ff8b7e' : 'var(--good)';
+    const text = perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+    return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
+  }).join('');
+}
+
+function openCalendarDayDetail(key){
+  const d = parseKey(key);
+  const todayKeyLocal = fmtKey(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()));
+  const comment = (comments[key] || '').trim();
+  const dayPerf = railPerfCache[key] || {};
+  const eligible = isEligibleRailDay(d, todayKeyLocal);
+  const hasDelayData = eligible && Object.keys(dayPerf).length > 0;
+
+  const commentHtml = comment ? `
+    <div class="rail-col-header">Logged</div>
+    <div class="rail-detail-row"><span>${escapeHtml(comment)}</span>${travelOverrides[key] ? '<span style="color:var(--ink-dim);">counted anyway</span>' : ''}</div>
+  ` : '';
+
+  let delayHtml = '';
+  if (hasDelayData){
+    const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
+    const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a, b) => a.time.localeCompare(b.time));
+    delayHtml = `
+      <div style="display:flex; gap:24px;">
+        <div style="flex:1;">
+          <div class="rail-col-header">Morning</div>
+          ${amTrains.length ? railDetailRows(amTrains, dayPerf) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+        </div>
+        <div style="flex:1;">
+          <div class="rail-col-header">Evening</div>
+          ${pmTrains.length ? railDetailRows(pmTrains, dayPerf) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+        </div>
+      </div>`;
+  }
+
+  const bodyHtml = (commentHtml || delayHtml) ? (commentHtml + delayHtml) : `<div class="sub">Nothing logged for this day.</div>`;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${dateLabel(d)}</h3>
+      ${bodyHtml}
+      <div class="modal-close" id="cal-day-detail-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('cal-day-detail-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
 function openRailDetail(key){
   const d = parseKey(key);
   const dayPerf = railPerfCache[key] || {};
   const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
   const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a, b) => a.time.localeCompare(b.time));
-
-  function rowsFor(trains){
-    return trains.map(t => {
-      const perf = dayPerf[t.key];
-      if (!perf){
-        return `<div class="rail-detail-row"><span>${t.label}</span><span style="color:var(--ink-dim);">No data</span></div>`;
-      }
-      const late = perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES;
-      const color = late ? '#ff8b7e' : 'var(--good)';
-      const text = perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
-      return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
-    }).join('');
-  }
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -2080,11 +2133,11 @@ function openRailDetail(key){
       <div style="display:flex; gap:24px;">
         <div style="flex:1;">
           <div class="rail-col-header">Morning</div>
-          ${amTrains.length ? rowsFor(amTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+          ${amTrains.length ? railDetailRows(amTrains, dayPerf) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
         </div>
         <div style="flex:1;">
           <div class="rail-col-header">Evening</div>
-          ${pmTrains.length ? rowsFor(pmTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+          ${pmTrains.length ? railDetailRows(pmTrains, dayPerf) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
         </div>
       </div>
       <div class="modal-close" id="rail-detail-close-btn" style="margin-top:16px;">Close</div>
@@ -2149,11 +2202,16 @@ function openCalendarView(){
       const dots = (hasEntry || hasDelay)
         ? `<span class="cal-dot-row">${hasEntry ? '<span class="cal-dot"></span>' : ''}${hasDelay ? '<span class="cal-dot-delay"></span>' : ''}</span>`
         : '';
-      cells += `<div class="cal-day ${weekend ? 'weekend' : ''} ${isToday ? 'today' : ''}">
+      cells += `<div class="cal-day ${weekend ? 'weekend' : ''} ${isToday ? 'today' : ''}" data-key="${key}">
         <span>${day}</span>${dots}
       </div>`;
     }
     document.getElementById('cal-grid').innerHTML = cells;
+
+    document.querySelectorAll('#cal-grid .cal-day[data-key]').forEach(cell => {
+      cell.style.cursor = 'pointer';
+      cell.addEventListener('click', () => openCalendarDayDetail(cell.dataset.key));
+    });
   }
 
   document.getElementById('cal-prev').addEventListener('click', () => {
