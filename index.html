@@ -1692,6 +1692,7 @@ function render(){
         if (todayOverrideCb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
         await saveTravelOverrides();
         render();
+        if (todayOverrideCb.checked) railSyncMissingDates();
       });
     }
   }
@@ -1897,6 +1898,7 @@ function openDayEditor(key){
       if (modalOverrideCb.checked) travelOverrides[key] = true; else delete travelOverrides[key];
       await saveTravelOverrides();
       render(); // safe: this overlay is attached to document.body, not #app, so it survives re-render
+      if (modalOverrideCb.checked) railSyncMissingDates();
     });
   }
 
