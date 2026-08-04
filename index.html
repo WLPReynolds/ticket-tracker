@@ -50,6 +50,17 @@
     border-bottom: 1px solid var(--line);
     background: linear-gradient(180deg, var(--board-2), var(--board));
   }
+  .bunting-row{
+    display: flex;
+    justify-content: center;
+    gap: 5px;
+    padding-bottom: 10px;
+  }
+  .bunting-flag{
+    width: 12px;
+    height: 12px;
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+  }
   .menu-btn{
     position: absolute;
     top: 18px;
@@ -1372,6 +1383,20 @@ function render(){
   const todayState = states[todayKey];
   const todayComment = (comments[todayKey] || '').trim();
   const todayIsWeekend = isWeekend(today);
+
+  // Purely for fun — gov.uk's bank holiday feed includes a genuine "bunting"
+  // flag on celebratory dates (Christmas, Easter Monday, etc. get true;
+  // Good Friday, for instance, gets false). No functional purpose, just a
+  // small decorative flourish on days it applies.
+  let isBuntingDay = false;
+  try{
+    const cachedHolidays = localStorage.getItem('bank-holidays-cache');
+    if (cachedHolidays){
+      const holidayEvents = JSON.parse(cachedHolidays);
+      const todayEvent = holidayEvents.find(ev => ev.date === todayKey);
+      isBuntingDay = !!(todayEvent && todayEvent.bunting);
+    }
+  }catch(e){ isBuntingDay = false; }
   const beforePeriod = !todayState;
 
   // Hamburger menu items, built as a weighted list so ordering is
@@ -1590,6 +1615,16 @@ function render(){
   app.className = '';
   app.innerHTML = `
     <header class="top">
+      ${isBuntingDay ? `
+      <div class="bunting-row" title="Official bunting day, per gov.uk">
+        <span class="bunting-flag" style="background:var(--amber);"></span>
+        <span class="bunting-flag" style="background:#7fc9e8;"></span>
+        <span class="bunting-flag" style="background:var(--good);"></span>
+        <span class="bunting-flag" style="background:var(--amber);"></span>
+        <span class="bunting-flag" style="background:#7fc9e8;"></span>
+        <span class="bunting-flag" style="background:var(--good);"></span>
+        <span class="bunting-flag" style="background:var(--amber);"></span>
+      </div>` : ''}
       <div class="eyebrow">Season Ticket Tracker</div>
       <h1>8-Day Ticket</h1>
       <div class="today-date">${dateLabel(today)}</div>
