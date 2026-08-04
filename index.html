@@ -1287,12 +1287,16 @@ async function pruneOldDriveBackups(token, folderId){
 // The main entry point: called whenever the app is backgrounded. Only
 // actually uploads if something's changed since the last successful
 // backup AND the throttle window has passed — otherwise does nothing.
+let driveBackupInFlight = false; // guards against overlapping triggers — e.g. Google's own OAuth popup opening/closing can itself cause a visibility change, which could otherwise race with an explicit manual backup
+
 async function attemptDriveBackup(force){
+  if (driveBackupInFlight) return { ok: false, reason: 'already-in-progress' };
   if (!driveBackupEnabled) return { ok: false, reason: 'not-enabled' };
   if (!force){
     if (!driveBackupDirty) return { ok: false, reason: 'nothing-changed' };
     if (Date.now() - lastDriveBackupTime < DRIVE_BACKUP_THROTTLE_MS) return { ok: false, reason: 'throttled' };
   }
+  driveBackupInFlight = true;
 
   try{
     const token = await getGoogleAccessToken();
@@ -1307,6 +1311,8 @@ async function attemptDriveBackup(force){
     return { ok: true };
   }catch(e){
     return { ok: false, reason: e.message }; // dirty flag stays set — will retry next opportunity
+  }finally{
+    driveBackupInFlight = false;
   }
 }
 
