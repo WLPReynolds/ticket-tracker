@@ -644,6 +644,15 @@ const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.goo
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
+
+// Drive auto-backup
+let driveBackupEnabled = false;
+let driveBackupDirty = false; // true whenever something's changed since the last successful backup
+let lastDriveBackupTime = 0; // epoch ms
+let driveBackupFolderId = null;
+const DRIVE_BACKUP_THROTTLE_MS = 30 * 60 * 1000; // 30 minutes
+const DRIVE_BACKUP_FOLDER_NAME = 'Ticket Tracker Backups';
+const DRIVE_BACKUP_KEEP_COUNT = 2;
 let gcalEventId = null; // the calendar event ID for the current buy-ticket reminder, if any
 let gcalPendingSync = false; // true when the buy date changed since the calendar was last updated
 let lastNotifiedBuyKey = null; // the buy date we last notified/synced for, to detect changes
@@ -711,6 +720,21 @@ const RAIL_MAX_DAYS_BACK = 28; // matches Avanti's Delay Repay claim deadline
 let railTrains = []; // [{ key, direction: 'AM'|'PM', fromLoc, toLoc, time, label, optional }]
 let railPerfCache = {}; // { "YYYY-MM-DD": { trainKey: { delayMinutes, onTime } } }
 let railSyncInProgress = false;
+
+// Marks the Drive backup as needing a fresh upload whenever any of the
+// app's own data changes. Installed once, globally, so every save
+// function already in the app (and any added later) is covered
+// automatically — no need to remember to flag dirtiness by hand.
+(function installDriveBackupDirtyTracker(){
+  const originalSetItem = localStorage.setItem.bind(localStorage);
+  localStorage.setItem = function(key, value){
+    if (key !== 'drive-backup-dirty' && key !== 'drive-backup-last-time'){
+      driveBackupDirty = true;
+      try{ originalSetItem('drive-backup-dirty', JSON.stringify(true)); }catch(e){}
+    }
+    return originalSetItem(key, value);
+  };
+})();
 
 const DEFAULT_RAIL_TRAINS = [
   { key: 'am-0808', direction: 'AM', fromLoc: 'CRE', toLoc: 'WGN', time: '0808', label: '08:08', optional: false },
@@ -801,6 +825,22 @@ async function loadData(){
     preferredGoogleEmail = pe ? JSON.parse(pe) : '';
   }catch(e){ preferredGoogleEmail = ''; }
   try{
+    const dbe = localStorage.getItem('drive-backup-enabled');
+    driveBackupEnabled = dbe ? JSON.parse(dbe) : false;
+  }catch(e){ driveBackupEnabled = false; }
+  try{
+    const dbd = localStorage.getItem('drive-backup-dirty');
+    driveBackupDirty = dbd ? JSON.parse(dbd) : false;
+  }catch(e){ driveBackupDirty = false; }
+  try{
+    const dbt = localStorage.getItem('drive-backup-last-time');
+    lastDriveBackupTime = dbt ? JSON.parse(dbt) : 0;
+  }catch(e){ lastDriveBackupTime = 0; }
+  try{
+    const dbf = localStorage.getItem('drive-backup-folder-id');
+    driveBackupFolderId = dbf ? JSON.parse(dbf) : null;
+  }catch(e){ driveBackupFolderId = null; }
+  try{
     const gi = localStorage.getItem('gcal-event-id');
     gcalEventId = gi ? JSON.parse(gi) : null;
   }catch(e){ gcalEventId = null; }
@@ -882,6 +922,14 @@ async function saveGcalEnabled(){
 }
 async function savePreferredGoogleEmail(){
   try{ localStorage.setItem('preferred-google-email', JSON.stringify(preferredGoogleEmail)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveDriveBackupEnabled(){
+  try{ localStorage.setItem('drive-backup-enabled', JSON.stringify(driveBackupEnabled)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveDriveBackupFolderId(){
+  try{ localStorage.setItem('drive-backup-folder-id', JSON.stringify(driveBackupFolderId)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveGcalEventId(){
@@ -1112,7 +1160,7 @@ function ensureGoogleTokenClient(){
   if (!googleTokenClient && window.google && google.accounts && google.accounts.oauth2){
     const config = {
       client_id: GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/calendar.events',
+      scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.file',
       callback: () => {} // overridden per-request below
     };
     if (preferredGoogleEmail) config.login_hint = preferredGoogleEmail;
@@ -1152,6 +1200,116 @@ function getGoogleAccessToken(){
 // event (updating its date) rather than creating a new one each time, so
 // old reminders don't pile up. If the stored event was deleted manually,
 // falls back to creating a fresh one rather than failing silently forever.
+// Finds the app's backup folder in Drive, creating it if it doesn't exist
+// yet. Caches the folder ID so this search only needs to happen once —
+// but recovers gracefully if the folder was deleted manually since then.
+async function ensureDriveBackupFolder(token){
+  const headers = { 'Authorization': `Bearer ${token}` };
+
+  if (driveBackupFolderId){
+    // verify it still exists rather than trusting the cache blindly
+    try{
+      const check = await fetch(`https://www.googleapis.com/drive/v3/files/${driveBackupFolderId}?fields=id,trashed`, { headers });
+      if (check.ok){
+        const data = await check.json();
+        if (!data.trashed) return driveBackupFolderId;
+      }
+    }catch(e){ /* fall through to search/create */ }
+  }
+
+  const query = encodeURIComponent(`mimeType='application/vnd.google-apps.folder' and name='${DRIVE_BACKUP_FOLDER_NAME}' and trashed=false`);
+  const searchResp = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)`, { headers });
+  if (searchResp.ok){
+    const searchData = await searchResp.json();
+    if (searchData.files && searchData.files.length > 0){
+      driveBackupFolderId = searchData.files[0].id;
+      await saveDriveBackupFolderId();
+      return driveBackupFolderId;
+    }
+  }
+
+  const createResp = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: DRIVE_BACKUP_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+  });
+  if (!createResp.ok) throw new Error('Could not create Drive backup folder');
+  const createData = await createResp.json();
+  driveBackupFolderId = createData.id;
+  await saveDriveBackupFolderId();
+  return driveBackupFolderId;
+}
+
+function buildBackupPayload(){
+  const backup = { exportedAt: new Date().toISOString(), version: 1, data: {} };
+  BACKUP_KEYS.forEach(k => {
+    const v = localStorage.getItem(k);
+    if (v !== null) backup.data[k] = v;
+  });
+  return JSON.stringify(backup, null, 2);
+}
+
+async function uploadBackupToDrive(token, folderId){
+  const filename = `ticket-tracker-backup-${fmtKey(new Date())}-${Date.now()}.json`;
+  const metadata = { name: filename, parents: [folderId] };
+  const boundary = 'ticketpwa-backup-boundary';
+  const payload = buildBackupPayload();
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${payload}\r\n` +
+    `--${boundary}--`;
+
+  const resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body
+  });
+  if (!resp.ok) throw new Error(`Drive upload failed: ${resp.status}`);
+  return resp.json();
+}
+
+// Keeps only the most recent DRIVE_BACKUP_KEEP_COUNT files in the backup
+// folder, deleting anything older right after a new backup succeeds.
+async function pruneOldDriveBackups(token, folderId){
+  const headers = { 'Authorization': `Bearer ${token}` };
+  const query = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+  const listResp = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&orderBy=createdTime desc&fields=files(id,name,createdTime)`, { headers });
+  if (!listResp.ok) return;
+  const listData = await listResp.json();
+  const files = listData.files || [];
+  const toDelete = files.slice(DRIVE_BACKUP_KEEP_COUNT);
+  for (const f of toDelete){
+    try{ await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method: 'DELETE', headers }); }
+    catch(e){ /* not critical — will be cleaned up next successful backup */ }
+  }
+}
+
+// The main entry point: called whenever the app is backgrounded. Only
+// actually uploads if something's changed since the last successful
+// backup AND the throttle window has passed — otherwise does nothing.
+async function attemptDriveBackup(force){
+  if (!driveBackupEnabled) return { ok: false, reason: 'not-enabled' };
+  if (!force){
+    if (!driveBackupDirty) return { ok: false, reason: 'nothing-changed' };
+    if (Date.now() - lastDriveBackupTime < DRIVE_BACKUP_THROTTLE_MS) return { ok: false, reason: 'throttled' };
+  }
+
+  try{
+    const token = await getGoogleAccessToken();
+    if (!token) return { ok: false, reason: 'no-token' };
+    const folderId = await ensureDriveBackupFolder(token);
+    await uploadBackupToDrive(token, folderId);
+    await pruneOldDriveBackups(token, folderId);
+    driveBackupDirty = false;
+    lastDriveBackupTime = Date.now();
+    localStorage.setItem('drive-backup-dirty', JSON.stringify(false));
+    localStorage.setItem('drive-backup-last-time', JSON.stringify(lastDriveBackupTime));
+    return { ok: true };
+  }catch(e){
+    return { ok: false, reason: e.message }; // dirty flag stays set — will retry next opportunity
+  }
+}
+
 async function syncGoogleCalendarEvent(dateKey){
   const token = await getGoogleAccessToken();
   if (!token) return { ok: false, reason: 'no-token' };
@@ -2049,7 +2207,7 @@ const BACKUP_KEYS = [
   'preferred-google-email','rail-perf-cache','rail-trains','ticket-comments',
   'ticket-day-return-price','ticket-dismissed-months','ticket-last-notified-buy-key',
   'ticket-last-price','ticket-parking-cost','ticket-period-start','ticket-purchases',
-  'ticket-seed-imported','ticket-travel-overrides'
+  'ticket-seed-imported','ticket-travel-overrides','drive-backup-enabled','drive-backup-folder-id'
 ];
 
 function exportBackup(){
@@ -2072,6 +2230,9 @@ function exportBackup(){
 function openBackupRestore(){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  const lastBackupLabel = lastDriveBackupTime
+    ? new Date(lastDriveBackupTime).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : 'Never yet';
   overlay.innerHTML = `
     <div class="modal">
       <h3>Backup &amp; restore</h3>
@@ -2081,12 +2242,59 @@ function openBackupRestore(){
       <input type="file" id="backup-import-input" accept="application/json" style="margin-bottom:12px; width:100%;" />
       <button class="save-btn" id="backup-import-btn">Restore from file</button>
       <div id="backup-status" style="font-size:13px; color:var(--ink-dim); margin-top:10px;"></div>
+
+      <div class="rail-col-header">Automatic Drive backup</div>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
+        <input type="checkbox" id="drive-backup-toggle" ${driveBackupEnabled ? 'checked' : ''} style="width:16px; height:16px;" />
+        Automatically back up to Google Drive
+      </label>
+      <div class="sub" style="margin-bottom:10px;">Backs up whenever you leave the app, if something's changed and it's been at least 30 minutes since the last one. Keeps the 2 most recent backups in a "Ticket Tracker Backups" folder.</div>
+      <div id="drive-backup-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">Last backup: ${lastBackupLabel}</div>
+      <button class="save-btn" id="drive-backup-now-btn" ${driveBackupEnabled ? '' : 'disabled'}>Back up now</button>
+
       <div class="modal-close" id="backup-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
 
   document.getElementById('backup-export-btn').addEventListener('click', exportBackup);
+
+  const driveToggle = document.getElementById('drive-backup-toggle');
+  const driveStatus = document.getElementById('drive-backup-status');
+  const driveNowBtn = document.getElementById('drive-backup-now-btn');
+
+  driveToggle.addEventListener('change', async () => {
+    if (driveToggle.checked){
+      driveStatus.textContent = 'Connecting…';
+      const token = await getGoogleAccessToken();
+      if (!token){
+        driveStatus.textContent = 'Could not connect to Google Drive.';
+        driveToggle.checked = false;
+        return;
+      }
+      driveBackupEnabled = true;
+      await saveDriveBackupEnabled();
+      driveNowBtn.disabled = false;
+      driveStatus.textContent = 'Connected — running first backup…';
+      const result = await attemptDriveBackup(true);
+      driveStatus.textContent = result.ok
+        ? `Last backup: ${new Date(lastDriveBackupTime).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+        : `First backup failed: ${result.reason}`;
+    } else {
+      driveBackupEnabled = false;
+      await saveDriveBackupEnabled();
+      driveNowBtn.disabled = true;
+      driveStatus.textContent = 'Automatic backup turned off.';
+    }
+  });
+
+  driveNowBtn.addEventListener('click', async () => {
+    driveStatus.textContent = 'Backing up…';
+    const result = await attemptDriveBackup(true);
+    driveStatus.textContent = result.ok
+      ? `Last backup: ${new Date(lastDriveBackupTime).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+      : `Backup failed: ${result.reason}`;
+  });
 
   document.getElementById('backup-import-btn').addEventListener('click', () => {
     const fileInput = document.getElementById('backup-import-input');
@@ -2775,6 +2983,17 @@ function openImportHistory(){
   // delayed by a network call. Re-render only if new dates were filled in.
   syncBankHolidays().then((changed) => { if (changed) render(); });
   railSyncMissingDates();
+
+  // Backgrounding (switching away, locking the phone, or closing) is a
+  // far more reliable signal on mobile than "unload" events, which the OS
+  // can skip entirely when killing an app's process. This is the one
+  // moment a Drive backup gets attempted — see attemptDriveBackup() for
+  // the dirty-flag and throttle checks that decide whether it actually does anything.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden'){
+      attemptDriveBackup();
+    }
+  });
 })();
 
 if ('serviceWorker' in navigator){
