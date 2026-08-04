@@ -1400,6 +1400,7 @@ function render(){
     menuItems.push({ id: 'connect-gcal-link', label: 'Connect Google Calendar', weight: 0 });
   }
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
+  menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'import-history-link', label: 'Import historical data', weight: 100 });
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
@@ -1758,6 +1759,9 @@ function render(){
   const preferredGoogleLink = document.getElementById('preferred-google-link');
   if (preferredGoogleLink) preferredGoogleLink.addEventListener('click', () => { menuOpen = false; render(); openPreferredGoogleEditor(); });
 
+  const backupRestoreLink = document.getElementById('backup-restore-link');
+  if (backupRestoreLink) backupRestoreLink.addEventListener('click', () => { menuOpen = false; render(); openBackupRestore(); });
+
   const railConfigLink = document.getElementById('rail-config-link');
   if (railConfigLink) railConfigLink.addEventListener('click', () => { menuOpen = false; render(); openRailConfig(); });
 
@@ -2000,6 +2004,84 @@ function openDayReturnPriceEditor(){
     }
   });
   document.getElementById('day-return-price-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+const BACKUP_KEYS = [
+  'bank-holidays-cache','gcal-enabled','gcal-event-id','gcal-pending-sync',
+  'preferred-google-email','rail-perf-cache','rail-trains','ticket-comments',
+  'ticket-day-return-price','ticket-dismissed-months','ticket-last-notified-buy-key',
+  'ticket-last-price','ticket-parking-cost','ticket-period-start','ticket-purchases',
+  'ticket-seed-imported','ticket-travel-overrides'
+];
+
+function exportBackup(){
+  const backup = { exportedAt: new Date().toISOString(), version: 1, data: {} };
+  BACKUP_KEYS.forEach(k => {
+    const v = localStorage.getItem(k);
+    if (v !== null) backup.data[k] = v;
+  });
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ticket-tracker-backup-${fmtKey(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function openBackupRestore(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Backup &amp; restore</h3>
+      <div class="sub">Export everything the app knows to a file you can keep safe (e.g. before switching phones), or restore from a previous export. Restoring replaces all current data.</div>
+      <button class="save-btn" id="backup-export-btn">Export backup</button>
+      <label style="display:block; font-size:13px; color:var(--ink-dim); margin:16px 0 6px;">Restore from a backup file</label>
+      <input type="file" id="backup-import-input" accept="application/json" style="margin-bottom:12px; width:100%;" />
+      <button class="save-btn" id="backup-import-btn">Restore from file</button>
+      <div id="backup-status" style="font-size:13px; color:var(--ink-dim); margin-top:10px;"></div>
+      <div class="modal-close" id="backup-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('backup-export-btn').addEventListener('click', exportBackup);
+
+  document.getElementById('backup-import-btn').addEventListener('click', () => {
+    const fileInput = document.getElementById('backup-import-input');
+    const status = document.getElementById('backup-status');
+    const file = fileInput.files[0];
+    if (!file){ status.textContent = 'Choose a file first.'; return; }
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      let parsed;
+      try{ parsed = JSON.parse(e.target.result); }
+      catch(err){ status.textContent = 'Could not read that file — is it a valid backup?'; return; }
+      if (!parsed || typeof parsed.data !== 'object'){
+        status.textContent = 'That doesn\'t look like a valid backup file.';
+        return;
+      }
+      if (!confirm('This will replace all current app data with the contents of this backup. Continue?')){
+        return;
+      }
+      for (const key in parsed.data){
+        try{ localStorage.setItem(key, parsed.data[key]); }catch(err){ /* ignore individual key failures */ }
+      }
+      status.textContent = 'Restored — reloading…';
+      await loadData();
+      document.body.removeChild(overlay);
+      render();
+    };
+    reader.readAsText(file);
+  });
+
+  document.getElementById('backup-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
