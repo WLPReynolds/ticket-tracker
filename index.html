@@ -2675,32 +2675,128 @@ function openLiveDepartureBoard(){
     const color = onTime ? 'var(--good)' : '#ff8b7e';
     const statusText = onTime ? 'On time' : `Now ${service.etd}${service.platform ? '' : ''}`;
     const platformText = service.platform ? ` · Plat ${service.platform}` : '';
-    return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText}</span></div>`;
+    return `<div class="rail-detail-row" data-train-key="${train.key}" style="cursor:pointer; ${onTime?'':'-webkit-user-select:none; user-select:none;'}"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText} ›</span></div>`;
   }
 
   fetchLiveBoards().then(boards => {
     const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a,b) => a.time.localeCompare(b.time));
     const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a,b) => a.time.localeCompare(b.time));
+    const matchedServices = {}; // trainKey -> { train, service }
 
     function sectionHtml(trains){
       return trains.map(t => {
         const board = boards[`${t.fromLoc}-${t.toLoc}`] || [];
         const wanted = timeToHHMM(t.time);
         const service = board.find(s => s.std === wanted);
+        if (service && !service.isCancelled) matchedServices[t.key] = { train: t, service };
         return rowFor(t, service);
       }).join('');
     }
 
-    document.getElementById('live-board-status').textContent = 'Live from National Rail — tap Close and reopen to refresh.';
+    document.getElementById('live-board-status').textContent = 'Live from National Rail — tap a train for its progress, or Close and reopen to refresh.';
     document.getElementById('live-board-content').innerHTML = `
       <div class="rail-col-header">Morning</div>
       ${amTrains.length ? sectionHtml(amTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
       <div class="rail-col-header">Evening</div>
       ${pmTrains.length ? sectionHtml(pmTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
     `;
+    document.querySelectorAll('#live-board-content [data-train-key]').forEach(row => {
+      row.addEventListener('click', () => {
+        const m = matchedServices[row.dataset.trainKey];
+        if (m) openTrainProgress(m.train, m.service);
+      });
+    });
   }).catch(err => {
     document.getElementById('live-board-status').textContent = `Couldn't load live data: ${err.message}`;
   });
+}
+
+// Builds the "where is this train now" timeline: every calling point in
+// order, with a marker showing roughly where the train sits between the
+// last-passed and next-due point, and any delay/cancellation reason
+// shown alongside the relevant station. This is deliberately a simple
+// ordered list, not a geographic map — no station coordinates needed
+// beyond what Darwin already tells us about calling order and timing.
+function openTrainProgress(train, service){
+  const now = new Date();
+
+  function pointsFrom(arr){
+    return (arr && arr[0] && arr[0].callingPoint) ? arr[0].callingPoint : [];
+  }
+  const before = pointsFrom(service.previousCallingPoints).map(cp => ({
+    locationName: cp.locationName,
+    schedTime: cp.st,
+    liveTime: (cp.at && cp.at !== 'On time' && cp.at !== 'Cancelled') ? cp.at : cp.st,
+    isCancelled: !!cp.isCancelled,
+    reason: cp.delayReason || cp.cancelReason || null,
+  }));
+  const here = [{
+    locationName: STATION_COORDS[train.fromLoc] ? STATION_COORDS[train.fromLoc].name : train.fromLoc,
+    schedTime: service.std || service.sta,
+    liveTime: (service.etd && service.etd !== 'On time') ? service.etd : (service.std || service.sta),
+    isCancelled: !!service.isCancelled,
+    reason: service.delayReason || service.cancelReason || null,
+    isYourStation: true,
+  }];
+  const after = pointsFrom(service.subsequentCallingPoints).map(cp => ({
+    locationName: cp.locationName,
+    schedTime: cp.st,
+    liveTime: (cp.et && cp.et !== 'On time' && cp.et !== 'Cancelled') ? cp.et : cp.st,
+    isCancelled: !!cp.isCancelled,
+    reason: cp.delayReason || cp.cancelReason || null,
+  }));
+  const points = [...before, ...here, ...after];
+
+  let lastPassedIdx = -1;
+  points.forEach((p, i) => {
+    const t = liveTimeToDate((p.liveTime || '').replace(':', ''), now);
+    if (t && t <= now) lastPassedIdx = i;
+  });
+
+  const rowsHtml = points.map((p, i) => {
+    const passed = i <= lastPassedIdx;
+    const delayed = p.liveTime && p.schedTime && p.liveTime !== p.schedTime && p.liveTime.includes(':');
+    const nameColor = p.isYourStation ? 'var(--amber)' : (passed ? 'var(--ink-dim)' : 'var(--ink)');
+    const timeHtml = delayed
+      ? `<span style="text-decoration:line-through; color:var(--ink-dim); margin-right:6px;">${p.schedTime}</span><span style="color:#ff8b7e;">${p.liveTime}</span>`
+      : `<span>${p.schedTime}</span>`;
+    const reasonHtml = p.reason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
+    let marker = '';
+    if (i === lastPassedIdx && i < points.length - 1){
+      const nextPoint = points[i+1];
+      const nextLive = liveTimeToDate((nextPoint.liveTime || '').replace(':',''), now);
+      const dueMins = nextLive ? Math.max(0, Math.round((nextLive - now) / 60000)) : null;
+      marker = `<div style="display:flex; align-items:center; gap:8px; padding:4px 0 4px 4px; margin-left:2px; border-left:2px solid var(--amber);">
+        <span style="width:8px; height:8px; border-radius:50%; background:var(--amber); flex-shrink:0;"></span>
+        <span style="font-size:12.5px; color:var(--amber);">Between here and ${nextPoint.locationName}${dueMins !== null ? ` — due in ${dueMins} min` : ''}</span>
+      </div>`;
+    }
+    return `
+      <div class="rail-detail-row" style="align-items:flex-start;">
+        <span style="min-width:70px;">${timeHtml}</span>
+        <span style="flex:1; text-align:right;">
+          <span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName}${p.isCancelled ? ' (cancelled)' : ''}</span>
+          ${reasonHtml}
+        </span>
+      </div>
+      ${marker}`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${train.label} — live progress</h3>
+      <div class="sub">An estimate based on calling-point times, not GPS — a rough sense of where it is, not a precise position.</div>
+      <div style="max-height:50vh; overflow-y:auto;">${rowsHtml}</div>
+      <div class="modal-close" id="train-progress-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('train-progress-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
 function openRailConfig(){
