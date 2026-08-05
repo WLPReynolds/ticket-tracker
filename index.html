@@ -713,6 +713,7 @@ let menuOpen = false; // whether the hamburger dropdown is currently open
 
 // Rail performance / delay repay feature
 const RAIL_WORKER_URL = 'https://rail-performance-proxy.wayne-lee-paul-reynolds.workers.dev';
+const DARWIN_WORKER_URL = 'https://darwin-live-proxy.wayne-lee-paul-reynolds.workers.dev';
 const DELAY_REPAY_THRESHOLD_MINUTES = 15;
 let railDaysBack = 3; // how far back the day list currently scrolls; grows via "Show earlier days"
 const RAIL_DAYS_BACK_STEP = 7;
@@ -1577,6 +1578,7 @@ function render(){
     { id: 'day-return-price-link', label: `Set day return price (currently £${dayReturnPrice.toFixed(2)})`, weight: 0 },
     { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
+    { id: 'live-board-link', label: 'Live trains', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
     { id: 'test-location-link', label: '(Test) Check distance to stations', weight: 0 },
   ];
@@ -1963,6 +1965,9 @@ function render(){
 
   const railConfigLink = document.getElementById('rail-config-link');
   if (railConfigLink) railConfigLink.addEventListener('click', () => { menuOpen = false; render(); openRailConfig(); });
+
+  const liveBoardLink = document.getElementById('live-board-link');
+  if (liveBoardLink) liveBoardLink.addEventListener('click', () => { menuOpen = false; render(); openLiveDepartureBoard(); });
 
   const statsLink = document.getElementById('stats-link');
   if (statsLink) statsLink.addEventListener('click', () => { menuOpen = false; render(); openStatsView(); });
@@ -2360,6 +2365,93 @@ function openPreferredGoogleEditor(){
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+async function fetchLiveBoards(){
+  // Query each unique route (fromLoc/toLoc pair) once, rather than once
+  // per configured train — several trains often share the same route.
+  const uniquePairs = [];
+  const seen = new Set();
+  railTrains.forEach(t => {
+    const key = `${t.fromLoc}-${t.toLoc}`;
+    if (!seen.has(key)){ seen.add(key); uniquePairs.push({ fromLoc: t.fromLoc, toLoc: t.toLoc }); }
+  });
+  if (uniquePairs.length === 0) return {};
+
+  const resp = await fetch(DARWIN_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      queries: uniquePairs.map(p => ({ crs: p.fromLoc, filterCrs: p.toLoc, filterType: 'to' }))
+    })
+  });
+  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
+  const data = await resp.json();
+
+  const boards = {}; // "FROM-TO" -> array of trainServices
+  (data.results || []).forEach(r => {
+    const key = `${r.query.crs}-${r.query.filterCrs}`;
+    boards[key] = (r.ok && r.data && r.data.trainServices) || [];
+  });
+  return boards;
+}
+
+function openLiveDepartureBoard(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Live trains</h3>
+      <div class="sub" id="live-board-status">Loading…</div>
+      <div id="live-board-content"></div>
+      <div class="modal-close" id="live-board-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('live-board-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+
+  function timeToHHMM(t){ return t.slice(0,2) + ':' + t.slice(2,4); }
+
+  function rowFor(train, service){
+    if (!service){
+      return `<div class="rail-detail-row"><span>${train.label}</span><span style="color:var(--ink-dim);">Not running today</span></div>`;
+    }
+    if (service.isCancelled){
+      return `<div class="rail-detail-row"><span style="color:#ff8b7e; font-weight:600;">${train.label}</span><span style="color:#ff8b7e;">Cancelled${service.cancelReason ? ' — ' + service.cancelReason.replace(/^This service has been cancelled /,'') : ''}</span></div>`;
+    }
+    const onTime = !service.etd || service.etd === 'On time';
+    const color = onTime ? 'var(--good)' : '#ff8b7e';
+    const statusText = onTime ? 'On time' : `Now ${service.etd}${service.platform ? '' : ''}`;
+    const platformText = service.platform ? ` · Plat ${service.platform}` : '';
+    return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText}</span></div>`;
+  }
+
+  fetchLiveBoards().then(boards => {
+    const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a,b) => a.time.localeCompare(b.time));
+    const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a,b) => a.time.localeCompare(b.time));
+
+    function sectionHtml(trains){
+      return trains.map(t => {
+        const board = boards[`${t.fromLoc}-${t.toLoc}`] || [];
+        const wanted = timeToHHMM(t.time);
+        const service = board.find(s => s.std === wanted);
+        return rowFor(t, service);
+      }).join('');
+    }
+
+    document.getElementById('live-board-status').textContent = 'Live from National Rail — tap Close and reopen to refresh.';
+    document.getElementById('live-board-content').innerHTML = `
+      <div class="rail-col-header">Morning</div>
+      ${amTrains.length ? sectionHtml(amTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+      <div class="rail-col-header">Evening</div>
+      ${pmTrains.length ? sectionHtml(pmTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+    `;
+  }).catch(err => {
+    document.getElementById('live-board-status').textContent = `Couldn't load live data: ${err.message}`;
+  });
 }
 
 function openRailConfig(){
