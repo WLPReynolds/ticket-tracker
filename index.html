@@ -2417,7 +2417,7 @@ function openLiveDepartureBoard(){
 
   function rowFor(train, service){
     if (!service){
-      return `<div class="rail-detail-row"><span>${train.label}</span><span style="color:var(--ink-dim);">Not running today</span></div>`;
+      return `<div class="rail-detail-row"><span>${train.label}</span><span style="color:var(--ink-dim);">No live data right now</span></div>`;
     }
     if (service.isCancelled){
       return `<div class="rail-detail-row"><span style="color:#ff8b7e; font-weight:600;">${train.label}</span><span style="color:#ff8b7e;">Cancelled${service.cancelReason ? ' — ' + service.cancelReason.replace(/^This service has been cancelled /,'') : ''}</span></div>`;
