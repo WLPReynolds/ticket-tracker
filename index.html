@@ -650,6 +650,7 @@ const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
+const APP_VERSION = 'v2026-08-05.21:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1832,6 +1833,7 @@ function render(){
       <div class="eyebrow">Season Ticket Tracker</div>
       <h1>8-Day Ticket</h1>
       <div class="today-date">${dateLabel(today)}</div>
+      <div style="font-size:10px; color:var(--ink-dim); opacity:0.6; margin-top:2px;">${APP_VERSION}</div>
       <div class="menu-btn" id="menu-btn">&#9776;</div>
       ${menuOpen ? `
       <div class="menu-dropdown" id="menu-dropdown">
