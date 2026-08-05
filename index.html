@@ -650,7 +650,7 @@ const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-05.21:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-05.21:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2719,7 +2719,7 @@ function openLiveDepartureBoard(){
 // shown alongside the relevant station. This is deliberately a simple
 // ordered list, not a geographic map — no station coordinates needed
 // beyond what Darwin already tells us about calling order and timing.
-function openTrainProgress(train, service){
+function buildTrainProgressRows(train, service){
   const now = new Date();
 
   function pointsFrom(arr){
@@ -2755,7 +2755,7 @@ function openTrainProgress(train, service){
     if (t && t <= now) lastPassedIdx = i;
   });
 
-  const rowsHtml = points.map((p, i) => {
+  return points.map((p, i) => {
     const passed = i <= lastPassedIdx;
     const delayed = p.liveTime && p.schedTime && p.liveTime !== p.schedTime && p.liveTime.includes(':');
     const nameColor = p.isYourStation ? 'var(--amber)' : (passed ? 'var(--ink-dim)' : 'var(--ink)');
@@ -2783,22 +2783,43 @@ function openTrainProgress(train, service){
       </div>
       ${marker}`;
   }).join('');
+}
+
+const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
+
+function openTrainProgress(train, service){
+  let refreshTimer = null;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
       <h3>${train.label} — live progress</h3>
-      <div class="sub">An estimate based on calling-point times, not GPS — a rough sense of where it is, not a precise position.</div>
-      <div style="max-height:50vh; overflow-y:auto;">${rowsHtml}</div>
+      <div class="sub">An estimate based on calling-point times, not GPS — a rough sense of where it is, not a precise position. Refreshes automatically every minute.</div>
+      <div style="max-height:50vh; overflow-y:auto;" id="train-progress-rows">${buildTrainProgressRows(train, service)}</div>
       <div class="modal-close" id="train-progress-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
-  document.getElementById('train-progress-close-btn').addEventListener('click', () => {
+
+  refreshTimer = setInterval(async () => {
+    try{
+      const boards = await fetchLiveBoards();
+      const board = boards[`${train.fromLoc}-${train.toLoc}`] || [];
+      const wanted = `${train.time.slice(0,2)}:${train.time.slice(2,4)}`;
+      const freshService = board.find(s => s.std === wanted);
+      if (freshService && !freshService.isCancelled){
+        document.getElementById('train-progress-rows').innerHTML = buildTrainProgressRows(train, freshService);
+      }
+    }catch(e){ /* leave the last-known view showing rather than clearing it */ }
+  }, TRAIN_PROGRESS_REFRESH_MS);
+
+  function closeAndStopRefresh(){
+    if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
     document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  }
+  document.getElementById('train-progress-close-btn').addEventListener('click', closeAndStopRefresh);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAndStopRefresh(); });
 }
 
 function openRailConfig(){
