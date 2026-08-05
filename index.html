@@ -763,29 +763,8 @@ function distanceKm(lat1, lon1, lat2, lon2){
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-function testLocationDistance(){
-  if (!navigator.geolocation){
-    alert('Geolocation is not available in this browser.');
-    return;
-  }
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      const lines = [`Your location: ${latitude.toFixed(5)}, ${longitude.toFixed(5)} (accuracy ±${Math.round(accuracy)}m)`, ''];
-      for (const code in STATION_COORDS){
-        const s = STATION_COORDS[code];
-        const km = distanceKm(latitude, longitude, s.lat, s.lon);
-        lines.push(`${s.name} (${code}): ${km.toFixed(2)} km away`);
-      }
-      alert(lines.join('\n'));
-    },
-    (err) => {
-      alert(`Couldn't get your location: ${err.message}`);
-    },
-    { enableHighAccuracy: true, timeout: 10000 }
-  );
-}
 let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
+let confirmedTrains = {}; // "YYYY-MM-DD" -> { AM: trainKey, PM: trainKey } — which specific train you actually caught, manually confirmed for now
 let loaded = false;
 
 async function loadData(){
@@ -861,6 +840,10 @@ async function loadData(){
     const rc = localStorage.getItem('rail-perf-cache');
     railPerfCache = rc ? JSON.parse(rc) : {};
   }catch(e){ railPerfCache = {}; }
+  try{
+    const ct = localStorage.getItem('confirmed-trains');
+    confirmedTrains = ct ? JSON.parse(ct) : {};
+  }catch(e){ confirmedTrains = {}; }
   try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
@@ -951,6 +934,10 @@ async function saveRailTrains(){
 }
 async function saveRailPerfCache(){
   try{ localStorage.setItem('rail-perf-cache', JSON.stringify(railPerfCache)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveConfirmedTrains(){
+  try{ localStorage.setItem('confirmed-trains', JSON.stringify(confirmedTrains)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePeriodStart(){
@@ -1579,8 +1566,8 @@ function render(){
     { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
     { id: 'live-board-link', label: 'Live trains', weight: 0 },
+    { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
-    { id: 'test-location-link', label: '(Test) Check distance to stations', weight: 0 },
   ];
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
     menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
@@ -1969,11 +1956,11 @@ function render(){
   const liveBoardLink = document.getElementById('live-board-link');
   if (liveBoardLink) liveBoardLink.addEventListener('click', () => { menuOpen = false; render(); openLiveDepartureBoard(); });
 
+  const confirmTrainLink = document.getElementById('confirm-train-link');
+  if (confirmTrainLink) confirmTrainLink.addEventListener('click', () => { menuOpen = false; render(); openConfirmTrain(); });
+
   const statsLink = document.getElementById('stats-link');
   if (statsLink) statsLink.addEventListener('click', () => { menuOpen = false; render(); openStatsView(); });
-
-  const testLocationLink = document.getElementById('test-location-link');
-  if (testLocationLink) testLocationLink.addEventListener('click', () => { menuOpen = false; render(); testLocationDistance(); });
 
   const enableNotificationsLink = document.getElementById('enable-notifications-link');
   if (enableNotificationsLink){
@@ -2394,6 +2381,70 @@ async function fetchLiveBoards(){
     boards[key] = (r.ok && r.data && r.data.trainServices) || [];
   });
   return boards;
+}
+
+function openConfirmTrain(){
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const suggested = fmtKey(today);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  function optionsFor(direction, existingKey){
+    const trains = railTrains.filter(t => t.direction === direction).sort((a,b) => a.time.localeCompare(b.time));
+    let opts = `<option value="">— None / didn't travel —</option>`;
+    trains.forEach(t => {
+      opts += `<option value="${t.key}" ${existingKey === t.key ? 'selected' : ''}>${t.label}</option>`;
+    });
+    return opts;
+  }
+
+  function renderForDate(dateKey){
+    const existing = confirmedTrains[dateKey] || {};
+    document.getElementById('confirm-train-fields').innerHTML = `
+      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Morning train actually caught</label>
+      <select id="confirm-am-select" style="margin-bottom:12px;">${optionsFor('AM', existing.AM)}</select>
+      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Evening train actually caught</label>
+      <select id="confirm-pm-select" style="margin-bottom:12px;">${optionsFor('PM', existing.PM)}</select>
+    `;
+  }
+
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Confirm train used</h3>
+      <div class="sub">Records which specific train you actually caught, in case it wasn't your usual one (e.g. you caught an earlier delayed service instead). This doesn't affect your ticket usage tracking — it's just for more accurate delay repay matching.</div>
+      <input type="date" id="confirm-date-input" value="${suggested}" style="margin-bottom:12px;" />
+      <div id="confirm-train-fields"></div>
+      <button class="save-btn" id="confirm-train-save">Save</button>
+      <div class="modal-close" id="confirm-train-close">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  renderForDate(suggested);
+
+  document.getElementById('confirm-date-input').addEventListener('change', (e) => {
+    renderForDate(e.target.value);
+  });
+
+  document.getElementById('confirm-train-save').addEventListener('click', async () => {
+    const dateKey = document.getElementById('confirm-date-input').value;
+    const amKey = document.getElementById('confirm-am-select').value;
+    const pmKey = document.getElementById('confirm-pm-select').value;
+    if (!dateKey) return;
+    const entry = {};
+    if (amKey) entry.AM = amKey;
+    if (pmKey) entry.PM = pmKey;
+    if (Object.keys(entry).length === 0){
+      delete confirmedTrains[dateKey];
+    } else {
+      confirmedTrains[dateKey] = entry;
+    }
+    await saveConfirmedTrains();
+    document.body.removeChild(overlay);
+  });
+  document.getElementById('confirm-train-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
 function openLiveDepartureBoard(){
