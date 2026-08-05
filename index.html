@@ -759,7 +759,7 @@ const DEFAULT_RAIL_TRAINS = [
 // feature rather than a proof of concept.
 const STATION_COORDS = {
   CRE: { lat: 53.0896, lon: -2.4333, name: 'Crewe' },
-  WGN: { lat: 53.5459, lon: -2.6329, name: 'Wigan North Western' },
+  WGN: { lat: 53.5433, lon: -2.6326, name: 'Wigan North Western' },
 };
 
 // Haversine formula — great-circle distance between two lat/lon points, in km.
@@ -774,6 +774,14 @@ function distanceKm(lat1, lon1, lat2, lon2){
 
 let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
 let confirmedTrains = {}; // "YYYY-MM-DD" -> { AM: trainKey, PM: trainKey } — which specific train you actually caught, manually confirmed for now
+
+// "I think you're on this train" detection
+const GEOFENCE_RADIUS_M = 500; // informed by real field-test readings — Crewe/Wigan both fall well inside this
+const LIKELY_TRAIN_CHECK_INTERVAL_MS = 2 * 60 * 1000; // how often to check while the app is open
+const LIKELY_TRAIN_TIME_WINDOW_MIN = 45; // only bother checking within this many minutes either side of a configured train time
+let likelyTrainSuggestion = null; // { dateKey, direction, trainKey, label } — transient, not persisted
+let likelyTrainCheckTimer = null;
+let dismissedLikelyTrainKeys = new Set(); // avoids re-suggesting the same match repeatedly in one session
 let loaded = false;
 
 async function loadData(){
@@ -1846,6 +1854,17 @@ function render(){
       ${statusHtml}
       ${nextBuyHtml}
       ${calendarPromptHtml}
+      ${likelyTrainSuggestion ? `
+      <div class="holiday-card" style="margin-top:12px;">
+        <div class="holiday-info" style="width:100%;">
+          <div class="holiday-label">Is this your train?</div>
+          <div style="font-size:15px; margin:4px 0 10px;">Looks like you might be on the delayed <strong style="color:var(--amber);">${likelyTrainSuggestion.label}</strong> instead of your usual one.</div>
+          <div style="display:flex; gap:10px;">
+            <button class="save-btn" id="likely-train-yes-btn" style="flex:1; margin:0;">Yes, that's me</button>
+            <button class="save-btn" id="likely-train-no-btn" style="flex:1; margin:0; background:var(--tile); color:var(--ink-dim);">No</button>
+          </div>
+        </div>
+      </div>` : ''}
     </div>
 
     ${!showEstimateCard ? '' : `
@@ -2041,6 +2060,29 @@ function render(){
     });
   }
   const calendarSyncPrompt = document.getElementById('calendar-sync-prompt');
+
+  const likelyTrainYesBtn = document.getElementById('likely-train-yes-btn');
+  if (likelyTrainYesBtn){
+    likelyTrainYesBtn.addEventListener('click', async () => {
+      const s = likelyTrainSuggestion;
+      if (s){
+        if (!confirmedTrains[s.dateKey]) confirmedTrains[s.dateKey] = {};
+        confirmedTrains[s.dateKey][s.direction] = s.trainKey;
+        await saveConfirmedTrains();
+      }
+      likelyTrainSuggestion = null;
+      render();
+    });
+  }
+  const likelyTrainNoBtn = document.getElementById('likely-train-no-btn');
+  if (likelyTrainNoBtn){
+    likelyTrainNoBtn.addEventListener('click', () => {
+      if (likelyTrainSuggestion) dismissedLikelyTrainKeys.add(`${likelyTrainSuggestion.dateKey}-${likelyTrainSuggestion.direction}-${likelyTrainSuggestion.trainKey}`);
+      likelyTrainSuggestion = null;
+      render();
+    });
+  }
+
   if (calendarSyncPrompt){
     calendarSyncPrompt.addEventListener('click', async () => {
       const nb = findNextBuyDateKey(today, todayKey);
@@ -2424,6 +2466,119 @@ async function fetchLiveBoards(){
     boards[key] = (r.ok && r.data && r.data.trainServices) || [];
   });
   return boards;
+}
+
+// Gets a one-off position without prompting unnecessarily — only called
+// when we're already inside a relevant time window, so the permission
+// prompt (if it appears at all) shows up with context, not on every
+// random app open.
+function getCurrentPositionOnce(){
+  return new Promise((resolve) => {
+    if (!navigator.geolocation){ resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve(pos.coords),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+}
+
+// Converts a train's live status (etd/eta, or "On time") for today into
+// an actual Date object, so it can be compared against the current time.
+function liveTimeToDate(hhmm, referenceDate){
+  if (!hhmm || hhmm.length < 4) return null;
+  const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
+  if (isNaN(h) || isNaN(m)) return null;
+  const d = new Date(referenceDate);
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+
+// The core check: are you plausibly at the station right now, and is an
+// earlier (delayed) configured train about to leave in place of your
+// nominally-expected one? Deliberately conservative — only fires when
+// there's a genuine, geofenced, time-window-matched mismatch, not on
+// every open.
+async function checkLikelyTrain(){
+  if (!railTrains || railTrains.length === 0) return;
+  const now = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate(),
+                        new Date().getHours(), new Date().getMinutes());
+  const todayKeyLocal = fmtKey(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  for (const direction of ['AM', 'PM']){
+    const dirTrains = railTrains.filter(t => t.direction === direction).sort((a,b) => a.time.localeCompare(b.time));
+    if (dirTrains.length === 0) continue;
+
+    // Skip entirely if we're nowhere near any configured time for this
+    // direction — avoids pointless API calls and geolocation prompts
+    // outside commute hours.
+    const inWindow = dirTrains.some(t => {
+      const tMin = parseInt(t.time.slice(0,2),10)*60 + parseInt(t.time.slice(2,4),10);
+      return Math.abs(nowMinutes - tMin) <= LIKELY_TRAIN_TIME_WINDOW_MIN;
+    });
+    if (!inWindow) continue;
+
+    // Already confirmed for this direction today — nothing to detect.
+    if (confirmedTrains[todayKeyLocal] && confirmedTrains[todayKeyLocal][direction] !== undefined) continue;
+
+    const fromLoc = dirTrains[0].fromLoc;
+    const stationCoord = STATION_COORDS[fromLoc];
+    if (!stationCoord) continue;
+
+    const pos = await getCurrentPositionOnce();
+    if (!pos) continue; // no permission or unavailable — skip silently
+    const distM = distanceKm(pos.latitude, pos.longitude, stationCoord.lat, stationCoord.lon) * 1000;
+    if (distM > GEOFENCE_RADIUS_M) continue; // not plausibly at the station
+
+    let boards;
+    try{ boards = await fetchLiveBoards(); }catch(e){ continue; }
+    const board = boards[`${dirTrains[0].fromLoc}-${dirTrains[0].toLoc}`] || [];
+
+    // Which configured train is nominally "current" if everything ran on
+    // schedule — the earliest one whose scheduled time hasn't yet passed
+    // by more than a few minutes.
+    const nominal = dirTrains.find(t => {
+      const tMin = parseInt(t.time.slice(0,2),10)*60 + parseInt(t.time.slice(2,4),10);
+      return tMin >= nowMinutes - 5;
+    }) || dirTrains[dirTrains.length - 1];
+
+    // Which configured train's live departure is actually closest to
+    // happening right now — the one you're plausibly boarding.
+    let closest = null, closestDiff = Infinity;
+    dirTrains.forEach(t => {
+      const wanted = `${t.time.slice(0,2)}:${t.time.slice(2,4)}`;
+      const service = board.find(s => s.std === wanted);
+      if (!service) return;
+      const liveTime = liveTimeToDate(
+        (service.etd && service.etd !== 'On time') ? service.etd.replace(':','') : t.time,
+        now
+      );
+      if (!liveTime) return;
+      const diffMin = Math.abs((liveTime - now) / 60000);
+      if (diffMin <= 15 && diffMin < closestDiff){
+        closest = t; closestDiff = diffMin;
+      }
+    });
+
+    if (closest && closest.key !== nominal.key){
+      const suggestionId = `${todayKeyLocal}-${direction}-${closest.key}`;
+      if (dismissedLikelyTrainKeys.has(suggestionId)) continue;
+      likelyTrainSuggestion = { dateKey: todayKeyLocal, direction, trainKey: closest.key, label: closest.label };
+      showLocalNotification('Is this your train?', `Looks like you might be on the delayed ${closest.label} instead of your usual one — open the app to confirm.`);
+      render();
+      return; // one suggestion at a time is plenty
+    }
+  }
+}
+
+function startLikelyTrainChecks(){
+  if (likelyTrainCheckTimer) return;
+  checkLikelyTrain();
+  likelyTrainCheckTimer = setInterval(checkLikelyTrain, LIKELY_TRAIN_CHECK_INTERVAL_MS);
+}
+function stopLikelyTrainChecks(){
+  if (likelyTrainCheckTimer){ clearInterval(likelyTrainCheckTimer); likelyTrainCheckTimer = null; }
 }
 
 function openConfirmTrain(){
@@ -3184,8 +3339,12 @@ function openImportHistory(){
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden'){
       attemptDriveBackup();
+      stopLikelyTrainChecks(); // no point polling while backgrounded — nothing can act on it anyway
+    } else {
+      startLikelyTrainChecks();
     }
   });
+  startLikelyTrainChecks();
 })();
 
 if ('serviceWorker' in navigator){
