@@ -175,6 +175,12 @@
     margin-top: 3px;
     box-sizing: border-box;
   }
+  .cal-dot-confirmed{
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #ff8b7e;
+    margin-top: 3px;
+  }
   .eyebrow{
     font-size: 11px;
     letter-spacing: 3px;
@@ -519,6 +525,9 @@
     width: 36px;
     height: 36px;
     transform: translate(-50%, -50%);
+  }
+  .rail-blob-confirmed{
+    background: #ff8b7e;
   }
   .rail-detail-row{
     display: flex;
@@ -958,6 +967,39 @@ function isEligibleRailDay(d, todayKeyParam){
   if (isWeekend(d)) return false;
   const comment = (comments[key] || '').trim();
   return comment === '' || !!travelOverrides[key];
+}
+
+// Returns 'confirmed' if a specific confirmed train for this date is
+// known to have breached the delay threshold — a near-certain claim.
+// Returns 'maybe' if no confirmation exists but at least one configured
+// train that day did breach it — the existing general indicator.
+// Returns null if there's nothing to flag, including when every
+// confirmed train for the day is known to have been on time (a
+// confirmation should rule the day out, not just add to the guesswork).
+function getDelayStatus(dateKey){
+  const dayPerf = railPerfCache[dateKey];
+  if (!dayPerf) return null;
+  const confirmed = confirmedTrains[dateKey] || {};
+  let anyConfirmedDelay = false;
+  let anyUnconfirmedDirection = false;
+
+  ['AM', 'PM'].forEach(direction => {
+    const dirTrains = railTrains.filter(t => t.direction === direction);
+    if (dirTrains.length === 0) return;
+    const confirmedKey = confirmed[direction];
+    if (confirmedKey !== undefined){
+      if (confirmedKey === '') return; // explicitly didn't travel that leg — ignore
+      const perf = dayPerf[confirmedKey];
+      if (perf && perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES) anyConfirmedDelay = true;
+    } else {
+      anyUnconfirmedDirection = true;
+    }
+  });
+
+  if (anyConfirmedDelay) return 'confirmed';
+  const anyDelayAtAll = railTrains.some(t => dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
+  if (anyUnconfirmedDirection && anyDelayAtAll) return 'maybe';
+  return null;
 }
 
 // Checks the currently visible past-day window for any eligible travel
@@ -1746,10 +1788,11 @@ function render(){
 
     let railBlobHtml = '';
     if (isEligibleRailDay(d, todayKey)){
-      const dayPerf = railPerfCache[key];
-      if (dayPerf){
-        const hasDelay = railTrains.some(t => dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
-        if (hasDelay) railBlobHtml = `<span class="rail-blob" data-rail-key="${key}" title="Possible delay repay claim"></span>`;
+      const status = getDelayStatus(key);
+      if (status === 'confirmed'){
+        railBlobHtml = `<span class="rail-blob rail-blob-confirmed" data-rail-key="${key}" title="Confirmed delay repay claim"></span>`;
+      } else if (status === 'maybe'){
+        railBlobHtml = `<span class="rail-blob" data-rail-key="${key}" title="Possible delay repay claim"></span>`;
       }
     }
 
@@ -2709,15 +2752,15 @@ function openCalendarView(){
       const weekend = isWeekend(d);
       const isToday = key === todayKeyLocal;
       const hasEntry = !!(comments[key] || '').trim();
-      let hasDelay = false;
+      let delayStatus = null;
       if (isEligibleRailDay(d, todayKeyLocal)){
-        const dayPerf = railPerfCache[key];
-        if (dayPerf){
-          hasDelay = railTrains.some(t => dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
-        }
+        delayStatus = getDelayStatus(key);
       }
-      const dots = (hasEntry || hasDelay)
-        ? `<span class="cal-dot-row">${hasEntry ? '<span class="cal-dot"></span>' : ''}${hasDelay ? '<span class="cal-dot-delay"></span>' : ''}</span>`
+      const delayDotHtml = delayStatus === 'confirmed' ? '<span class="cal-dot-confirmed"></span>'
+        : delayStatus === 'maybe' ? '<span class="cal-dot-delay"></span>'
+        : '';
+      const dots = (hasEntry || delayStatus)
+        ? `<span class="cal-dot-row">${hasEntry ? '<span class="cal-dot"></span>' : ''}${delayDotHtml}</span>`
         : '';
       cells += `<div class="cal-day ${weekend ? 'weekend' : ''} ${isToday ? 'today' : ''}" data-key="${key}">
         <span>${day}</span>${dots}
