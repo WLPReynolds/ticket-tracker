@@ -650,7 +650,7 @@ const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-06.10:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-06.11:23'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2708,7 +2708,7 @@ function openTrackedTrains(){
     return trackedTrains.map(t => {
       const ageMin = Math.round((Date.now() - t.addedAt) / 60000);
       const ageLabel = ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin/60)} hr ago`;
-      return `<div class="rail-detail-row" data-service-id="${t.serviceId}" style="cursor:pointer;">
+      return `<div class="rail-detail-row" data-service-id="${t.serviceId}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
         <span style="font-weight:600;">${t.label}</span>
         <span style="color:var(--ink-dim);">Added ${ageLabel} ›</span>
       </div>`;
@@ -2775,7 +2775,7 @@ function openLiveDepartureBoard(){
     const color = onTime ? 'var(--good)' : '#ff8b7e';
     const statusText = onTime ? 'On time' : `Now ${service.etd}${service.platform ? '' : ''}`;
     const platformText = service.platform ? ` · Plat ${service.platform}` : '';
-    return `<div class="rail-detail-row" data-train-key="${train.key}" style="cursor:pointer; ${onTime?'':'-webkit-user-select:none; user-select:none;'}"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText} ›</span></div>`;
+    return `<div class="rail-detail-row" data-train-key="${train.key}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText} ›</span></div>`;
   }
 
   fetchLiveBoards().then(boards => {
@@ -2949,7 +2949,7 @@ function openTrainProgress(train, service){
       <h3>${train.label} — live progress</h3>
       <div class="sub">An estimate based on calling-point times, not GPS — a rough sense of where it is, not a precise position. Refreshes automatically every minute.</div>
       <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px;">${initial.summaryHtml}</div>
-      <div style="max-height:45vh; overflow-y:auto; position:relative;">
+      <div style="max-height:45vh; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
           <div id="train-progress-line" style="position:absolute; left:6px; top:${TRAIN_PROGRESS_ROW_HEIGHT/2}px; width:2px; height:${lineHeight}px; background:var(--line);"></div>
           <div id="train-progress-blob" style="position:absolute; left:1px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:${initial.blobTopPx + TRAIN_PROGRESS_ROW_HEIGHT/2 - 6}px; transition:top 1.2s ease; z-index:2;"></div>
