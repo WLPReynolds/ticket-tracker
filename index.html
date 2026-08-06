@@ -650,7 +650,7 @@ const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-05.21:48'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-06.09:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -776,6 +776,13 @@ function distanceKm(lat1, lon1, lat2, lon2){
 let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
 let confirmedTrains = {}; // "YYYY-MM-DD" -> { AM: trainKey, PM: trainKey } — which specific train you actually caught, manually confirmed for now
 
+// Trains being actively watched by serviceID, independent of any
+// station's rolling board window — lets a journey be followed all the
+// way to its destination, even after it's long departed the station you
+// first spotted it from, and even across closing/reopening the app.
+let trackedTrains = []; // [{ serviceId, label, fromLoc, addedAt }]
+const TRACKED_TRAIN_MAX_AGE_MS = 6 * 60 * 60 * 1000; // stop tracking after 6 hours regardless — a journey this long has almost certainly finished
+
 // "I think you're on this train" detection
 const GEOFENCE_RADIUS_M = 500; // informed by real field-test readings — Crewe/Wigan both fall well inside this
 const LIKELY_TRAIN_CHECK_INTERVAL_MS = 2 * 60 * 1000; // how often to check while the app is open
@@ -862,6 +869,12 @@ async function loadData(){
     const ct = localStorage.getItem('confirmed-trains');
     confirmedTrains = ct ? JSON.parse(ct) : {};
   }catch(e){ confirmedTrains = {}; }
+  try{
+    const tt = localStorage.getItem('tracked-trains');
+    trackedTrains = tt ? JSON.parse(tt) : [];
+    const now = Date.now();
+    trackedTrains = trackedTrains.filter(t => (now - t.addedAt) < TRACKED_TRAIN_MAX_AGE_MS);
+  }catch(e){ trackedTrains = []; }
   try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
@@ -956,6 +969,10 @@ async function saveRailPerfCache(){
 }
 async function saveConfirmedTrains(){
   try{ localStorage.setItem('confirmed-trains', JSON.stringify(confirmedTrains)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveTrackedTrains(){
+  try{ localStorage.setItem('tracked-trains', JSON.stringify(trackedTrains)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePeriodStart(){
@@ -1617,6 +1634,7 @@ function render(){
     { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
     { id: 'live-board-link', label: 'Live trains', weight: 0 },
+    { id: 'tracked-trains-link', label: 'Tracked trains', weight: 0 },
     { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
   ];
@@ -2019,6 +2037,9 @@ function render(){
 
   const liveBoardLink = document.getElementById('live-board-link');
   if (liveBoardLink) liveBoardLink.addEventListener('click', () => { menuOpen = false; render(); openLiveDepartureBoard(); });
+
+  const trackedTrainsLink = document.getElementById('tracked-trains-link');
+  if (trackedTrainsLink) trackedTrainsLink.addEventListener('click', () => { menuOpen = false; render(); openTrackedTrains(); });
 
   const confirmTrainLink = document.getElementById('confirm-train-link');
   if (confirmTrainLink) confirmTrainLink.addEventListener('click', () => { menuOpen = false; render(); openConfirmTrain(); });
@@ -2470,6 +2491,23 @@ async function fetchLiveBoards(){
   return boards;
 }
 
+// Tracks one specific train by its serviceID, independent of any
+// station's rolling board window — works for as long as Darwin still
+// has the service, regardless of how far past its departure station
+// the train has travelled.
+async function fetchServiceDetails(serviceId){
+  const resp = await fetch(DARWIN_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queries: [{ type: 'serviceDetails', serviceId }] })
+  });
+  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
+  const data = await resp.json();
+  const r = (data.results || [])[0];
+  if (!r || !r.ok) throw new Error((r && (r.reason || `status ${r.status}`)) || 'serviceDetails failed');
+  return r.data;
+}
+
 // Gets a one-off position without prompting unnecessarily — only called
 // when we're already inside a relevant time window, so the permission
 // prompt (if it appears at all) shows up with context, not on every
@@ -2564,12 +2602,23 @@ async function checkLikelyTrain(){
     });
 
     if (closest && closest.key !== nominal.key){
+      // A genuine surprise — you appear to be catching a different train
+      // than expected. This needs your confirmation, since it's a real
+      // ambiguity we can't resolve on our own.
       const suggestionId = `${todayKeyLocal}-${direction}-${closest.key}`;
       if (dismissedLikelyTrainKeys.has(suggestionId)) continue;
       likelyTrainSuggestion = { dateKey: todayKeyLocal, direction, trainKey: closest.key, label: closest.label };
       showLocalNotification('Is this your train?', `Looks like you might be on the delayed ${closest.label} instead of your usual one — open the app to confirm.`);
       render();
-      return; // one suggestion at a time is plenty
+      return; // one interactive suggestion at a time is plenty
+    } else if (closest && closest.key === nominal.key){
+      // No surprise — you're at the station, and the train that's actually
+      // about to leave is the one you'd expect anyway. Nothing ambiguous
+      // to ask about, so just quietly confirm it.
+      if (!confirmedTrains[todayKeyLocal]) confirmedTrains[todayKeyLocal] = {};
+      confirmedTrains[todayKeyLocal][direction] = closest.key;
+      saveConfirmedTrains();
+      render();
     }
   }
 }
@@ -2643,6 +2692,54 @@ function openConfirmTrain(){
     render();
   });
   document.getElementById('confirm-train-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openTrackedTrains(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  function buildListHtml(){
+    if (trackedTrains.length === 0){
+      return `<div class="sub">Nothing being tracked right now. Tap a train from "Live trains" to start watching its progress — it'll keep working here even after it leaves the station.</div>`;
+    }
+    return trackedTrains.map(t => {
+      const ageMin = Math.round((Date.now() - t.addedAt) / 60000);
+      const ageLabel = ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin/60)} hr ago`;
+      return `<div class="rail-detail-row" data-service-id="${t.serviceId}" style="cursor:pointer;">
+        <span style="font-weight:600;">${t.label}</span>
+        <span style="color:var(--ink-dim);">Added ${ageLabel} ›</span>
+      </div>`;
+    }).join('');
+  }
+
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Tracked trains</h3>
+      <div id="tracked-list">${buildListHtml()}</div>
+      <div class="modal-close" id="tracked-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.querySelectorAll('#tracked-list [data-service-id]').forEach(row => {
+    row.addEventListener('click', async () => {
+      const serviceId = row.dataset.serviceId;
+      const tracked = trackedTrains.find(t => t.serviceId === serviceId);
+      if (!tracked) return;
+      try{
+        const service = await fetchServiceDetails(serviceId);
+        document.body.removeChild(overlay);
+        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc }, service);
+      }catch(e){
+        alert(`Couldn't load this train's progress: ${e.message}`);
+      }
+    });
+  });
+
+  document.getElementById('tracked-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
@@ -2790,6 +2887,17 @@ const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
 
 function openTrainProgress(train, service){
   let refreshTimer = null;
+  const serviceId = service.serviceID || null;
+
+  // Remember this journey so it can still be found and watched later,
+  // even after it's rolled off the departure station's own board, or
+  // after closing and reopening the app entirely.
+  if (serviceId){
+    trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
+    trackedTrains.unshift({ serviceId, label: train.label, fromLoc: train.fromLoc, addedAt: Date.now() });
+    trackedTrains = trackedTrains.slice(0, 5); // no need to keep more than a handful
+    saveTrackedTrains();
+  }
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -2803,20 +2911,41 @@ function openTrainProgress(train, service){
   `;
   document.body.appendChild(overlay);
 
-  refreshTimer = setInterval(async () => {
+  async function doRefresh(){
     try{
-      const boards = await fetchLiveBoards();
-      const board = boards[`${train.fromLoc}-${train.toLoc}`] || [];
-      const wanted = `${train.time.slice(0,2)}:${train.time.slice(2,4)}`;
-      const freshService = board.find(s => s.std === wanted);
+      let freshService = null;
+      if (serviceId){
+        // Preferred path: ask for this exact train directly, regardless
+        // of whether it's still on any station's board.
+        freshService = await fetchServiceDetails(serviceId);
+      } else {
+        // Fallback for the rare case a service had no ID at all — the
+        // old, more fragile approach of re-matching against the board.
+        const boards = await fetchLiveBoards();
+        const board = boards[`${train.fromLoc}-${train.toLoc}`] || [];
+        const wanted = `${train.time.slice(0,2)}:${train.time.slice(2,4)}`;
+        freshService = board.find(s => s.std === wanted) || null;
+      }
       if (freshService && !freshService.isCancelled){
-        document.getElementById('train-progress-rows').innerHTML = buildTrainProgressRows(train, freshService);
+        const rowsEl = document.getElementById('train-progress-rows');
+        if (rowsEl) rowsEl.innerHTML = buildTrainProgressRows(train, freshService);
       }
     }catch(e){ /* leave the last-known view showing rather than clearing it */ }
-  }, TRAIN_PROGRESS_REFRESH_MS);
+  }
+
+  refreshTimer = setInterval(doRefresh, TRAIN_PROGRESS_REFRESH_MS);
+
+  // Screen locks/backgrounding pause the interval above without "catching
+  // up" missed ticks afterward — so on waking up, force an immediate
+  // refresh rather than potentially waiting up to another full minute.
+  function onVisible(){
+    if (document.visibilityState === 'visible') doRefresh();
+  }
+  document.addEventListener('visibilitychange', onVisible);
 
   function closeAndStopRefresh(){
     if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
+    document.removeEventListener('visibilitychange', onVisible);
     document.body.removeChild(overlay);
   }
   document.getElementById('train-progress-close-btn').addEventListener('click', closeAndStopRefresh);
