@@ -651,7 +651,7 @@ const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-06.12:04'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-06.12:16'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2959,6 +2959,7 @@ function openTrainProgress(train, service){
   overlay.innerHTML = `
     <div class="modal">
       <h3>${train.label} — live progress</h3>
+      <div id="train-progress-reverse-pill">${service.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : ''}</div>
       <div class="sub">An estimate based on calling-point times, not GPS — a rough sense of where it is, not a precise position. Refreshes automatically every minute.</div>
       <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px;">${initial.summaryHtml}</div>
       <div style="max-height:45vh; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
@@ -2993,9 +2994,11 @@ function openTrainProgress(train, service){
         const rowsEl = document.getElementById('train-progress-rows');
         const summaryEl = document.getElementById('train-progress-summary');
         const blobEl = document.getElementById('train-progress-blob');
+        const pillEl = document.getElementById('train-progress-reverse-pill');
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
         if (blobEl) blobEl.style.top = `${fresh.blobTopPx + TRAIN_PROGRESS_ROW_HEIGHT/2 - 6}px`;
+        if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
       }
     }catch(e){ /* leave the last-known view showing rather than clearing it */ }
   }
