@@ -43,7 +43,7 @@
     color: var(--ink);
     font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     min-height:100vh;
-    padding-bottom: var(--bottom-nav-clearance);
+    padding-bottom: 0;
   }
   .mono{
     font-family: 'Courier New', 'Space Mono', monospace;
@@ -93,7 +93,7 @@
   .menu-dropdown .settings-link:last-child{ border-bottom: none; }
 
   .bottom-nav{
-    position: fixed;
+    position: sticky;
     left: 0; right: 0; bottom: 0;
     display: flex;
     background: var(--board-2);
@@ -689,11 +689,18 @@ const NAV_ICONS = {
   more: '<svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
 };
 
+// A filled circle with a white checkmark, GitHub-style — used to show a
+// delay repay claim's status inline. Green for confirmed, grey for
+// started-but-not-yet-confirmed.
+function checkCircleIcon(color){
+  return `<svg viewBox="0 0 16 16" width="15" height="15" style="vertical-align:-2px;"><circle cx="8" cy="8" r="8" fill="${color}"/><path d="M4.3 8.3 L6.8 10.6 L11.6 5.3" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`;
+}
+
 // Replace this with your own OAuth client ID from Google Cloud Console
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.12:07'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.12:22'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3302,10 +3309,10 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
           <span style="color:#14161f;">${delayText}</span>
         </div>`;
       }
-      const checkColor = status === 'confirmed' ? 'var(--good)' : '#9a9db0';
+      const checkColor = status === 'confirmed' ? '#3fb950' : '#8b949e';
       const delayText = `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
       return `<div class="rail-detail-row">
-        <span style="color:#ff8b7e; font-weight:600;">${t.label} <span style="color:${checkColor};" title="${status === 'confirmed' ? 'Claim confirmed' : 'Claim started'}">✓</span></span>
+        <span style="color:#ff8b7e; font-weight:600;">${t.label} <span title="${status === 'confirmed' ? 'Claim confirmed' : 'Claim started'}">${checkCircleIcon(checkColor)}</span></span>
         <span style="color:#ff8b7e;">${delayText}</span>
       </div>`;
     }
