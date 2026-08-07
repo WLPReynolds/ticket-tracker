@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.14:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.15:03'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2903,7 +2903,7 @@ function openTrackedTrains(){
       try{
         const service = await fetchServiceDetails(serviceId);
         document.body.removeChild(overlay);
-        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc }, service);
+        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
       }catch(e){
         row.style.opacity = '';
         row.style.pointerEvents = '';
@@ -3129,7 +3129,7 @@ const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
 
 function openTrainProgress(train, service){
   let refreshTimer = null;
-  const serviceId = service.serviceID || null;
+  const serviceId = train.serviceId || service.serviceID || null;
 
   // Remember this journey so it can still be found and watched later,
   // even after it's rolled off the departure station's own board, or
