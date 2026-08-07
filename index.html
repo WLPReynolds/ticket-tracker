@@ -690,7 +690,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.09:38'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.09:56'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -816,6 +816,46 @@ function distanceKm(lat1, lon1, lat2, lon2){
 let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
 let confirmedTrains = {}; // "YYYY-MM-DD" -> { AM: trainKey, PM: trainKey } — which specific train you actually caught, manually confirmed for now
 
+// Delay Repay claim tracking — dateKey -> { AM: {status, minutesLate, amount}, PM: {...} }
+// status is 'started' (link tapped, submission not confirmed) or 'confirmed'
+// (manually marked as actually submitted/completed). Only ever set for the
+// CONFIRMED train on a given direction, never for other trains that also
+// happened to be delayed that day but weren't the one actually ridden.
+let delayClaims = {};
+const AVANTI_CLAIM_URL = 'https://delayrepay.avantiwestcoast.co.uk/';
+// Confirmed against two real Avanti claims on the Flexi 8 ticket: a 15-29
+// min delay paid £2.40 and a 30-59 min delay paid £4.80, both matching
+// (ticket price ÷ 16) × band exactly at £153.60. Worth re-checking if the
+// ticket type or price structure ever changes.
+const DELAY_REPAY_DIVISOR = 16;
+
+function delayRepayBandPercent(minutes){
+  if (minutes >= 60) return 1.0;
+  if (minutes >= 30) return 0.5;
+  if (minutes >= 15) return 0.25;
+  return 0;
+}
+
+// Finds the season ticket price that was actually valid on a given past
+// date, rather than just using whatever the current price is — so a later
+// price change doesn't retroactively distort an older claim's value.
+function getSeasonPriceForDate(dateKey){
+  const seasonPurchases = purchases.filter(p => (p.type || undefined) !== 'single' && p.date <= dateKey);
+  if (seasonPurchases.length === 0) return lastKnownPrice;
+  seasonPurchases.sort((a, b) => a.date < b.date ? -1 : 1);
+  return seasonPurchases[seasonPurchases.length - 1].cost;
+}
+
+function computeDelayRepayAmount(minutes, dateKey){
+  const price = getSeasonPriceForDate(dateKey);
+  return (price / DELAY_REPAY_DIVISOR) * delayRepayBandPercent(minutes);
+}
+
+async function saveDelayClaims(){
+  try{ localStorage.setItem('delay-claims', JSON.stringify(delayClaims)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+
 // Trains being actively watched by serviceID, independent of any
 // station's rolling board window — lets a journey be followed all the
 // way to its destination, even after it's long departed the station you
@@ -909,6 +949,10 @@ async function loadData(){
     const ct = localStorage.getItem('confirmed-trains');
     confirmedTrains = ct ? JSON.parse(ct) : {};
   }catch(e){ confirmedTrains = {}; }
+  try{
+    const dc = localStorage.getItem('delay-claims');
+    delayClaims = dc ? JSON.parse(dc) : {};
+  }catch(e){ delayClaims = {}; }
   try{
     const tt = localStorage.getItem('tracked-trains');
     trackedTrains = tt ? JSON.parse(tt) : [];
@@ -3212,6 +3256,94 @@ function railDetailRows(trains, dayPerf){
   }).join('');
 }
 
+// Same as railDetailRows, but for the one train that was actually
+// confirmed as ridden that day: if it was also delayed enough to claim,
+// it renders as a reversed, tappable pill (a real claim option) instead
+// of plain text — other delayed trains that day (ones not actually
+// caught) stay as ordinary rows, since they were never claimable anyway.
+function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
+  const confirmedKey = (confirmedTrains[dateKey] || {})[direction];
+  return trains.map(t => {
+    const perf = dayPerf[t.key];
+    if (!perf){
+      return `<div class="rail-detail-row"><span>${t.label}</span><span style="color:var(--ink-dim);">No data</span></div>`;
+    }
+    const late = perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES;
+    if (t.key === confirmedKey && late){
+      const claim = (delayClaims[dateKey] || {})[direction];
+      const status = claim ? claim.status : null;
+      const statusLabel = status === 'confirmed' ? 'Claim confirmed ✓' : (status === 'started' ? 'Claim started — tap to reopen Avanti' : 'Tap to start a claim on Avanti');
+      const statusColor = status === 'confirmed' ? 'var(--good)' : 'var(--ink-dim)';
+      return `
+        <div class="rail-detail-row claimable-row" data-claim-date="${dateKey}" data-claim-direction="${direction}"
+             style="cursor:pointer; background:#e05a4e; border-radius:8px; padding:8px 10px; margin-bottom:4px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+          <span style="color:#14161f; font-weight:700;">${t.label}</span>
+          <span style="color:#14161f;">${perf.delayMinutes} min delay ›</span>
+        </div>
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:${statusColor}; padding:2px 2px 10px; cursor:pointer;">
+          <input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${dateKey}" data-claim-direction="${direction}" ${status==='confirmed'?'checked':''} style="width:15px; height:15px;" />
+          ${statusLabel}
+        </label>`;
+    }
+    const color = late ? '#ff8b7e' : 'var(--good)';
+    const text = perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+    return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
+  }).join('');
+}
+
+// Wires up the claim pill and confirm checkbox inside a just-appended
+// detail overlay. reopen() should close this overlay and re-show the
+// same detail view fresh, so a tap is reflected immediately.
+function wireClaimHandlers(overlay, reopen){
+  overlay.querySelectorAll('.claimable-row').forEach(row => {
+    row.addEventListener('click', async () => {
+      const dateKey = row.dataset.claimDate;
+      // One tap covers the whole day — if both AM and PM had a confirmed
+      // delay, both get marked 'started' together, since realistically
+      // you'll be dealing with both while you're on Avanti's site anyway.
+      if (!delayClaims[dateKey]) delayClaims[dateKey] = {};
+      ['AM', 'PM'].forEach(dir => {
+        const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
+        if (!confirmedKey) return;
+        const perf = (railPerfCache[dateKey] || {})[confirmedKey];
+        if (!perf || perf.delayMinutes < DELAY_REPAY_THRESHOLD_MINUTES) return;
+        const existing = delayClaims[dateKey][dir];
+        if (existing && existing.status === 'confirmed') return; // don't downgrade an already-confirmed claim
+        delayClaims[dateKey][dir] = {
+          status: 'started',
+          minutesLate: perf.delayMinutes,
+          amount: computeDelayRepayAmount(perf.delayMinutes, dateKey),
+        };
+      });
+      await saveDelayClaims();
+      window.open(AVANTI_CLAIM_URL, '_blank');
+      reopen();
+    });
+  });
+  overlay.querySelectorAll('.claim-confirm-checkbox').forEach(cb => {
+    cb.addEventListener('click', (e) => e.stopPropagation()); // don't also trigger the pill's own click
+    cb.addEventListener('change', async () => {
+      const dateKey = cb.dataset.claimDate;
+      const dir = cb.dataset.claimDirection;
+      if (!delayClaims[dateKey]) delayClaims[dateKey] = {};
+      const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
+      const perf = (railPerfCache[dateKey] || {})[confirmedKey];
+      const minutesLate = perf ? perf.delayMinutes : ((delayClaims[dateKey][dir] || {}).minutesLate || 0);
+      if (cb.checked){
+        delayClaims[dateKey][dir] = {
+          status: 'confirmed',
+          minutesLate,
+          amount: computeDelayRepayAmount(minutesLate, dateKey),
+        };
+      } else if (delayClaims[dateKey][dir]){
+        delayClaims[dateKey][dir].status = 'started'; // unchecking drops back to 'started', not erased entirely
+      }
+      await saveDelayClaims();
+      reopen();
+    });
+  });
+}
+
 function openCalendarDayDetail(key){
   const d = parseKey(key);
   const todayKeyLocal = fmtKey(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()));
@@ -3233,11 +3365,11 @@ function openCalendarDayDetail(key){
       <div style="display:flex; gap:24px;">
         <div style="flex:1;">
           <div class="rail-col-header">Morning</div>
-          ${amTrains.length ? railDetailRows(amTrains, dayPerf) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+          ${amTrains.length ? railDetailRowsForClaim(amTrains, dayPerf, key, 'AM') : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
         </div>
         <div style="flex:1;">
           <div class="rail-col-header">Evening</div>
-          ${pmTrains.length ? railDetailRows(pmTrains, dayPerf) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+          ${pmTrains.length ? railDetailRowsForClaim(pmTrains, dayPerf, key, 'PM') : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
         </div>
       </div>`;
   }
@@ -3254,6 +3386,7 @@ function openCalendarDayDetail(key){
     </div>
   `;
   document.body.appendChild(overlay);
+  wireClaimHandlers(overlay, () => { document.body.removeChild(overlay); openCalendarDayDetail(key); });
   document.getElementById('cal-day-detail-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
@@ -3275,17 +3408,18 @@ function openRailDetail(key){
       <div style="display:flex; gap:24px;">
         <div style="flex:1;">
           <div class="rail-col-header">Morning</div>
-          ${amTrains.length ? railDetailRows(amTrains, dayPerf) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+          ${amTrains.length ? railDetailRowsForClaim(amTrains, dayPerf, key, 'AM') : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
         </div>
         <div style="flex:1;">
           <div class="rail-col-header">Evening</div>
-          ${pmTrains.length ? railDetailRows(pmTrains, dayPerf) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+          ${pmTrains.length ? railDetailRowsForClaim(pmTrains, dayPerf, key, 'PM') : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
         </div>
       </div>
       <div class="modal-close" id="rail-detail-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
+  wireClaimHandlers(overlay, () => { document.body.removeChild(overlay); openRailDetail(key); });
   document.getElementById('rail-detail-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
@@ -3543,6 +3677,30 @@ const STAT_DEFINITIONS = [
         }
       }
       return worst > 0 ? `${worst} minutes` : 'None recorded yet';
+    }
+  },
+  {
+    id: 'delay-repay-total', section: 'Delay repay', label: 'Claimed total (started + confirmed)',
+    compute: () => {
+      let total = 0;
+      for (const date in delayClaims){
+        for (const dir in delayClaims[date]){
+          total += delayClaims[date][dir].amount || 0;
+        }
+      }
+      return `£${total.toFixed(2)}`;
+    }
+  },
+  {
+    id: 'delay-repay-confirmed', section: 'Delay repay', label: 'Confirmed & paid total',
+    compute: () => {
+      let total = 0;
+      for (const date in delayClaims){
+        for (const dir in delayClaims[date]){
+          if (delayClaims[date][dir].status === 'confirmed') total += delayClaims[date][dir].amount || 0;
+        }
+      }
+      return `£${total.toFixed(2)}`;
     }
   },
 ];
