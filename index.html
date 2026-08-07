@@ -690,7 +690,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.10:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.10:46'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3279,10 +3279,11 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
       const claim = (delayClaims[dateKey] || {})[direction];
       const status = claim ? claim.status : null;
       if (!status){
+        const delayText = `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
         return `<div class="rail-detail-row claimable-row" data-claim-date="${dateKey}" data-claim-direction="${direction}"
-             style="cursor:pointer; justify-content:flex-start; gap:8px; background:#e05a4e; border-radius:8px; padding:8px 10px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+             style="cursor:pointer; margin:0 -10px; padding:8px 10px; background:#e05a4e; border-radius:8px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
           <span style="color:#14161f; font-weight:700;">${t.label}</span>
-          <span style="color:#14161f;">${perf.delayMinutes} min delay</span>
+          <span style="color:#14161f;">${delayText}</span>
         </div>`;
       }
       const checkColor = status === 'confirmed' ? 'var(--good)' : '#9a9db0';
@@ -3389,7 +3390,6 @@ function openDelayClaimsManager(){
     link.addEventListener('click', async () => {
       const dateKey = link.dataset.claimDate;
       const dir = link.dataset.claimDirection;
-      if (!confirm('Undo this claim? The red delay entry will go back to being tappable again.')) return;
       if (delayClaims[dateKey]){
         delete delayClaims[dateKey][dir];
         if (Object.keys(delayClaims[dateKey]).length === 0) delete delayClaims[dateKey];
