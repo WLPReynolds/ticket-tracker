@@ -40,7 +40,7 @@
     color: var(--ink);
     font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     min-height:100vh;
-    padding-bottom: 40px;
+    padding-bottom: calc(78px + env(safe-area-inset-bottom));
   }
   .mono{
     font-family: 'Courier New', 'Space Mono', monospace;
@@ -62,34 +62,18 @@
     height: 12px;
     clip-path: polygon(0 0, 100% 0, 50% 100%);
   }
-  .menu-btn{
-    position: absolute;
-    top: 18px;
-    right: 16px;
-    width: 38px;
-    height: 38px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--tile);
-    border: 1px solid var(--line);
-    border-radius: 9px;
-    cursor: pointer;
-    font-size: 18px;
-    color: var(--ink);
-    z-index: 20;
-  }
   .menu-dropdown{
-    position: absolute;
-    top: 60px;
+    position: fixed;
+    bottom: calc(74px + env(safe-area-inset-bottom));
     right: 16px;
     background: var(--board-2);
     border: 1px solid var(--line);
     border-radius: 12px;
-    box-shadow: 0 10px 28px rgba(0,0,0,0.45);
-    z-index: 30;
+    box-shadow: 0 -6px 28px rgba(0,0,0,0.45);
+    z-index: 65;
     min-width: 240px;
-    overflow: hidden;
+    max-height: 60vh;
+    overflow-y: auto;
   }
   .menu-dropdown .settings-link{
     margin: 0;
@@ -104,6 +88,50 @@
     background: rgba(255,255,255,0.06);
   }
   .menu-dropdown .settings-link:last-child{ border-bottom: none; }
+
+  .bottom-nav{
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    background: var(--board-2);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom);
+    z-index: 55;
+  }
+  .bottom-nav-item{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 9px 4px 8px;
+    color: var(--ink-dim);
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .bottom-nav-item svg{
+    width: 22px;
+    height: 22px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.8;
+  }
+  .bottom-nav-item .bn-label{
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+  }
+  .bottom-nav-item.active{
+    color: var(--amber);
+  }
+  .bottom-nav-item:active{
+    background: rgba(255,255,255,0.04);
+  }
 
   .cal-nav{
     display: flex;
@@ -606,6 +634,7 @@
     position: fixed; inset:0;
     background: rgba(0,0,0,0.6);
     display:flex; align-items:flex-end;
+    padding-bottom: calc(70px + env(safe-area-inset-bottom));
     z-index: 50;
   }
   .modal{
@@ -647,11 +676,21 @@
 <script>
 const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 
+// Simple line-style icons for the bottom nav bar — inherit colour via
+// currentColor so active/inactive state is just a CSS colour change.
+const NAV_ICONS = {
+  today: '<svg viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1a2 2 0 0 0 0 4v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1a2 2 0 0 0 0-4V8z"/><path d="M13 6v2M13 11v2M13 16v2" stroke-dasharray="2 2"/></svg>',
+  live: '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="13" rx="4"/><path d="M5 12h14"/><circle cx="8.5" cy="20" r="1.3" fill="currentColor" stroke="none"/><circle cx="15.5" cy="20" r="1.3" fill="currentColor" stroke="none"/><path d="M8 17l-2 3M16 17l2 3"/></svg>',
+  buy: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/><circle cx="8" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="14.5" r="1" fill="currentColor" stroke="none"/></svg>',
+  more: '<svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
+};
+
 // Replace this with your own OAuth client ID from Google Cloud Console
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.06:13'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.09:08'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1574,9 +1613,16 @@ let state = {
   editingKey: null,
   showRecalibrate: false,
   daysAhead: 13,
+  activeTab: 'today', // drives which bottom-nav icon is highlighted
 };
 const MAX_DAYS_AHEAD = 120;
 const DAYS_AHEAD_STEP = 14;
+
+// Closes any currently-open modal sheet — used so tapping a different
+// bottom-nav tab swaps screens cleanly rather than stacking them.
+function closeAllModals(){
+  document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
+}
 
 function findNextHoliday(todayKey){
   let best = null;
@@ -1639,14 +1685,10 @@ function render(){
   // the bottom, however many other items get added later.
   const earlyDismissedCheck = !!dismissedMonths[fmtKey(getPayPeriodByOffset(today, 0).start)];
   const menuItems = [
-    { id: 'calendar-view-link', label: 'Calendar view', weight: 0 },
-    { id: 'recalibrate-link', label: 'Just bought a new ticket? Set start date', weight: 0 },
-    { id: 'log-single-link', label: 'Log a single ticket', weight: 0 },
     { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
     { id: 'day-return-price-link', label: `Set day return price (currently £${dayReturnPrice.toFixed(2)})`, weight: 0 },
     { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
-    { id: 'live-board-link', label: 'Live trains', weight: 0 },
     { id: 'tracked-trains-link', label: 'Tracked trains', weight: 0 },
     { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
@@ -1699,11 +1741,11 @@ function render(){
     } else if (todayComment !== '' && !travelOverrides[todayKey]){
       statusHtml = `<div class="status-banner skip">Marked "${escapeHtml(todayComment)}" — not counted</div>`;
     } else {
-      statusHtml = `<div class="status-banner renew">No active season ticket — log a single ticket, or buy your next one</div>`;
+      statusHtml = `<div class="status-banner renew" id="renewal-banner-tap" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">No active season ticket — log a single ticket, or buy your next one ›</div>`;
     }
   } else if (todayState.buyFlag){
     const lostMsg = todayState.lostDays ? ` (${todayState.unusedRemaining} unused day${todayState.unusedRemaining===1?'':'s'} lost)` : '';
-    statusHtml = `<div class="status-banner renew">🚆 Buy your ticket tonight for tomorrow${lostMsg}</div>`;
+    statusHtml = `<div class="status-banner renew" id="renewal-banner-tap" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">🚆 Buy your ticket tonight for tomorrow${lostMsg} ›</div>`;
   } else if (todayState.inGap){
     statusHtml = `<div class="status-banner skip">No ticket needed yet — nothing due until you next travel</div>`;
   } else if (todayIsWeekend){
@@ -1865,7 +1907,6 @@ function render(){
       <h1>8-Day Ticket</h1>
       <div class="today-date">${dateLabel(today)}</div>
       <div style="font-size:10px; color:var(--ink-dim); opacity:0.6; margin-top:2px;">${APP_VERSION}</div>
-      <div class="menu-btn" id="menu-btn">&#9776;</div>
       ${menuOpen ? `
       <div class="menu-dropdown" id="menu-dropdown">
         ${menuItemsHtml}
@@ -1943,6 +1984,14 @@ function render(){
     ${railDaysBack < RAIL_MAX_DAYS_BACK ? `<div class="day-nav-btn" id="show-earlier-link"><span class="arrow-icon">&#8593;</span> Show earlier days</div>` : ''}
     <div class="day-list">${rows}</div>
     ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="day-nav-btn" id="show-more-link">Show more days <span class="arrow-icon">&#8595;</span></div>` : ''}
+
+    <nav class="bottom-nav">
+      <div class="bottom-nav-item ${state.activeTab==='today'?'active':''}" id="bottom-nav-today">${NAV_ICONS.today}<span class="bn-label">Today</span></div>
+      <div class="bottom-nav-item ${state.activeTab==='live'?'active':''}" id="bottom-nav-live">${NAV_ICONS.live}<span class="bn-label">Live</span></div>
+      <div class="bottom-nav-item ${state.activeTab==='buy'?'active':''}" id="bottom-nav-buy">${NAV_ICONS.buy}<span class="bn-label">Buy</span></div>
+      <div class="bottom-nav-item ${state.activeTab==='calendar'?'active':''}" id="bottom-nav-calendar">${NAV_ICONS.calendar}<span class="bn-label">Calendar</span></div>
+      <div class="bottom-nav-item ${menuOpen?'active':''}" id="bottom-nav-more">${NAV_ICONS.more}<span class="bn-label">More</span></div>
+    </nav>
   `;
 
   // wire up chip row for today (only exists on non-weekend days)
@@ -2006,8 +2055,9 @@ function render(){
     });
   });
 
-  document.getElementById('menu-btn').addEventListener('click', (e) => {
+  document.getElementById('bottom-nav-more').addEventListener('click', (e) => {
     e.stopPropagation();
+    closeAllModals();
     menuOpen = !menuOpen;
     render();
   });
@@ -2016,8 +2066,8 @@ function render(){
     setTimeout(() => {
       document.addEventListener('click', function closeMenu(e){
         const dropdown = document.getElementById('menu-dropdown');
-        const btn = document.getElementById('menu-btn');
-        if (!dropdown || (!dropdown.contains(e.target) && e.target !== btn)){
+        const btn = document.getElementById('bottom-nav-more');
+        if (!dropdown || (!dropdown.contains(e.target) && e.target !== btn && !btn.contains(e.target))){
           document.removeEventListener('click', closeMenu);
           if (menuOpen){ menuOpen = false; render(); }
         }
@@ -2025,12 +2075,37 @@ function render(){
     }, 0);
   }
 
-  const calendarViewLink = document.getElementById('calendar-view-link');
-  if (calendarViewLink) calendarViewLink.addEventListener('click', () => { menuOpen = false; render(); openCalendarView(); });
-  const recalibrateLink = document.getElementById('recalibrate-link');
-  if (recalibrateLink) recalibrateLink.addEventListener('click', () => { menuOpen = false; render(); openRecalibrate(); });
-  const logSingleLink = document.getElementById('log-single-link');
-  if (logSingleLink) logSingleLink.addEventListener('click', () => { menuOpen = false; render(); openLogSingleTicket(); });
+  document.getElementById('bottom-nav-today').addEventListener('click', () => {
+    closeAllModals();
+    menuOpen = false;
+    state.activeTab = 'today';
+    render();
+  });
+  const renewalBannerTap = document.getElementById('renewal-banner-tap');
+  if (renewalBannerTap) renewalBannerTap.addEventListener('click', () => { openBuyScreen('season'); });
+
+  document.getElementById('bottom-nav-live').addEventListener('click', () => {
+    closeAllModals();
+    menuOpen = false;
+    state.activeTab = 'live';
+    render();
+    openLiveDepartureBoard();
+  });
+  document.getElementById('bottom-nav-buy').addEventListener('click', () => {
+    closeAllModals();
+    menuOpen = false;
+    state.activeTab = 'buy';
+    render();
+    openBuyScreen();
+  });
+  document.getElementById('bottom-nav-calendar').addEventListener('click', () => {
+    closeAllModals();
+    menuOpen = false;
+    state.activeTab = 'calendar';
+    render();
+    openCalendarView();
+  });
+
   const importHistoryLink = document.getElementById('import-history-link');
   if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
   const parkingCostLink = document.getElementById('parking-cost-link');
@@ -2047,9 +2122,6 @@ function render(){
 
   const railConfigLink = document.getElementById('rail-config-link');
   if (railConfigLink) railConfigLink.addEventListener('click', () => { menuOpen = false; render(); openRailConfig(); });
-
-  const liveBoardLink = document.getElementById('live-board-link');
-  if (liveBoardLink) liveBoardLink.addEventListener('click', () => { menuOpen = false; render(); openLiveDepartureBoard(); });
 
   const trackedTrainsLink = document.getElementById('tracked-trains-link');
   if (trackedTrainsLink) trackedTrainsLink.addEventListener('click', () => { menuOpen = false; render(); openTrackedTrains(); });
@@ -3512,28 +3584,47 @@ function estimateTravelDaysInWindow(startDateStr, windowLength){
   return count;
 }
 
-function openRecalibrate(){
+function openBuyScreen(defaultType){
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const suggested = fmtKey(addDays(today, 1));
+  let buyType = defaultType || 'season';
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h3>Set ticket start date</h3>
-      <div class="sub">Every time you buy a new ticket, set the date it starts. Your 8 uses and 28-day window will be tracked fresh from that date.</div>
-      <input type="date" id="period-start-input" value="${suggested}" style="margin-bottom:12px;" />
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost of this ticket (£)</label>
-      <input type="number" id="period-cost-input" value="${lastKnownPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
-      <div id="advisor-note" style="font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:14px; display:none;"></div>
-      <button class="save-btn" id="period-start-save">Set as new ticket start</button>
-      <div class="modal-close" id="recal-close-btn">Cancel</div>
+      <h3>Buy tickets</h3>
+      <div class="sub">Either renew your season ticket, or log a one-off single bought instead of using it.</div>
+      <div class="chip-row" style="margin-bottom:16px;">
+        <div class="chip ${buyType==='season'?'active':''}" data-buy-type="season">Season ticket</div>
+        <div class="chip ${buyType==='single'?'active':''}" data-buy-type="single">Single ticket</div>
+      </div>
+
+      <div id="buy-season-fields" style="${buyType==='season'?'':'display:none;'}">
+        <div class="sub" style="margin-top:0;">Every time you buy a new ticket, set the date it starts. Your 8 uses and 28-day window will be tracked fresh from that date.</div>
+        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Start date</label>
+        <input type="date" id="season-date-input" value="${suggested}" style="margin-bottom:12px;" />
+        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost of this ticket (£)</label>
+        <input type="number" id="season-cost-input" value="${lastKnownPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
+        <div id="advisor-note" style="font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:14px; display:none;"></div>
+      </div>
+
+      <div id="buy-single-fields" style="${buyType==='single'?'':'display:none;'}">
+        <div class="sub" style="margin-top:0;">For a day return bought instead of using your season ticket — doesn't affect your 8-use/28-day tracking, just logs the cost and marks that day as covered.</div>
+        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Date this ticket is for</label>
+        <input type="date" id="single-date-input" value="${suggested}" style="margin-bottom:12px;" />
+        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost (£)</label>
+        <input type="number" id="single-cost-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
+      </div>
+
+      <button class="save-btn" id="buy-save-btn">${buyType==='season' ? 'Set as new ticket start' : 'Log this ticket'}</button>
+      <div class="modal-close" id="buy-close-btn">Cancel</div>
     </div>
   `;
   document.body.appendChild(overlay);
 
   function updateAdvisor(){
-    const startVal = document.getElementById('period-start-input').value;
-    const costVal = parseFloat(document.getElementById('period-cost-input').value);
+    const startVal = document.getElementById('season-date-input').value;
+    const costVal = parseFloat(document.getElementById('season-cost-input').value);
     const note = document.getElementById('advisor-note');
     if (!startVal || isNaN(costVal)){ note.style.display = 'none'; return; }
     const estDays = estimateTravelDaysInWindow(startVal, 28);
@@ -3551,65 +3642,57 @@ function openRecalibrate(){
       note.innerHTML = `Based on days already planned, you're likely to need ~${estDays} travel day${estDays===1?'':'s'} in this window. The season ticket looks like the better value (£${costVal.toFixed(2)} vs £${singlesCost.toFixed(2)} for singles).`;
     }
   }
-  document.getElementById('period-start-input').addEventListener('change', updateAdvisor);
-  document.getElementById('period-cost-input').addEventListener('input', updateAdvisor);
-  updateAdvisor();
 
-  document.getElementById('period-start-save').addEventListener('click', async () => {
-    const val = document.getElementById('period-start-input').value;
-    const costVal = parseFloat(document.getElementById('period-cost-input').value);
-    if (val){
+  function switchType(newType){
+    buyType = newType;
+    overlay.querySelectorAll('[data-buy-type]').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.buyType === buyType);
+    });
+    document.getElementById('buy-season-fields').style.display = buyType === 'season' ? '' : 'none';
+    document.getElementById('buy-single-fields').style.display = buyType === 'single' ? '' : 'none';
+    document.getElementById('buy-save-btn').textContent = buyType === 'season' ? 'Set as new ticket start' : 'Log this ticket';
+    if (buyType === 'season') updateAdvisor();
+  }
+
+  overlay.querySelectorAll('[data-buy-type]').forEach(chip => {
+    chip.addEventListener('click', () => switchType(chip.dataset.buyType));
+  });
+
+  document.getElementById('season-date-input').addEventListener('change', updateAdvisor);
+  document.getElementById('season-cost-input').addEventListener('input', updateAdvisor);
+  if (buyType === 'season') updateAdvisor();
+
+  document.getElementById('buy-save-btn').addEventListener('click', async () => {
+    if (buyType === 'season'){
+      const val = document.getElementById('season-date-input').value;
+      const costVal = parseFloat(document.getElementById('season-cost-input').value);
+      if (!val) return;
       periodStart = val;
       await savePeriodStart();
       if (!isNaN(costVal) && costVal >= 0){
-        purchases = purchases.filter(p => p.date !== val); // replace any existing entry for this date
+        purchases = purchases.filter(p => p.date !== val);
         purchases.push({ date: val, cost: costVal });
         purchases.sort((a, b) => a.date < b.date ? -1 : 1);
         lastKnownPrice = costVal;
         await savePurchases();
         await saveLastKnownPrice();
       }
-      document.body.removeChild(overlay); render();
-    }
-  });
-  document.getElementById('recal-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
-}
-
-function openLogSingleTicket(){
-  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
-  const suggested = fmtKey(addDays(today, 1)); // defaults to tomorrow, since singles are often bought the evening before
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Log a single ticket</h3>
-      <div class="sub">For a day return bought instead of using your season ticket — doesn't affect your 8-use/28-day tracking, just logs the cost and marks that day as covered.</div>
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Date this ticket is for</label>
-      <input type="date" id="single-date-input" value="${suggested}" style="margin-bottom:12px;" />
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost (£)</label>
-      <input type="number" id="single-cost-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
-      <button class="save-btn" id="single-save-btn">Log this ticket</button>
-      <div class="modal-close" id="single-close-btn">Cancel</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.getElementById('single-save-btn').addEventListener('click', async () => {
-    const dateVal = document.getElementById('single-date-input').value;
-    const costVal = parseFloat(document.getElementById('single-cost-input').value);
-    if (dateVal && !isNaN(costVal) && costVal >= 0){
-      purchases = purchases.filter(p => !(p.date === dateVal && p.type === 'single')); // replace any existing single for this date
+    } else {
+      const dateVal = document.getElementById('single-date-input').value;
+      const costVal = parseFloat(document.getElementById('single-cost-input').value);
+      if (!dateVal || isNaN(costVal) || costVal < 0) return;
+      purchases = purchases.filter(p => !(p.date === dateVal && p.type === 'single'));
       purchases.push({ date: dateVal, cost: costVal, type: 'single' });
       purchases.sort((a, b) => a.date < b.date ? -1 : 1);
-      dayReturnPrice = costVal; // remember for next time, same pattern as the season ticket price
+      dayReturnPrice = costVal;
       await savePurchases();
       await saveDayReturnPrice();
-      document.body.removeChild(overlay); render();
     }
+    document.body.removeChild(overlay);
+    state.activeTab = 'today';
+    render();
   });
-  document.getElementById('single-close-btn').addEventListener('click', () => {
+  document.getElementById('buy-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
