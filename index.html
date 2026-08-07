@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<!-- A small change! -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -652,7 +651,7 @@ const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-06.12:16'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.06:13'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -876,6 +875,18 @@ async function loadData(){
     trackedTrains = tt ? JSON.parse(tt) : [];
     const now = Date.now();
     trackedTrains = trackedTrains.filter(t => (now - t.addedAt) < TRACKED_TRAIN_MAX_AGE_MS);
+
+    // Also clear the whole list outright on the first app open of a new
+    // calendar day — a train tracked yesterday evening has no business
+    // surviving into this morning's commute, even if it's inside the
+    // 6-hour window (e.g. tracked at 23:00, opened again at 04:00).
+    const todayKeyForTracking = fmtKey(new Date());
+    const lastTrackedDay = localStorage.getItem('tracked-trains-last-day');
+    if (lastTrackedDay !== todayKeyForTracking){
+      trackedTrains = [];
+      localStorage.setItem('tracked-trains', JSON.stringify(trackedTrains));
+    }
+    localStorage.setItem('tracked-trains-last-day', todayKeyForTracking);
   }catch(e){ trackedTrains = []; }
   try{
     const p = localStorage.getItem('ticket-period-start');
@@ -2909,11 +2920,28 @@ function buildTrainProgress(train, service){
   if (lastPassedIdx >= 0){
     const last = points[lastPassedIdx];
     const status = describePointStatus(last.schedTime, last.liveTime, last.isCancelled);
-    const runningText = status.minutesLate === null ? status.text.toLowerCase() : (status.minutesLate > 0 ? `running ${status.minutesLate} min late` : 'running on time');
     const afterLast = points[lastPassedIdx + 1];
-    summaryHtml = afterLast
-      ? `Currently between ${last.locationName} and ${afterLast.locationName} — ${runningText}`
-      : `Arrived at ${last.locationName} — ${runningText}`;
+    const remaining = points.slice(lastPassedIdx + 1);
+    // "Terminated early" — every remaining booked calling point has been
+    // cancelled, meaning the train stops here and won't reach its real
+    // destination (or the last-passed point itself was cancelled, an
+    // edge case that amounts to the same thing).
+    const terminatedEarly = (remaining.length > 0 && remaining.every(p => p.isCancelled)) || (!afterLast && last.isCancelled);
+
+    if (terminatedEarly){
+      const finalPoint = points[points.length - 1];
+      summaryHtml = (finalPoint && finalPoint.locationName !== last.locationName)
+        ? `Terminated at ${last.locationName} — did not continue to ${finalPoint.locationName}`
+        : `Terminated at ${last.locationName}`;
+    } else if (!afterLast){
+      // Genuinely reached the final booked destination — no "running",
+      // the journey's over.
+      const arrivalText = status.minutesLate === null ? status.text.toLowerCase() : (status.minutesLate > 0 ? `${status.minutesLate} min late` : 'on time');
+      summaryHtml = `Arrived at ${last.locationName} — ${arrivalText}`;
+    } else {
+      const runningText = status.minutesLate === null ? status.text.toLowerCase() : (status.minutesLate > 0 ? `running ${status.minutesLate} min late` : 'running on time');
+      summaryHtml = `Currently between ${last.locationName} and ${afterLast.locationName} — ${runningText}`;
+    }
   } else if (points.length){
     summaryHtml = `Not yet departed ${points[0].locationName}`;
   }
