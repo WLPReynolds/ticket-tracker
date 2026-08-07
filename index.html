@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.15:03'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.15:11'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3149,9 +3149,12 @@ function openTrainProgress(train, service){
     <div class="modal">
       <h3>${train.label} — live progress</h3>
       <div id="train-progress-reverse-pill">${service.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : ''}</div>
-      <div class="sub">An estimate based on calling-point times, not GPS — a rough sense of where it is, not a precise position. Refreshes automatically every minute.</div>
-      <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:4px;">${initial.summaryHtml}</div>
+      <div class="sub">An estimate based on calling-point times.</div>
+      <div style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
+        <div id="train-progress-refresh-fill" style="height:100%; width:0%; background:var(--amber);"></div>
+      </div>
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
+      <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px;">${initial.summaryHtml}</div>
       <div style="max-height:45vh; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
           <div id="train-progress-line" style="position:absolute; left:6px; top:${TRAIN_PROGRESS_ROW_HEIGHT/2}px; width:2px; height:${lineHeight}px; background:var(--line);"></div>
@@ -3164,7 +3167,22 @@ function openTrainProgress(train, service){
   `;
   document.body.appendChild(overlay);
 
+  // Kicks off (or restarts) a smooth CSS fill from 0 to 100% over one
+  // refresh interval — a pure visual indicator of "time until the next
+  // check", not tied to a ticking JS interval of its own.
+  function resetRefreshBar(){
+    const fill = document.getElementById('train-progress-refresh-fill');
+    if (!fill) return;
+    fill.style.transition = 'none';
+    fill.style.width = '0%';
+    void fill.offsetWidth; // force reflow so the transition-removal above actually takes effect first
+    fill.style.transition = `width ${TRAIN_PROGRESS_REFRESH_MS}ms linear`;
+    fill.style.width = '100%';
+  }
+  resetRefreshBar();
+
   async function doRefresh(){
+    resetRefreshBar();
     const stamp = () => new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
     const lastCheckEl = document.getElementById('train-progress-last-check');
     try{
