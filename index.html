@@ -34,13 +34,16 @@
   }
   *{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html,body{ height:100%; }
+  :root{
+    --bottom-nav-clearance: 90px; /* fallback until JS measures the real bar height and overrides this */
+  }
   body{
     margin:0;
     background: var(--board);
     color: var(--ink);
     font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     min-height:100vh;
-    padding-bottom: calc(78px + env(safe-area-inset-bottom));
+    padding-bottom: var(--bottom-nav-clearance);
   }
   .mono{
     font-family: 'Courier New', 'Space Mono', monospace;
@@ -634,7 +637,7 @@
     position: fixed; inset:0;
     background: rgba(0,0,0,0.6);
     display:flex; align-items:flex-end;
-    padding-bottom: calc(70px + env(safe-area-inset-bottom));
+    padding-bottom: var(--bottom-nav-clearance);
     z-index: 50;
   }
   .modal{
@@ -690,7 +693,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.10:46'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.12:07'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2310,6 +2313,19 @@ function render(){
       render();
       railSyncMissingDates();
     });
+  }
+
+  // Measures the bottom nav bar's actual rendered height (which already
+  // includes its own safe-area padding) and updates the shared clearance
+  // variable to match exactly — rather than guessing a fixed pixel value,
+  // which risks being too short on devices with larger system font sizes
+  // or different safe-area insets, silently hiding content underneath it.
+  const bottomNavEl = document.querySelector('.bottom-nav');
+  if (bottomNavEl){
+    const measured = bottomNavEl.getBoundingClientRect().height;
+    if (measured > 0){
+      document.documentElement.style.setProperty('--bottom-nav-clearance', `${Math.ceil(measured) + 12}px`);
+    }
   }
 }
 
