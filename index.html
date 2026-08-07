@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.14:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.14:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3101,19 +3101,25 @@ function buildTrainProgress(train, service){
   }
 
   const rowsHtml = points.map((p) => {
-    const status = describePointStatus(p.schedTime, p.liveTime, p.isCancelled);
-    const nameColor = p.isYourStation ? 'var(--amber)' : 'var(--ink)';
-    const reasonHtml = p.reason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
-    return `
-      <div class="rail-detail-row" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
-        <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
-        <span style="min-width:56px;">${p.schedTime}</span>
-        <span style="flex:1; text-align:right;">
-          <span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName}</span>
-          <div style="color:${status.color}; font-size:12.5px; margin-top:1px;">${status.text}</div>
-          ${reasonHtml}
-        </span>
-      </div>`;
+    try{
+      const status = describePointStatus(p.schedTime, p.liveTime, p.isCancelled);
+      const nameColor = p.isYourStation ? 'var(--amber)' : 'var(--ink)';
+      const reasonHtml = p.reason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
+      return `
+        <div class="rail-detail-row" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
+          <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
+          <span style="min-width:56px;">${p.schedTime || ''}</span>
+          <span style="flex:1; text-align:right;">
+            <span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName || 'Unknown'}</span>
+            <div style="color:${status.color}; font-size:12.5px; margin-top:1px;">${status.text}</div>
+            ${reasonHtml}
+          </span>
+        </div>`;
+    }catch(e){
+      // One malformed calling point shouldn't take the whole list down —
+      // show what we can and keep going.
+      return `<div class="rail-detail-row"><span>${p.locationName || 'Unknown'}</span><span style="color:var(--ink-dim);">—</span></div>`;
+    }
   }).join('');
 
   return { summaryHtml, rowsHtml, blobTopPx, pointCount: points.length };
@@ -3194,7 +3200,11 @@ function openTrainProgress(train, service){
       // make the failure visible instead of silently doing nothing — a
       // silent failure here previously looked identical to "not
       // refreshed" with no way to tell the difference.
-      if (lastCheckEl) lastCheckEl.textContent = `Checked ${stamp()} — refresh failed (${e.message})`;
+      if (lastCheckEl){
+        const stackLine = (e.stack || '').split('\n')[1] || '';
+        const location = stackLine.match(/(\d+:\d+)\)?$/);
+        lastCheckEl.textContent = `Checked ${stamp()} — refresh failed (${e.message}${location ? ' @' + location[1] : ''})`;
+      }
     }
   }
 
