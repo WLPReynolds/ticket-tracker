@@ -690,7 +690,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.10:19'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.10:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3286,10 +3286,10 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
         </div>`;
       }
       const checkColor = status === 'confirmed' ? 'var(--good)' : '#9a9db0';
-      return `<div class="rail-detail-row" style="justify-content:flex-start; gap:8px;">
-        <span style="color:#ff8b7e; font-weight:600;">${t.label}</span>
-        <span style="color:#ff8b7e;">${perf.delayMinutes} min delay</span>
-        <span style="color:${checkColor};" title="${status === 'confirmed' ? 'Claim confirmed' : 'Claim started'}">✓</span>
+      const delayText = `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+      return `<div class="rail-detail-row">
+        <span style="color:#ff8b7e; font-weight:600;">${t.label} <span style="color:${checkColor};" title="${status === 'confirmed' ? 'Claim confirmed' : 'Claim started'}">✓</span></span>
+        <span style="color:#ff8b7e;">${delayText}</span>
       </div>`;
     }
     const color = late ? '#ff8b7e' : 'var(--good)';
@@ -3353,10 +3353,13 @@ function openDelayClaimsManager(){
         <div style="font-weight:600;">${dateLabel(parseKey(e.dateKey))}</div>
         <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate} min late — £${(e.claim.amount || 0).toFixed(2)}</div>
       </div>
-      <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:${e.claim.status==='confirmed' ? 'var(--good)' : 'var(--ink-dim)'}; cursor:pointer; white-space:nowrap;">
-        <input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" ${e.claim.status==='confirmed'?'checked':''} style="width:15px; height:15px;" />
-        Confirmed
-      </label>
+      <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:${e.claim.status==='confirmed' ? 'var(--good)' : 'var(--ink-dim)'}; cursor:pointer; white-space:nowrap;">
+          <input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" ${e.claim.status==='confirmed'?'checked':''} style="width:15px; height:15px;" />
+          Confirmed
+        </label>
+        <span class="claim-undo-link" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" style="font-size:11px; color:var(--ink-dim); text-decoration:underline; cursor:pointer;">Undo</span>
+      </div>
     </div>
   `).join('') : `<div class="sub" style="margin-top:0;">No claims started yet — tap a red delay entry on any day to begin one.</div>`;
 
@@ -3377,6 +3380,20 @@ function openDelayClaimsManager(){
       const dir = cb.dataset.claimDirection;
       if (!delayClaims[dateKey] || !delayClaims[dateKey][dir]) return;
       delayClaims[dateKey][dir].status = cb.checked ? 'confirmed' : 'started';
+      await saveDelayClaims();
+      document.body.removeChild(overlay);
+      openDelayClaimsManager();
+    });
+  });
+  overlay.querySelectorAll('.claim-undo-link').forEach(link => {
+    link.addEventListener('click', async () => {
+      const dateKey = link.dataset.claimDate;
+      const dir = link.dataset.claimDirection;
+      if (!confirm('Undo this claim? The red delay entry will go back to being tappable again.')) return;
+      if (delayClaims[dateKey]){
+        delete delayClaims[dateKey][dir];
+        if (Object.keys(delayClaims[dateKey]).length === 0) delete delayClaims[dateKey];
+      }
       await saveDelayClaims();
       document.body.removeChild(overlay);
       openDelayClaimsManager();
