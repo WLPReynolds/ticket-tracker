@@ -690,7 +690,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.09:08'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.09:27'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2080,6 +2080,9 @@ function render(){
     menuOpen = false;
     state.activeTab = 'today';
     render();
+    const todayRow = document.querySelector('.day-row.is-today');
+    if (todayRow) todayRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else window.scrollTo({ top: 0, behavior: 'smooth' });
   });
   const renewalBannerTap = document.getElementById('renewal-banner-tap');
   if (renewalBannerTap) renewalBannerTap.addEventListener('click', () => { openBuyScreen('season'); });
@@ -3587,17 +3590,31 @@ function estimateTravelDaysInWindow(startDateStr, windowLength){
 function openBuyScreen(defaultType){
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const suggested = fmtKey(addDays(today, 1));
-  let buyType = defaultType || 'season';
+
+  // Work out the recommendation up front, using the default suggested
+  // date/price, so the screen can open on whichever tab it actually
+  // recommends — unless the caller explicitly asked for a specific tab
+  // (e.g. the renewal banner asking for 'season' directly), in which
+  // case that explicit intent wins over the suggestion.
+  function computeAdvisorInfo(startDate, cost){
+    const estDays = estimateTravelDaysInWindow(startDate, 28);
+    const singlesCost = estDays * dayReturnPrice;
+    return { estDays, singlesCost, recommendSingles: singlesCost < cost && estDays < 8 };
+  }
+  const initialInfo = computeAdvisorInfo(suggested, lastKnownPrice);
+  let buyType = defaultType || (initialInfo.recommendSingles ? 'single' : 'season');
+
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
       <h3>Buy tickets</h3>
-      <div class="sub">Either renew your season ticket, or log a one-off single bought instead of using it.</div>
-      <div class="chip-row" style="margin-bottom:16px;">
+      <div class="chip-row" style="margin-bottom:14px;">
         <div class="chip ${buyType==='season'?'active':''}" data-buy-type="season">Season ticket</div>
         <div class="chip ${buyType==='single'?'active':''}" data-buy-type="single">Single ticket</div>
       </div>
+
+      <div id="advisor-note" style="font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:16px;"></div>
 
       <div id="buy-season-fields" style="${buyType==='season'?'':'display:none;'}">
         <div class="sub" style="margin-top:0;">Every time you buy a new ticket, set the date it starts. Your 8 uses and 28-day window will be tracked fresh from that date.</div>
@@ -3605,7 +3622,6 @@ function openBuyScreen(defaultType){
         <input type="date" id="season-date-input" value="${suggested}" style="margin-bottom:12px;" />
         <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost of this ticket (£)</label>
         <input type="number" id="season-cost-input" value="${lastKnownPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
-        <div id="advisor-note" style="font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:14px; display:none;"></div>
       </div>
 
       <div id="buy-single-fields" style="${buyType==='single'?'':'display:none;'}">
@@ -3622,24 +3638,28 @@ function openBuyScreen(defaultType){
   `;
   document.body.appendChild(overlay);
 
+  // Always reflects the season-vs-singles comparison, regardless of which
+  // tab is currently active — it's relevant either way, since it's really
+  // answering "which of these two should I be doing", not a season-only
+  // detail. Reads from the season fields even while that block is hidden;
+  // the inputs still exist in the DOM and keep their values.
   function updateAdvisor(){
     const startVal = document.getElementById('season-date-input').value;
     const costVal = parseFloat(document.getElementById('season-cost-input').value);
     const note = document.getElementById('advisor-note');
     if (!startVal || isNaN(costVal)){ note.style.display = 'none'; return; }
-    const estDays = estimateTravelDaysInWindow(startVal, 28);
-    const singlesCost = estDays * dayReturnPrice;
+    const info = computeAdvisorInfo(startVal, costVal);
     note.style.display = 'block';
-    if (singlesCost < costVal && estDays < 8){
+    if (info.recommendSingles){
       note.style.background = 'rgba(224,90,78,0.12)';
       note.style.border = '1px solid rgba(224,90,78,0.35)';
       note.style.color = '#ff8b7e';
-      note.innerHTML = `Based on days already planned, you're likely to need ~${estDays} travel day${estDays===1?'':'s'} in this window. At £${dayReturnPrice.toFixed(2)} a day return, singles would cost £${singlesCost.toFixed(2)} vs £${costVal.toFixed(2)} for this ticket — singles may be cheaper this time.`;
+      note.innerHTML = `Based on days already planned, you're likely to need ~${info.estDays} travel day${info.estDays===1?'':'s'} in this window. At £${dayReturnPrice.toFixed(2)} a day return, singles would cost £${info.singlesCost.toFixed(2)} vs £${costVal.toFixed(2)} for this ticket — singles may be cheaper this time.`;
     } else {
       note.style.background = 'rgba(111,191,138,0.1)';
       note.style.border = '1px solid rgba(111,191,138,0.3)';
       note.style.color = 'var(--good)';
-      note.innerHTML = `Based on days already planned, you're likely to need ~${estDays} travel day${estDays===1?'':'s'} in this window. The season ticket looks like the better value (£${costVal.toFixed(2)} vs £${singlesCost.toFixed(2)} for singles).`;
+      note.innerHTML = `Based on days already planned, you're likely to need ~${info.estDays} travel day${info.estDays===1?'':'s'} in this window. The season ticket looks like the better value (£${costVal.toFixed(2)} vs £${info.singlesCost.toFixed(2)} for singles).`;
     }
   }
 
@@ -3651,16 +3671,15 @@ function openBuyScreen(defaultType){
     document.getElementById('buy-season-fields').style.display = buyType === 'season' ? '' : 'none';
     document.getElementById('buy-single-fields').style.display = buyType === 'single' ? '' : 'none';
     document.getElementById('buy-save-btn').textContent = buyType === 'season' ? 'Set as new ticket start' : 'Log this ticket';
-    if (buyType === 'season') updateAdvisor();
   }
 
   overlay.querySelectorAll('[data-buy-type]').forEach(chip => {
-    chip.addEventListener('click', () => switchType(chip.dataset.buyType));
+    chip.addEventListener('click', () => { switchType(chip.dataset.buyType); updateAdvisor(); });
   });
 
   document.getElementById('season-date-input').addEventListener('change', updateAdvisor);
   document.getElementById('season-cost-input').addEventListener('input', updateAdvisor);
-  if (buyType === 'season') updateAdvisor();
+  updateAdvisor();
 
   document.getElementById('buy-save-btn').addEventListener('click', async () => {
     if (buyType === 'season'){
