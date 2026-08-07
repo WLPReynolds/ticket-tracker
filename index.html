@@ -690,7 +690,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.09:56'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.10:19'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1740,6 +1740,7 @@ function render(){
     { id: 'tracked-trains-link', label: 'Tracked trains', weight: 0 },
     { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
+    { id: 'delay-claims-link', label: 'Delay repay claims', weight: 0 },
   ];
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
     menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
@@ -2182,6 +2183,9 @@ function render(){
 
   const statsLink = document.getElementById('stats-link');
   if (statsLink) statsLink.addEventListener('click', () => { menuOpen = false; render(); openStatsView(); });
+
+  const delayClaimsLink = document.getElementById('delay-claims-link');
+  if (delayClaimsLink) delayClaimsLink.addEventListener('click', () => { menuOpen = false; render(); openDelayClaimsManager(); });
 
   const enableNotificationsLink = document.getElementById('enable-notifications-link');
   if (enableNotificationsLink){
@@ -3257,10 +3261,12 @@ function railDetailRows(trains, dayPerf){
 }
 
 // Same as railDetailRows, but for the one train that was actually
-// confirmed as ridden that day: if it was also delayed enough to claim,
-// it renders as a reversed, tappable pill (a real claim option) instead
-// of plain text — other delayed trains that day (ones not actually
-// caught) stay as ordinary rows, since they were never claimable anyway.
+// confirmed as ridden that day: if it was also delayed enough to claim
+// and no claim has been started yet, it renders as a reversed, tappable
+// pill. Once a claim exists (started or confirmed), it drops back to
+// plain red text with a small checkmark — no longer tappable here, since
+// the actual claimed/confirmed toggle now lives in its own menu screen
+// rather than cluttering this view.
 function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
   const confirmedKey = (confirmedTrains[dateKey] || {})[direction];
   return trains.map(t => {
@@ -3272,18 +3278,19 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
     if (t.key === confirmedKey && late){
       const claim = (delayClaims[dateKey] || {})[direction];
       const status = claim ? claim.status : null;
-      const statusLabel = status === 'confirmed' ? 'Claim confirmed ✓' : (status === 'started' ? 'Claim started — tap to reopen Avanti' : 'Tap to start a claim on Avanti');
-      const statusColor = status === 'confirmed' ? 'var(--good)' : 'var(--ink-dim)';
-      return `
-        <div class="rail-detail-row claimable-row" data-claim-date="${dateKey}" data-claim-direction="${direction}"
-             style="cursor:pointer; background:#e05a4e; border-radius:8px; padding:8px 10px; margin-bottom:4px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+      if (!status){
+        return `<div class="rail-detail-row claimable-row" data-claim-date="${dateKey}" data-claim-direction="${direction}"
+             style="cursor:pointer; justify-content:flex-start; gap:8px; background:#e05a4e; border-radius:8px; padding:8px 10px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
           <span style="color:#14161f; font-weight:700;">${t.label}</span>
-          <span style="color:#14161f;">${perf.delayMinutes} min delay ›</span>
-        </div>
-        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:${statusColor}; padding:2px 2px 10px; cursor:pointer;">
-          <input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${dateKey}" data-claim-direction="${direction}" ${status==='confirmed'?'checked':''} style="width:15px; height:15px;" />
-          ${statusLabel}
-        </label>`;
+          <span style="color:#14161f;">${perf.delayMinutes} min delay</span>
+        </div>`;
+      }
+      const checkColor = status === 'confirmed' ? 'var(--good)' : '#9a9db0';
+      return `<div class="rail-detail-row" style="justify-content:flex-start; gap:8px;">
+        <span style="color:#ff8b7e; font-weight:600;">${t.label}</span>
+        <span style="color:#ff8b7e;">${perf.delayMinutes} min delay</span>
+        <span style="color:${checkColor};" title="${status === 'confirmed' ? 'Claim confirmed' : 'Claim started'}">✓</span>
+      </div>`;
     }
     const color = late ? '#ff8b7e' : 'var(--good)';
     const text = perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
@@ -3291,9 +3298,10 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
   }).join('');
 }
 
-// Wires up the claim pill and confirm checkbox inside a just-appended
-// detail overlay. reopen() should close this overlay and re-show the
-// same detail view fresh, so a tap is reflected immediately.
+// Wires up the claim pill inside a just-appended detail overlay. reopen()
+// should close this overlay and re-show the same detail view fresh, so a
+// tap is reflected immediately. Only fires for a train with no claim yet
+// — once started/confirmed the row is plain text, not clickable.
 function wireClaimHandlers(overlay, reopen){
   overlay.querySelectorAll('.claimable-row').forEach(row => {
     row.addEventListener('click', async () => {
@@ -3320,28 +3328,64 @@ function wireClaimHandlers(overlay, reopen){
       reopen();
     });
   });
+}
+
+// Lists every day with a delay repay claim on record, most recent first,
+// each with a checkbox to mark it as genuinely submitted/confirmed —
+// separated out from the day-detail views so those stay simple and this
+// stays a proper focused screen for managing claims.
+function openDelayClaimsManager(){
+  const entries = [];
+  for (const dateKey in delayClaims){
+    for (const dir in delayClaims[dateKey]){
+      const claim = delayClaims[dateKey][dir];
+      if (!claim) continue;
+      const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
+      const train = railTrains.find(t => t.key === confirmedKey);
+      entries.push({ dateKey, dir, claim, label: train ? train.label : dir });
+    }
+  }
+  entries.sort((a, b) => b.dateKey < a.dateKey ? -1 : (b.dateKey > a.dateKey ? 1 : 0));
+
+  const rowsHtml = entries.length ? entries.map(e => `
+    <div class="rail-detail-row" style="align-items:flex-start; padding:10px 0;">
+      <div>
+        <div style="font-weight:600;">${dateLabel(parseKey(e.dateKey))}</div>
+        <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate} min late — £${(e.claim.amount || 0).toFixed(2)}</div>
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:${e.claim.status==='confirmed' ? 'var(--good)' : 'var(--ink-dim)'}; cursor:pointer; white-space:nowrap;">
+        <input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" ${e.claim.status==='confirmed'?'checked':''} style="width:15px; height:15px;" />
+        Confirmed
+      </label>
+    </div>
+  `).join('') : `<div class="sub" style="margin-top:0;">No claims started yet — tap a red delay entry on any day to begin one.</div>`;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Delay repay claims</h3>
+      <div class="sub">Tick a claim off once you've actually submitted and it's been accepted — not just when you've opened the link.</div>
+      ${rowsHtml}
+      <div class="modal-close" id="delay-claims-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
   overlay.querySelectorAll('.claim-confirm-checkbox').forEach(cb => {
-    cb.addEventListener('click', (e) => e.stopPropagation()); // don't also trigger the pill's own click
     cb.addEventListener('change', async () => {
       const dateKey = cb.dataset.claimDate;
       const dir = cb.dataset.claimDirection;
-      if (!delayClaims[dateKey]) delayClaims[dateKey] = {};
-      const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
-      const perf = (railPerfCache[dateKey] || {})[confirmedKey];
-      const minutesLate = perf ? perf.delayMinutes : ((delayClaims[dateKey][dir] || {}).minutesLate || 0);
-      if (cb.checked){
-        delayClaims[dateKey][dir] = {
-          status: 'confirmed',
-          minutesLate,
-          amount: computeDelayRepayAmount(minutesLate, dateKey),
-        };
-      } else if (delayClaims[dateKey][dir]){
-        delayClaims[dateKey][dir].status = 'started'; // unchecking drops back to 'started', not erased entirely
-      }
+      if (!delayClaims[dateKey] || !delayClaims[dateKey][dir]) return;
+      delayClaims[dateKey][dir].status = cb.checked ? 'confirmed' : 'started';
       await saveDelayClaims();
-      reopen();
+      document.body.removeChild(overlay);
+      openDelayClaimsManager();
     });
   });
+  document.getElementById('delay-claims-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
 function openCalendarDayDetail(key){
