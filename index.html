@@ -690,7 +690,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-07.09:27'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-07.09:38'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -919,9 +919,13 @@ async function loadData(){
     // calendar day — a train tracked yesterday evening has no business
     // surviving into this morning's commute, even if it's inside the
     // 6-hour window (e.g. tracked at 23:00, opened again at 04:00).
+    // Only acts when there's an actual prior day on record — a missing
+    // key (first run after this feature was added) must NOT be treated
+    // as evidence of a day change, or it wrongly wipes same-day tracking
+    // the very first time this code runs on a given phone.
     const todayKeyForTracking = fmtKey(new Date());
     const lastTrackedDay = localStorage.getItem('tracked-trains-last-day');
-    if (lastTrackedDay !== todayKeyForTracking){
+    if (lastTrackedDay && lastTrackedDay !== todayKeyForTracking){
       trackedTrains = [];
       localStorage.setItem('tracked-trains', JSON.stringify(trackedTrains));
     }
