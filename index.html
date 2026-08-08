@@ -671,6 +671,13 @@
     padding: 60px 20px;
     color: var(--ink-dim);
   }
+  @keyframes blob-pulse{
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.3); }
+  }
+  .blob-pulsing{
+    animation: blob-pulse 1.4s ease-in-out infinite;
+  }
 </style>
 </head>
 <body>
@@ -700,7 +707,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.14:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.14:56'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3269,6 +3276,7 @@ function openTrainProgress(train, service){
   let refreshTimer = null;
   let showRawDebug = false; // off by default — a temporary diagnostic toggle, not for normal use
   let lastKnownService = service; // lets the debug toggle rebuild instantly without a fresh network call
+  let isOffline = false; // true when the last refresh attempt failed — drives the red banner and the pulsing blob
   const serviceId = train.serviceId || service.serviceID || null;
 
   // Remember this journey so it can still be found and watched later,
@@ -3295,6 +3303,7 @@ function openTrainProgress(train, service){
         <div id="train-progress-refresh-fill" style="height:100%; width:0%; background:var(--amber);"></div>
       </div>
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
+      <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
       <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px;">${initial.summaryHtml}</div>
       <div style="max-height:45vh; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
@@ -3392,11 +3401,17 @@ function openTrainProgress(train, service){
         const rowsEl = document.getElementById('train-progress-rows');
         const summaryEl = document.getElementById('train-progress-summary');
         const pillEl = document.getElementById('train-progress-reverse-pill');
+        const offlineBanner = document.getElementById('train-progress-offline-banner');
+        const blobEl = document.getElementById('train-progress-blob');
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
         positionBlobAndLine(fresh.lastPassedIdx, fresh.fraction);
         if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
+        // Connection's back — drop out of the offline/estimated state.
+        isOffline = false;
+        if (offlineBanner) offlineBanner.style.display = 'none';
+        if (blobEl) blobEl.classList.remove('blob-pulsing');
       } else if (lastCheckEl){
         lastCheckEl.textContent = `Checked ${stamp()} — no data returned`;
       }
@@ -3410,6 +3425,21 @@ function openTrainProgress(train, service){
         const location = stackLine.match(/(\d+:\d+)\)?$/);
         lastCheckEl.textContent = `Checked ${stamp()} — refresh failed (${e.message}${location ? ' @' + location[1] : ''})`;
       }
+      // No fresh data, but the position math only ever needed calling-
+      // point times compared against the real current clock — re-run it
+      // against the last data we did get, so the blob keeps creeping
+      // forward on a reasonable assumption rather than sitting frozen.
+      isOffline = true;
+      const stale = buildTrainProgress(train, lastKnownService, showRawDebug);
+      const rowsEl = document.getElementById('train-progress-rows');
+      const summaryEl = document.getElementById('train-progress-summary');
+      const offlineBanner = document.getElementById('train-progress-offline-banner');
+      const blobEl = document.getElementById('train-progress-blob');
+      if (rowsEl) rowsEl.innerHTML = stale.rowsHtml;
+      if (summaryEl) summaryEl.innerHTML = stale.summaryHtml;
+      positionBlobAndLine(stale.lastPassedIdx, stale.fraction);
+      if (offlineBanner) offlineBanner.style.display = 'block';
+      if (blobEl) blobEl.classList.add('blob-pulsing');
     }
   }
 
