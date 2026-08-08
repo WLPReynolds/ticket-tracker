@@ -672,6 +672,16 @@
   }
 
 
+  /* Bottom-sheet modals sit below the app's bottom nav in the stacking
+     order. Reserve the nav's height inside the modal so its own controls
+     (especially Close) cannot end up underneath the nav. This is the same
+     safe-area principle used by the full-screen train-progress modal, but
+     without making the bottom-sheet itself full-screen. */
+  .modal-overlay-nav-safe .modal{
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+
   .cal-overlay{
     align-items: flex-start;
     padding-top: 60px;
@@ -729,7 +739,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.18:43'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.20:36'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2900,7 +2910,9 @@ function openConfirmTrain(){
 
 function openTrackedTrains(){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  // Keep the bottom nav visible, but reserve its height inside this
+  // bottom-sheet so the Close control cannot be covered by the nav.
+  overlay.className = 'modal-overlay modal-overlay-nav-safe';
 
   function buildListHtml(){
     if (trackedTrains.length === 0){
