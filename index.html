@@ -700,10 +700,15 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.14:27'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.14:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
+// Global debug mode — off by default. When on, debug hooks scattered
+// around the app (starting with the raw-data toggle on train progress)
+// become visible. Each hook's own info can look different; this is just
+// the single switch that reveals/hides all of them consistently.
+let debugModeEnabled = false;
 
 // Drive auto-backup
 let driveBackupEnabled = false;
@@ -920,6 +925,10 @@ async function loadData(){
     preferredGoogleEmail = pe ? JSON.parse(pe) : '';
   }catch(e){ preferredGoogleEmail = ''; }
   try{
+    const dm = localStorage.getItem('debug-mode-enabled');
+    debugModeEnabled = dm ? JSON.parse(dm) : false;
+  }catch(e){ debugModeEnabled = false; }
+  try{
     const dbe = localStorage.getItem('drive-backup-enabled');
     driveBackupEnabled = dbe ? JSON.parse(dbe) : false;
   }catch(e){ driveBackupEnabled = false; }
@@ -1047,6 +1056,10 @@ async function saveGcalEnabled(){
 }
 async function savePreferredGoogleEmail(){
   try{ localStorage.setItem('preferred-google-email', JSON.stringify(preferredGoogleEmail)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveDebugMode(){
+  try{ localStorage.setItem('debug-mode-enabled', JSON.stringify(debugModeEnabled)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveDriveBackupEnabled(){
@@ -1763,6 +1776,7 @@ function render(){
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'import-history-link', label: 'Import historical data', weight: 100 });
+  menuItems.push({ id: 'debug-mode-link', label: debugModeEnabled ? 'Debug mode: On' : 'Debug mode: Off', weight: 110 });
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
 
@@ -2170,6 +2184,14 @@ function render(){
 
   const importHistoryLink = document.getElementById('import-history-link');
   if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
+
+  const debugModeLink = document.getElementById('debug-mode-link');
+  if (debugModeLink) debugModeLink.addEventListener('click', async () => {
+    debugModeEnabled = !debugModeEnabled;
+    await saveDebugMode();
+    menuOpen = false;
+    render();
+  });
   const parkingCostLink = document.getElementById('parking-cost-link');
   if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; render(); openParkingCostEditor(); });
 
@@ -3261,7 +3283,7 @@ function openTrainProgress(train, service){
     <div class="modal">
       <h3>${train.label} — live progress</h3>
       <div id="train-progress-reverse-pill">${service.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : ''}</div>
-      <div class="sub">An estimate based on calling-point times. <span id="raw-debug-toggle" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Show raw data</span></div>
+      <div class="sub">An estimate based on calling-point times.${debugModeEnabled ? ` <span id="raw-debug-toggle" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Show raw data</span>` : ''}</div>
       <div style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
         <div id="train-progress-refresh-fill" style="height:100%; width:0%; background:var(--amber);"></div>
       </div>
