@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.13:52'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.14:06'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3045,6 +3045,7 @@ function buildTrainProgress(train, service){
     liveTime: cp.at || cp.et || cp.st,
     isCancelled: !!cp.isCancelled,
     reason: cp.delayReason || cp.cancelReason || null,
+    platform: cp.platform || null,
   }));
   const here = [{
     locationName: STATION_COORDS[train.fromLoc] ? STATION_COORDS[train.fromLoc].name : train.fromLoc,
@@ -3053,6 +3054,7 @@ function buildTrainProgress(train, service){
     isCancelled: !!service.isCancelled,
     reason: service.delayReason || service.cancelReason || null,
     isYourStation: true,
+    platform: service.platform || null,
   }];
   const after = pointsFrom(service.subsequentCallingPoints).map(cp => ({
     locationName: cp.locationName,
@@ -3060,6 +3062,7 @@ function buildTrainProgress(train, service){
     liveTime: cp.et || cp.st,
     isCancelled: !!cp.isCancelled,
     reason: cp.delayReason || cp.cancelReason || null,
+    platform: cp.platform || null,
   }));
   const points = [...before, ...here, ...after];
 
@@ -3199,13 +3202,14 @@ function buildTrainProgress(train, service){
         statusText = status.text;
         statusColor = status.color;
       }
+      const platformText = p.platform ? ` <span style="color:var(--ink-dim);">· Platform ${p.platform}</span>` : '';
       return `
         <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
           <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
           <span style="min-width:56px;">${timeHtml}</span>
           <span style="flex:1; text-align:right;">
             <span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName || 'Unknown'}</span>
-            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}</div>
+            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}${platformText}</div>
             ${reasonHtml}
           </span>
         </div>`;
