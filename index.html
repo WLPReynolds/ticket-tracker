@@ -707,7 +707,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.14:56'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.17:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3208,6 +3208,13 @@ function buildTrainProgress(train, service, showRawDebug){
     summaryHtml = `Not yet departed ${points[0].locationName}`;
   }
 
+  // Tracks whichever reason was most recently actually shown, in row
+  // order — starts as primaryReason (already shown once in the summary
+  // box), then updates as we go, so a whole run of consecutively
+  // cancelled points sharing the same reason collapses to showing it
+  // only on the first one, not repeated down the entire list.
+  let lastShownReason = primaryReason;
+
   const rowsHtml = points.map((p, i) => {
     try{
       const status = describePointStatus(p.schedTime, p.liveTime, p.isCancelled);
@@ -3216,9 +3223,11 @@ function buildTrainProgress(train, service, showRawDebug){
       // status has recovered to genuinely on time — show it whenever
       // there's real uncertainty or an actual problem, but not once a
       // point has positively confirmed it's back on time. Also skip it
-      // entirely if it's the same reason already shown once at the top,
-      // in the summary box — no need to repeat it on every row.
-      const showReason = !!p.reason && status.minutesLate !== 0 && p.reason !== primaryReason;
+      // if it's the same reason already shown on the row immediately
+      // before it (or in the summary box) — no need to repeat it over
+      // and over down a whole run of affected stations.
+      const showReason = !!p.reason && status.minutesLate !== 0 && p.reason !== lastShownReason;
+      if (p.reason) lastShownReason = p.reason;
       const reasonHtml = showReason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
       // Cross out the scheduled time and show the real one whenever
       // Darwin gave a genuine specific delayed time (not just a status
