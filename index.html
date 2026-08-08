@@ -646,6 +646,14 @@
     border-radius: 16px 16px 0 0;
     padding: 20px 18px 28px;
     border-top: 1px solid var(--line);
+    /* A generous fixed ceiling, not dependent on measuring the bottom
+       bar's exact height — that measurement approach turned out to be
+       unreliable (the same root cause behind the old "Show more days"
+       bug). This guarantees any modal's own content, however long, can
+       always be reached via its own internal scroll rather than
+       potentially being trapped behind the bar with no way to reach it. */
+    max-height: calc(100vh - 100px - env(safe-area-inset-bottom));
+    overflow-y: auto;
   }
   .modal h3{ margin:0 0 4px; font-size:16px; }
   .modal .sub{ color: var(--ink-dim); font-size:13px; margin-bottom:14px; }
@@ -702,7 +710,7 @@ const PRESET_TAGS = ['WFH', 'HOLIDAY', 'DENTIST', 'SICK'];
 // Simple line-style icons for the bottom nav bar — inherit colour via
 // currentColor so active/inactive state is just a CSS colour change.
 const NAV_ICONS = {
-  today: '<svg viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1a2 2 0 0 0 0 4v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1a2 2 0 0 0 0-4V8z"/><path d="M13 6v2M13 11v2M13 16v2" stroke-dasharray="2 2"/></svg>',
+  today: '<svg viewBox="0 0 24 24"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h3v-5.5h4V20h3a1 1 0 0 0 1-1v-9"/></svg>',
   live: '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="13" rx="4"/><path d="M5 12h14"/><circle cx="8.5" cy="20" r="1.3" fill="currentColor" stroke="none"/><circle cx="15.5" cy="20" r="1.3" fill="currentColor" stroke="none"/><path d="M8 17l-2 3M16 17l2 3"/></svg>',
   buy: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
   calendar: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/><circle cx="8" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="14.5" r="1" fill="currentColor" stroke="none"/></svg>',
@@ -720,7 +728,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.18:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.18:13'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2079,7 +2087,7 @@ function render(){
     ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="day-nav-btn" id="show-more-link">Show more days <span class="arrow-icon">&#8595;</span></div>` : ''}
 
     <nav class="bottom-nav">
-      <div class="bottom-nav-item ${state.activeTab==='today'?'active':''}" id="bottom-nav-today">${NAV_ICONS.today}<span class="bn-label">Today</span></div>
+      <div class="bottom-nav-item ${state.activeTab==='today'?'active':''}" id="bottom-nav-today">${NAV_ICONS.today}<span class="bn-label">Home</span></div>
       <div class="bottom-nav-item ${state.activeTab==='live'?'active':''}" id="bottom-nav-live">${NAV_ICONS.live}<span class="bn-label">Live</span></div>
       <div class="bottom-nav-item ${state.activeTab==='buy'?'active':''}" id="bottom-nav-buy">${NAV_ICONS.buy}<span class="bn-label">Buy</span></div>
       <div class="bottom-nav-item ${state.activeTab==='calendar'?'active':''}" id="bottom-nav-calendar">${NAV_ICONS.calendar}<span class="bn-label">Calendar</span></div>
