@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.13:03'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.13:09'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2896,7 +2896,6 @@ function openTrackedTrains(){
       // dead-time gap between the tap and something visibly happening —
       // a gap here was suspected of letting Android treat a normal tap
       // as a stuck/long press and trigger its own screen-search gesture.
-      const originalHtml = row.innerHTML;
       row.style.opacity = '0.5';
       row.style.pointerEvents = 'none';
       row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:var(--ink-dim);">Loading…</span>`;
@@ -2905,10 +2904,18 @@ function openTrackedTrains(){
         document.body.removeChild(overlay);
         openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
       }catch(e){
-        row.style.opacity = '';
-        row.style.pointerEvents = '';
-        row.innerHTML = originalHtml;
-        alert(`Couldn't load this train's progress: ${e.message}`);
+        // No blocking native alert, and no leaving a dead entry sitting
+        // in the list — show a brief inline explanation in the app's own
+        // style, then remove it and refresh the screen.
+        row.style.opacity = '1';
+        row.style.pointerEvents = 'none';
+        row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:#ff8b7e; font-size:12px;">Unavailable — removing…</span>`;
+        trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
+        await saveTrackedTrains();
+        setTimeout(() => {
+          document.body.removeChild(overlay);
+          openTrackedTrains();
+        }, 1200);
       }
     });
   });
