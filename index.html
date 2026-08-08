@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.09:37'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.09:43'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3093,7 +3093,20 @@ function buildTrainProgress(train, service){
       const arrivalText = status.minutesLate === null ? status.text.toLowerCase() : (status.minutesLate > 0 ? `${status.minutesLate} min late` : 'on time');
       summaryHtml = `Arrived at ${last.locationName} — ${arrivalText}`;
     } else {
-      const runningText = status.minutesLate === null ? status.text.toLowerCase() : (status.minutesLate > 0 ? `running ${status.minutesLate} min late` : 'running on time');
+      // Darwin sometimes only attaches a specific recalculated number to
+      // the final destination on a given poll, leaving intermediate
+      // points showing a generic "On time" word even when a delay reason
+      // is clearly attached to them too. Rather than trust whichever
+      // point happens to be "last passed" (which might only have that
+      // generic word), fall back to the destination's own figure if it
+      // has a real number and the passed point doesn't.
+      let overallStatus = status;
+      if (overallStatus.minutesLate === null || overallStatus.minutesLate === 0){
+        const finalPoint = points[points.length - 1];
+        const finalStatus = describePointStatus(finalPoint.schedTime, finalPoint.liveTime, finalPoint.isCancelled);
+        if (finalStatus.minutesLate !== null && finalStatus.minutesLate > 0) overallStatus = finalStatus;
+      }
+      const runningText = overallStatus.minutesLate === null ? overallStatus.text.toLowerCase() : (overallStatus.minutesLate > 0 ? `running ${overallStatus.minutesLate} min late` : 'running on time');
       summaryHtml = `Currently between ${last.locationName} and ${afterLast.locationName} — ${runningText}`;
     }
   } else if (points.length){
