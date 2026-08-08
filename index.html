@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.09:43'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.12:17'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3012,7 +3012,7 @@ function describePointStatus(schedTime, liveTime, isCancelled){
   return { text: `${diff} min late`, color: '#ff8b7e', minutesLate: diff };
 }
 
-const TRAIN_PROGRESS_ROW_HEIGHT = 54; // px — must match the fixed row height set below, so the blob's position lines up
+const TRAIN_PROGRESS_ROW_HEIGHT = 54; // px — a sensible minimum row height; actual positioning now measures real rendered rows, not this value
 
 function buildTrainProgress(train, service){
   const now = new Date();
@@ -3058,16 +3058,17 @@ function buildTrainProgress(train, service){
   // How far between the last-passed and next-due point we are right now,
   // as a plain fraction of the scheduled gap between them — the same
   // "50% of the way there" maths regardless of how long that gap is.
-  let blobTopPx = 0;
+  // Rows now vary in real rendered height (the delay-reason text can wrap
+  // onto extra lines), so the actual pixel position is measured from the
+  // real DOM after rendering rather than assumed from a fixed row height
+  // — this fraction is just "how far between these two points", applied
+  // to real measurements by positionBlobAndLine().
+  let fraction = 0;
   if (lastPassedIdx >= 0 && lastPassedIdx < points.length - 1){
     const t1 = pointDates[lastPassedIdx], t2 = pointDates[lastPassedIdx + 1];
-    let fraction = 0;
     if (t1 && t2 && t2 > t1){
       fraction = Math.max(0, Math.min(1, (now - t1) / (t2 - t1)));
     }
-    blobTopPx = (lastPassedIdx + fraction) * TRAIN_PROGRESS_ROW_HEIGHT;
-  } else if (lastPassedIdx >= points.length - 1){
-    blobTopPx = (points.length - 1) * TRAIN_PROGRESS_ROW_HEIGHT;
   }
 
   let summaryHtml = '';
@@ -3113,13 +3114,13 @@ function buildTrainProgress(train, service){
     summaryHtml = `Not yet departed ${points[0].locationName}`;
   }
 
-  const rowsHtml = points.map((p) => {
+  const rowsHtml = points.map((p, i) => {
     try{
       const status = describePointStatus(p.schedTime, p.liveTime, p.isCancelled);
       const nameColor = p.isYourStation ? 'var(--amber)' : 'var(--ink)';
       const reasonHtml = p.reason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
       return `
-        <div class="rail-detail-row" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
+        <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
           <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
           <span style="min-width:56px;">${p.schedTime || ''}</span>
           <span style="flex:1; text-align:right;">
@@ -3131,11 +3132,11 @@ function buildTrainProgress(train, service){
     }catch(e){
       // One malformed calling point shouldn't take the whole list down —
       // show what we can and keep going.
-      return `<div class="rail-detail-row"><span>${p.locationName || 'Unknown'}</span><span style="color:var(--ink-dim);">—</span></div>`;
+      return `<div class="rail-detail-row" data-idx="${i}"><span>${p.locationName || 'Unknown'}</span><span style="color:var(--ink-dim);">—</span></div>`;
     }
   }).join('');
 
-  return { summaryHtml, rowsHtml, blobTopPx, pointCount: points.length };
+  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length };
 }
 
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
@@ -3155,7 +3156,6 @@ function openTrainProgress(train, service){
   }
 
   const initial = buildTrainProgress(train, service);
-  const lineHeight = (initial.pointCount - 1) * TRAIN_PROGRESS_ROW_HEIGHT;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -3170,8 +3170,8 @@ function openTrainProgress(train, service){
       <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px;">${initial.summaryHtml}</div>
       <div style="max-height:45vh; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
-          <div id="train-progress-line" style="position:absolute; left:6px; top:${TRAIN_PROGRESS_ROW_HEIGHT/2}px; width:2px; height:${lineHeight}px; background:var(--line);"></div>
-          <div id="train-progress-blob" style="position:absolute; left:1px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:${initial.blobTopPx + TRAIN_PROGRESS_ROW_HEIGHT/2 - 6}px; transition:top 1.2s ease; z-index:2;"></div>
+          <div id="train-progress-line" style="position:absolute; left:6px; top:0px; width:2px; height:0px; background:var(--line);"></div>
+          <div id="train-progress-blob" style="position:absolute; left:1px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
           <div id="train-progress-rows">${initial.rowsHtml}</div>
         </div>
       </div>
@@ -3179,6 +3179,40 @@ function openTrainProgress(train, service){
     </div>
   `;
   document.body.appendChild(overlay);
+
+  // Positions the line and blob from the *real* rendered row heights,
+  // measured from the DOM — not a fixed assumed row height. Rows can grow
+  // taller than the base minimum when a delay-reason message wraps onto
+  // extra lines, so a fixed-pixel-per-row calculation drifts further and
+  // further off the true position the more affected rows there are.
+  function positionBlobAndLine(lastPassedIdx, fraction){
+    const rowsContainer = document.getElementById('train-progress-rows');
+    const lineEl = document.getElementById('train-progress-line');
+    const blobEl = document.getElementById('train-progress-blob');
+    if (!rowsContainer || !lineEl || !blobEl) return;
+    const rows = rowsContainer.querySelectorAll('[data-idx]');
+    if (!rows.length) return;
+    const base = rowsContainer.offsetTop;
+    const centerOf = (row) => base + row.offsetTop + row.offsetHeight / 2;
+
+    const firstCenter = centerOf(rows[0]);
+    const lastCenter = centerOf(rows[rows.length - 1]);
+    lineEl.style.top = `${firstCenter}px`;
+    lineEl.style.height = `${Math.max(0, lastCenter - firstCenter)}px`;
+
+    let blobCenter;
+    if (lastPassedIdx < 0){
+      blobCenter = firstCenter;
+    } else if (lastPassedIdx >= rows.length - 1){
+      blobCenter = lastCenter;
+    } else {
+      const c1 = centerOf(rows[lastPassedIdx]);
+      const c2 = centerOf(rows[lastPassedIdx + 1]);
+      blobCenter = c1 + (c2 - c1) * fraction;
+    }
+    blobEl.style.top = `${blobCenter - 6}px`;
+  }
+  positionBlobAndLine(initial.lastPassedIdx, initial.fraction);
 
   // Kicks off (or restarts) a smooth CSS fill from 0 to 100% over one
   // refresh interval — a pure visual indicator of "time until the next
@@ -3216,11 +3250,10 @@ function openTrainProgress(train, service){
         const fresh = buildTrainProgress(train, freshService);
         const rowsEl = document.getElementById('train-progress-rows');
         const summaryEl = document.getElementById('train-progress-summary');
-        const blobEl = document.getElementById('train-progress-blob');
         const pillEl = document.getElementById('train-progress-reverse-pill');
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
-        if (blobEl) blobEl.style.top = `${fresh.blobTopPx + TRAIN_PROGRESS_ROW_HEIGHT/2 - 6}px`;
+        positionBlobAndLine(fresh.lastPassedIdx, fresh.fraction);
         if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
       } else if (lastCheckEl){
