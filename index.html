@@ -720,7 +720,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.17:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.18:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3075,7 +3075,7 @@ function addMinutesToTime(hhmm, mins){
 
 const TRAIN_PROGRESS_ROW_HEIGHT = 54; // px — a sensible minimum row height; actual positioning now measures real rendered rows, not this value
 
-function buildTrainProgress(train, service, showRawDebug){
+function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   const now = new Date();
 
   function pointsFrom(arr){
@@ -3165,6 +3165,7 @@ function buildTrainProgress(train, service, showRawDebug){
   let summaryHtml = '';
   let primaryReason = null;
   let knownOverallDelay = 0; // the most reliable delay figure we have, in minutes — used both for the summary headline and to infer real times for passed points Darwin only gave a generic "On time" word for
+  let anyReasonSuppressed = false; // true if a reason was hidden by the staleness heuristic or the repeat-dedup — drives the "Show all reasons" reveal link
   if (lastPassedIdx >= 0){
     const last = points[lastPassedIdx];
     const status = describePointStatus(last.schedTime, last.liveTime, last.isCancelled);
@@ -3236,8 +3237,13 @@ function buildTrainProgress(train, service, showRawDebug){
       // Only trust this as a genuine current explanation if it isn't
       // just carried-over text from an earlier cancellation elsewhere in
       // the journey — unless the current point is itself cancelled, in
-      // which case it's directly relevant again.
-      primaryReason = (rawReason && (last.isCancelled || afterLast.isCancelled || !inheritedReasons.has(normalizeReason(rawReason)))) ? rawReason : null;
+      // which case it's directly relevant again. showAllReasons bypasses
+      // this entirely as a manual override, since the heuristic can be
+      // wrong on the rare service where the same cause genuinely never
+      // stops being relevant.
+      const wouldSuppress = rawReason && !last.isCancelled && !afterLast.isCancelled && inheritedReasons.has(normalizeReason(rawReason));
+      if (wouldSuppress) anyReasonSuppressed = true;
+      primaryReason = (rawReason && (showAllReasons || !wouldSuppress)) ? rawReason : null;
       summaryHtml = `<div>Currently between ${last.locationName} and ${afterLast.locationName}</div>` +
         `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${runningText}</div>` +
         (primaryReason ? `<div style="font-size:12px; margin-top:4px; opacity:0.85;">${primaryReason}</div>` : '');
@@ -3268,7 +3274,7 @@ function buildTrainProgress(train, service, showRawDebug){
       // than a fresh explanation — unless this row is itself cancelled,
       // in which case it's directly relevant again.
       const isStaleReason = !p.isCancelled && inheritedReasons.has(normalizeReason(p.reason));
-      const showReason = !!p.reason && status.minutesLate !== 0 && p.reason !== lastShownReason && !isStaleReason;
+      const showReason = !!p.reason && status.minutesLate !== 0 && (showAllReasons || (p.reason !== lastShownReason && !isStaleReason));
       if (p.reason) lastShownReason = p.reason;
       const reasonHtml = showReason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
       // Cross out the scheduled time and show the real one whenever
@@ -3318,7 +3324,7 @@ function buildTrainProgress(train, service, showRawDebug){
     }
   }).join('');
 
-  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length };
+  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed };
 }
 
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
@@ -3326,6 +3332,7 @@ const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
 function openTrainProgress(train, service){
   let refreshTimer = null;
   let showRawDebug = false; // off by default — a temporary diagnostic toggle, not for normal use
+  let showAllReasons = false; // manual override for the staleness-suppression heuristic, in case it's wrong on a given service
   let lastKnownService = service; // lets the debug toggle rebuild instantly without a fresh network call
   let isOffline = false; // true when the last refresh attempt failed — drives the red banner and the pulsing blob
   const serviceId = train.serviceId || service.serviceID || null;
@@ -3342,7 +3349,7 @@ function openTrainProgress(train, service){
     saveTrackedTrains();
   }
 
-  const initial = buildTrainProgress(train, service, showRawDebug);
+  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons);
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay modal-overlay-full';
   overlay.innerHTML = `
@@ -3355,7 +3362,10 @@ function openTrainProgress(train, service){
       </div>
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
       <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
-      <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px;">${initial.summaryHtml}</div>
+      <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:4px;">${initial.summaryHtml}</div>
+      <div id="train-progress-reason-toggle-wrap" style="margin-bottom:10px; ${initial.anyReasonSuppressed ? '' : 'display:none;'}">
+        <span id="show-all-reasons-toggle" style="font-size:12px; text-decoration:underline; color:var(--ink-dim); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
+      </div>
       <div style="flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
           <div id="train-progress-line" style="position:absolute; left:6px; top:0px; width:2px; height:0px; background:var(--line);"></div>
@@ -3402,15 +3412,34 @@ function openTrainProgress(train, service){
   }
   positionBlobAndLine(initial.lastPassedIdx, initial.fraction);
 
+  function rebuildDisplay(){
+    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
+    const rowsEl = document.getElementById('train-progress-rows');
+    const summaryEl = document.getElementById('train-progress-summary');
+    if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
+    if (summaryEl) summaryEl.innerHTML = rebuilt.summaryHtml;
+    positionBlobAndLine(rebuilt.lastPassedIdx, rebuilt.fraction);
+    const reasonToggleWrap = document.getElementById('train-progress-reason-toggle-wrap');
+    const reasonToggle = document.getElementById('show-all-reasons-toggle');
+    if (reasonToggleWrap) reasonToggleWrap.style.display = rebuilt.anyReasonSuppressed ? '' : 'none';
+    if (reasonToggle) reasonToggle.textContent = showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway';
+    return rebuilt;
+  }
+
   const rawDebugToggle = document.getElementById('raw-debug-toggle');
   if (rawDebugToggle){
     rawDebugToggle.addEventListener('click', () => {
       showRawDebug = !showRawDebug;
       rawDebugToggle.textContent = showRawDebug ? 'Hide raw data' : 'Show raw data';
-      const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug);
-      const rowsEl = document.getElementById('train-progress-rows');
-      if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
-      positionBlobAndLine(rebuilt.lastPassedIdx, rebuilt.fraction);
+      rebuildDisplay();
+    });
+  }
+
+  const showAllReasonsToggle = document.getElementById('show-all-reasons-toggle');
+  if (showAllReasonsToggle){
+    showAllReasonsToggle.addEventListener('click', () => {
+      showAllReasons = !showAllReasons;
+      rebuildDisplay();
     });
   }
 
@@ -3448,17 +3477,19 @@ function openTrainProgress(train, service){
       }
       if (freshService && !freshService.isCancelled){
         lastKnownService = freshService;
-        const fresh = buildTrainProgress(train, freshService, showRawDebug);
+        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons);
         const rowsEl = document.getElementById('train-progress-rows');
         const summaryEl = document.getElementById('train-progress-summary');
         const pillEl = document.getElementById('train-progress-reverse-pill');
         const offlineBanner = document.getElementById('train-progress-offline-banner');
         const blobEl = document.getElementById('train-progress-blob');
+        const reasonToggleWrap = document.getElementById('train-progress-reason-toggle-wrap');
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
         positionBlobAndLine(fresh.lastPassedIdx, fresh.fraction);
         if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
+        if (reasonToggleWrap) reasonToggleWrap.style.display = fresh.anyReasonSuppressed ? '' : 'none';
         // Connection's back — drop out of the offline/estimated state.
         isOffline = false;
         if (offlineBanner) offlineBanner.style.display = 'none';
@@ -3481,14 +3512,16 @@ function openTrainProgress(train, service){
       // against the last data we did get, so the blob keeps creeping
       // forward on a reasonable assumption rather than sitting frozen.
       isOffline = true;
-      const stale = buildTrainProgress(train, lastKnownService, showRawDebug);
+      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
       const rowsEl = document.getElementById('train-progress-rows');
       const summaryEl = document.getElementById('train-progress-summary');
       const offlineBanner = document.getElementById('train-progress-offline-banner');
       const blobEl = document.getElementById('train-progress-blob');
+      const reasonToggleWrap = document.getElementById('train-progress-reason-toggle-wrap');
       if (rowsEl) rowsEl.innerHTML = stale.rowsHtml;
       if (summaryEl) summaryEl.innerHTML = stale.summaryHtml;
       positionBlobAndLine(stale.lastPassedIdx, stale.fraction);
+      if (reasonToggleWrap) reasonToggleWrap.style.display = stale.anyReasonSuppressed ? '' : 'none';
       if (offlineBanner) offlineBanner.style.display = 'block';
       if (blobEl) blobEl.classList.add('blob-pulsing');
     }
