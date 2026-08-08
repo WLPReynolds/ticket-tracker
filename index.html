@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.14:22'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.14:27'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3061,7 +3061,11 @@ function buildTrainProgress(train, service, showRawDebug){
   const after = pointsFrom(service.subsequentCallingPoints).map(cp => ({
     locationName: cp.locationName,
     schedTime: cp.st,
-    liveTime: cp.et || cp.st,
+    // Darwin's before/after split is fixed relative to the station you
+    // queried from, not to real time — a point can sit in "subsequent"
+    // and still be genuinely already passed once enough time's gone by,
+    // so check for a real confirmed actual time first, same as "before".
+    liveTime: cp.at || cp.et || cp.st,
     isCancelled: !!cp.isCancelled,
     reason: cp.delayReason || cp.cancelReason || null,
     platform: cp.platform || null,
