@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.12:51'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.13:03'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2667,7 +2667,7 @@ async function fetchServiceDetails(serviceId){
   if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
   const data = await resp.json();
   const r = (data.results || [])[0];
-  if (!r || !r.ok) throw new Error((r && (r.reason || `status ${r.status}`)) || 'serviceDetails failed');
+  if (!r || !r.ok || !r.data) throw new Error((r && (r.reason || `status ${r.status}`)) || 'No service data returned — this train may no longer be tracked by Darwin');
   return r.data;
 }
 
@@ -3154,8 +3154,10 @@ function openTrainProgress(train, service){
   // even after it's rolled off the departure station's own board, or
   // after closing and reopening the app entirely.
   if (serviceId){
+    const existing = trackedTrains.find(t => t.serviceId === serviceId);
+    const addedAt = existing ? existing.addedAt : Date.now(); // preserve the original tracking time — reopening shouldn't reset how long it's been tracked
     trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
-    trackedTrains.unshift({ serviceId, label: train.label, fromLoc: train.fromLoc, addedAt: Date.now() });
+    trackedTrains.unshift({ serviceId, label: train.label, fromLoc: train.fromLoc, addedAt });
     trackedTrains = trackedTrains.slice(0, 5); // no need to keep more than a handful
     saveTrackedTrains();
   }
