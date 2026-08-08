@@ -668,8 +668,13 @@
     max-height: 100dvh;
     display: flex;
     flex-direction: column;
-    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    /* A generous fixed allowance for the bottom nav bar sitting on top of
+       this modal (same reasoning as the base .modal fix) — this was
+       previously only reserving 20px total, nowhere near enough, which
+       is why Close ended up trapped underneath the bar. */
+    padding-bottom: calc(90px + env(safe-area-inset-bottom));
   }
+
 
   .cal-overlay{
     align-items: flex-start;
@@ -728,7 +733,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.18:13'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.18:18'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
