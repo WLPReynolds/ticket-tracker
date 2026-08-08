@@ -707,7 +707,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.17:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.17:48'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3101,6 +3101,14 @@ function buildTrainProgress(train, service, showRawDebug){
     raw: { st: cp.st, at: cp.at, et: cp.et },
   }));
   const points = [...before, ...here, ...after];
+  // Darwin attaches one reason to a service and doesn't seem to clear or
+  // refresh it as the journey continues — a reason first seen on an
+  // early cancelled point can still be sitting there hours and hundreds
+  // of miles later, long after it's stopped being the genuine cause of
+  // anything current. Track which reasons belong to cancelled points so
+  // they can be recognised as inherited boilerplate rather than treated
+  // as a fresh explanation for the service's current running status.
+  const inheritedReasons = new Set(points.filter(p => p.isCancelled && p.reason).map(p => p.reason));
 
   // The best available time for each point — a real timestamp if Darwin
   // gave us one, falling back to the scheduled time if it only gave a
@@ -3199,7 +3207,12 @@ function buildTrainProgress(train, service, showRawDebug){
       // Three separate lines — where it is, its status, and why (if
       // known) — rather than one long line that wraps awkwardly with
       // longer station names.
-      primaryReason = last.reason || (afterLast && afterLast.reason) || null;
+      const rawReason = last.reason || (afterLast && afterLast.reason) || null;
+      // Only trust this as a genuine current explanation if it isn't
+      // just carried-over text from an earlier cancellation elsewhere in
+      // the journey — unless the current point is itself cancelled, in
+      // which case it's directly relevant again.
+      primaryReason = (rawReason && (last.isCancelled || afterLast.isCancelled || !inheritedReasons.has(rawReason))) ? rawReason : null;
       summaryHtml = `<div>Currently between ${last.locationName} and ${afterLast.locationName}</div>` +
         `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${runningText}</div>` +
         (primaryReason ? `<div style="font-size:12px; margin-top:4px; opacity:0.85;">${primaryReason}</div>` : '');
@@ -3225,8 +3238,12 @@ function buildTrainProgress(train, service, showRawDebug){
       // point has positively confirmed it's back on time. Also skip it
       // if it's the same reason already shown on the row immediately
       // before it (or in the summary box) — no need to repeat it over
-      // and over down a whole run of affected stations.
-      const showReason = !!p.reason && status.minutesLate !== 0 && p.reason !== lastShownReason;
+      // and over down a whole run of affected stations. And skip it if
+      // it's boilerplate inherited from an earlier cancellation rather
+      // than a fresh explanation — unless this row is itself cancelled,
+      // in which case it's directly relevant again.
+      const isStaleReason = !p.isCancelled && inheritedReasons.has(p.reason);
+      const showReason = !!p.reason && status.minutesLate !== 0 && p.reason !== lastShownReason && !isStaleReason;
       if (p.reason) lastShownReason = p.reason;
       const reasonHtml = showReason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
       // Cross out the scheduled time and show the real one whenever
