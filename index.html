@@ -652,7 +652,7 @@
        bug). This guarantees any modal's own content, however long, can
        always be reached via its own internal scroll rather than
        potentially being trapped behind the bar with no way to reach it. */
-    max-height: calc(100vh - 100px - env(safe-area-inset-bottom));
+    max-height: calc(100vh - 80px - env(safe-area-inset-bottom));
     overflow-y: auto;
   }
   .modal h3{ margin:0 0 4px; font-size:16px; }
@@ -672,7 +672,7 @@
        this modal (same reasoning as the base .modal fix) — this was
        previously only reserving 20px total, nowhere near enough, which
        is why Close ended up trapped underneath the bar. */
-    padding-bottom: calc(90px + env(safe-area-inset-bottom));
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
   }
 
 
@@ -733,7 +733,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.18:29'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.18:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3437,7 +3437,7 @@ function openTrainProgress(train, service){
       scrollContainer.scrollTo({ top: target, behavior: scrollBehavior || 'smooth' });
     }
   }
-  positionBlobAndLine(initial.lastPassedIdx, initial.fraction, 'auto');
+  positionBlobAndLine(initial.lastPassedIdx, initial.fraction);
 
   function rebuildDisplay(){
     const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
