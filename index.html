@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.13:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.13:44'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3019,6 +3019,18 @@ function describePointStatus(schedTime, liveTime, isCancelled){
   return { text: `${diff} min late`, color: '#ff8b7e', minutesLate: diff };
 }
 
+// Adds a number of minutes to an "HH:MM" string, wrapping correctly
+// across midnight — used to infer a real time for an already-passed
+// point that Darwin only gave a generic "On time" word for, despite the
+// service clearly running late overall.
+function addMinutesToTime(hhmm, mins){
+  if (!hhmm || !hhmm.includes(':')) return null;
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = ((h * 60 + m + mins) % 1440 + 1440) % 1440;
+  const nh = Math.floor(total / 60), nm = total % 60;
+  return `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
+}
+
 const TRAIN_PROGRESS_ROW_HEIGHT = 54; // px — a sensible minimum row height; actual positioning now measures real rendered rows, not this value
 
 function buildTrainProgress(train, service){
@@ -3080,6 +3092,7 @@ function buildTrainProgress(train, service){
 
   let summaryHtml = '';
   let primaryReason = null;
+  let knownOverallDelay = 0; // the most reliable delay figure we have, in minutes — used both for the summary headline and to infer real times for passed points Darwin only gave a generic "On time" word for
   if (lastPassedIdx >= 0){
     const last = points[lastPassedIdx];
     const status = describePointStatus(last.schedTime, last.liveTime, last.isCancelled);
@@ -3116,6 +3129,7 @@ function buildTrainProgress(train, service){
         if (finalStatus.minutesLate !== null && finalStatus.minutesLate > 0) overallStatus = finalStatus;
       }
       const runningText = overallStatus.minutesLate === null ? overallStatus.text : (overallStatus.minutesLate > 0 ? `Running ${overallStatus.minutesLate} min late` : 'Running on time');
+      if (overallStatus.minutesLate > 0) knownOverallDelay = overallStatus.minutesLate;
       // Three separate lines — where it is, its status, and why (if
       // known) — rather than one long line that wraps awkwardly with
       // longer station names.
@@ -3144,16 +3158,34 @@ function buildTrainProgress(train, service){
       // Darwin gave a genuine specific delayed time (not just a status
       // word) — same idea as Avanti's own calling-points view.
       const hasRealTime = p.liveTime && p.liveTime.includes(':') && p.liveTime !== p.schedTime;
-      const timeHtml = hasRealTime
-        ? `<span style="text-decoration:line-through; color:var(--ink-dim); font-size:11.5px;">${p.schedTime || ''}</span><br/><span style="color:#ff8b7e; font-weight:600;">${p.liveTime}</span>`
-        : (p.schedTime || '');
+      // For an already-passed point that Darwin only gave a generic "On
+      // time" word for, despite the service clearly running late overall
+      // — infer a rough real time from the known overall delay, clearly
+      // marked as an estimate rather than presented as confirmed data.
+      const isInferred = !hasRealTime && i <= lastPassedIdx && status.minutesLate === 0 && knownOverallDelay > 0 && !p.isCancelled;
+      const inferredTime = isInferred ? addMinutesToTime(p.schedTime, knownOverallDelay) : null;
+
+      let timeHtml, statusText, statusColor;
+      if (hasRealTime){
+        timeHtml = `<span style="text-decoration:line-through; color:var(--ink-dim); font-size:11.5px;">${p.schedTime || ''}</span><br/><span style="color:#ff8b7e; font-weight:600;">${p.liveTime}</span>`;
+        statusText = status.text;
+        statusColor = status.color;
+      } else if (isInferred && inferredTime){
+        timeHtml = `<span style="text-decoration:line-through; color:var(--ink-dim); font-size:11.5px;">${p.schedTime || ''}</span><br/><span style="color:#e8935f; font-style:italic;">~${inferredTime}</span>`;
+        statusText = `~${knownOverallDelay} min late (estimated)`;
+        statusColor = '#e8935f';
+      } else {
+        timeHtml = p.schedTime || '';
+        statusText = status.text;
+        statusColor = status.color;
+      }
       return `
         <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
           <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
           <span style="min-width:56px;">${timeHtml}</span>
           <span style="flex:1; text-align:right;">
             <span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName || 'Unknown'}</span>
-            <div style="color:${status.color}; font-size:12.5px; margin-top:1px;">${status.text}</div>
+            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}</div>
             ${reasonHtml}
           </span>
         </div>`;
