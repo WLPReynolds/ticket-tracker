@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.13:44'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.13:52'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3116,17 +3116,37 @@ function buildTrainProgress(train, service){
       summaryHtml = `<div>Arrived at ${last.locationName}</div><div style="font-size:12px; margin-top:4px; opacity:0.9;">${arrivalText}</div>`;
     } else {
       // Darwin sometimes only attaches a specific recalculated number to
-      // the final destination on a given poll, leaving intermediate
-      // points showing a generic "On time" word even when a delay reason
-      // is clearly attached to them too. Rather than trust whichever
+      // some points and not others on a given poll, leaving nearby
+      // points showing a generic "On time" word even when a delay
+      // reason is clearly attached to them. Rather than trust whichever
       // point happens to be "last passed" (which might only have that
-      // generic word), fall back to the destination's own figure if it
-      // has a real number and the passed point doesn't.
+      // generic word) — or only check the far final destination, which
+      // may not have a specific number yet either — scan forward through
+      // every remaining point for the first one with a real confirmed
+      // figure, since a nearby point is far more likely to have current
+      // data than a still-distant one.
       let overallStatus = status;
       if (overallStatus.minutesLate === null || overallStatus.minutesLate === 0){
-        const finalPoint = points[points.length - 1];
-        const finalStatus = describePointStatus(finalPoint.schedTime, finalPoint.liveTime, finalPoint.isCancelled);
-        if (finalStatus.minutesLate !== null && finalStatus.minutesLate > 0) overallStatus = finalStatus;
+        for (const candidate of points.slice(lastPassedIdx + 1)){
+          const candidateStatus = describePointStatus(candidate.schedTime, candidate.liveTime, candidate.isCancelled);
+          if (candidateStatus.minutesLate !== null && candidateStatus.minutesLate > 0){
+            overallStatus = candidateStatus;
+            break;
+          }
+        }
+        // Nothing forward had a real figure either — check backward
+        // through already-passed points as a last resort, so any real
+        // number anywhere in the journey wins over showing "on time"
+        // when the service is clearly delayed.
+        if (overallStatus.minutesLate === null || overallStatus.minutesLate === 0){
+          for (let j = lastPassedIdx - 1; j >= 0; j--){
+            const candidateStatus = describePointStatus(points[j].schedTime, points[j].liveTime, points[j].isCancelled);
+            if (candidateStatus.minutesLate !== null && candidateStatus.minutesLate > 0){
+              overallStatus = candidateStatus;
+              break;
+            }
+          }
+        }
       }
       const runningText = overallStatus.minutesLate === null ? overallStatus.text : (overallStatus.minutesLate > 0 ? `Running ${overallStatus.minutesLate} min late` : 'Running on time');
       if (overallStatus.minutesLate > 0) knownOverallDelay = overallStatus.minutesLate;
