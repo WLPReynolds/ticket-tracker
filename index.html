@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.13:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.13:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3093,14 +3093,14 @@ function buildTrainProgress(train, service){
 
     if (terminatedEarly){
       const finalPoint = points[points.length - 1];
-      summaryHtml = (finalPoint && finalPoint.locationName !== last.locationName)
-        ? `Terminated at ${last.locationName} — did not continue to ${finalPoint.locationName}`
-        : `Terminated at ${last.locationName}`;
+      const locLine = `Terminated at ${last.locationName}`;
+      const statusLine = (finalPoint && finalPoint.locationName !== last.locationName) ? `Did not continue to ${finalPoint.locationName}` : '';
+      summaryHtml = `<div>${locLine}</div>${statusLine ? `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${statusLine}</div>` : ''}`;
     } else if (!afterLast){
       // Genuinely reached the final booked destination — no "running",
       // the journey's over.
-      const arrivalText = status.minutesLate === null ? status.text.toLowerCase() : (status.minutesLate > 0 ? `${status.minutesLate} min late` : 'on time');
-      summaryHtml = `Arrived at ${last.locationName} — ${arrivalText}`;
+      const arrivalText = status.minutesLate === null ? status.text : (status.minutesLate > 0 ? `${status.minutesLate} min late` : 'On time');
+      summaryHtml = `<div>Arrived at ${last.locationName}</div><div style="font-size:12px; margin-top:4px; opacity:0.9;">${arrivalText}</div>`;
     } else {
       // Darwin sometimes only attaches a specific recalculated number to
       // the final destination on a given poll, leaving intermediate
@@ -3115,13 +3115,14 @@ function buildTrainProgress(train, service){
         const finalStatus = describePointStatus(finalPoint.schedTime, finalPoint.liveTime, finalPoint.isCancelled);
         if (finalStatus.minutesLate !== null && finalStatus.minutesLate > 0) overallStatus = finalStatus;
       }
-      const runningText = overallStatus.minutesLate === null ? overallStatus.text.toLowerCase() : (overallStatus.minutesLate > 0 ? `running ${overallStatus.minutesLate} min late` : 'running on time');
-      summaryHtml = `Currently between ${last.locationName} and ${afterLast.locationName} — ${runningText}`;
-      // Show the reason once, here, rather than repeating it on every
-      // affected row below — rows only surface their own reason if it's
-      // genuinely different from this one.
+      const runningText = overallStatus.minutesLate === null ? overallStatus.text : (overallStatus.minutesLate > 0 ? `Running ${overallStatus.minutesLate} min late` : 'Running on time');
+      // Three separate lines — where it is, its status, and why (if
+      // known) — rather than one long line that wraps awkwardly with
+      // longer station names.
       primaryReason = last.reason || (afterLast && afterLast.reason) || null;
-      if (primaryReason) summaryHtml += `<div style="font-size:12px; margin-top:6px; opacity:0.85;">${primaryReason}</div>`;
+      summaryHtml = `<div>Currently between ${last.locationName} and ${afterLast.locationName}</div>` +
+        `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${runningText}</div>` +
+        (primaryReason ? `<div style="font-size:12px; margin-top:4px; opacity:0.85;">${primaryReason}</div>` : '');
     }
   } else if (points.length){
     summaryHtml = `Not yet departed ${points[0].locationName}`;
@@ -3139,10 +3140,17 @@ function buildTrainProgress(train, service){
       // in the summary box — no need to repeat it on every row.
       const showReason = !!p.reason && status.minutesLate !== 0 && p.reason !== primaryReason;
       const reasonHtml = showReason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
+      // Cross out the scheduled time and show the real one whenever
+      // Darwin gave a genuine specific delayed time (not just a status
+      // word) — same idea as Avanti's own calling-points view.
+      const hasRealTime = p.liveTime && p.liveTime.includes(':') && p.liveTime !== p.schedTime;
+      const timeHtml = hasRealTime
+        ? `<span style="text-decoration:line-through; color:var(--ink-dim); font-size:11.5px;">${p.schedTime || ''}</span><br/><span style="color:#ff8b7e; font-weight:600;">${p.liveTime}</span>`
+        : (p.schedTime || '');
       return `
         <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
           <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
-          <span style="min-width:56px;">${p.schedTime || ''}</span>
+          <span style="min-width:56px;">${timeHtml}</span>
           <span style="flex:1; text-align:right;">
             <span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName || 'Unknown'}</span>
             <div style="color:${status.color}; font-size:12.5px; margin-top:1px;">${status.text}</div>
