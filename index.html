@@ -650,6 +650,19 @@
   .modal h3{ margin:0 0 4px; font-size:16px; }
   .modal .sub{ color: var(--ink-dim); font-size:13px; margin-bottom:14px; }
 
+  .modal-overlay-full{
+    align-items: stretch;
+    padding-bottom: 0;
+  }
+  .modal-overlay-full .modal{
+    border-radius: 0;
+    height: 100dvh;
+    max-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
   .cal-overlay{
     align-items: flex-start;
     padding-top: 60px;
@@ -707,7 +720,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.17:48'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.17:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3108,7 +3121,19 @@ function buildTrainProgress(train, service, showRawDebug){
   // anything current. Track which reasons belong to cancelled points so
   // they can be recognised as inherited boilerplate rather than treated
   // as a fresh explanation for the service's current running status.
-  const inheritedReasons = new Set(points.filter(p => p.isCancelled && p.reason).map(p => p.reason));
+  // Darwin phrases the same underlying cause differently depending on
+  // whether the specific point is cancelled ("cancelled because of X")
+  // or merely delayed ("delayed by X") — comparing full sentences misses
+  // the match entirely, so strip the standard prefixes down to just the
+  // actual cause before comparing.
+  function normalizeReason(reason){
+    if (!reason) return null;
+    return reason
+      .replace(/^This service (has been|was)\s*(cancelled because of|delayed by|delayed because of|cancelled due to|delayed due to)\s*/i, '')
+      .trim()
+      .toLowerCase();
+  }
+  const inheritedReasons = new Set(points.filter(p => p.isCancelled && p.reason).map(p => normalizeReason(p.reason)));
 
   // The best available time for each point — a real timestamp if Darwin
   // gave us one, falling back to the scheduled time if it only gave a
@@ -3212,7 +3237,7 @@ function buildTrainProgress(train, service, showRawDebug){
       // just carried-over text from an earlier cancellation elsewhere in
       // the journey — unless the current point is itself cancelled, in
       // which case it's directly relevant again.
-      primaryReason = (rawReason && (last.isCancelled || afterLast.isCancelled || !inheritedReasons.has(rawReason))) ? rawReason : null;
+      primaryReason = (rawReason && (last.isCancelled || afterLast.isCancelled || !inheritedReasons.has(normalizeReason(rawReason)))) ? rawReason : null;
       summaryHtml = `<div>Currently between ${last.locationName} and ${afterLast.locationName}</div>` +
         `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${runningText}</div>` +
         (primaryReason ? `<div style="font-size:12px; margin-top:4px; opacity:0.85;">${primaryReason}</div>` : '');
@@ -3242,7 +3267,7 @@ function buildTrainProgress(train, service, showRawDebug){
       // it's boilerplate inherited from an earlier cancellation rather
       // than a fresh explanation — unless this row is itself cancelled,
       // in which case it's directly relevant again.
-      const isStaleReason = !p.isCancelled && inheritedReasons.has(p.reason);
+      const isStaleReason = !p.isCancelled && inheritedReasons.has(normalizeReason(p.reason));
       const showReason = !!p.reason && status.minutesLate !== 0 && p.reason !== lastShownReason && !isStaleReason;
       if (p.reason) lastShownReason = p.reason;
       const reasonHtml = showReason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
@@ -3319,7 +3344,7 @@ function openTrainProgress(train, service){
 
   const initial = buildTrainProgress(train, service, showRawDebug);
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'modal-overlay modal-overlay-full';
   overlay.innerHTML = `
     <div class="modal">
       <h3>${train.label} — live progress</h3>
@@ -3331,7 +3356,7 @@ function openTrainProgress(train, service){
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
       <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
       <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:14px;">${initial.summaryHtml}</div>
-      <div style="max-height:45vh; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
+      <div style="flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
           <div id="train-progress-line" style="position:absolute; left:6px; top:0px; width:2px; height:0px; background:var(--line);"></div>
           <div id="train-progress-blob" style="position:absolute; left:1px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
@@ -3483,6 +3508,10 @@ function openTrainProgress(train, service){
     if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
     document.removeEventListener('visibilitychange', onVisible);
     document.body.removeChild(overlay);
+    // If this was opened from Tracked Trains (the only place that passes
+    // a serviceId directly on the train object), closing should return
+    // there rather than just dropping back to whatever was underneath.
+    if (train.serviceId) openTrackedTrains();
   }
   document.getElementById('train-progress-close-btn').addEventListener('click', closeAndStopRefresh);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAndStopRefresh(); });
