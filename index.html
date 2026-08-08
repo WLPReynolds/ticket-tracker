@@ -733,7 +733,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.18:18'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.18:29'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3379,7 +3379,7 @@ function openTrainProgress(train, service){
       <div id="train-progress-reason-toggle-wrap" style="margin-bottom:10px; ${initial.anyReasonSuppressed ? '' : 'display:none;'}">
         <span id="show-all-reasons-toggle" style="font-size:12px; text-decoration:underline; color:var(--ink-dim); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
       </div>
-      <div style="flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
+      <div id="train-progress-scroll" style="flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
           <div id="train-progress-line" style="position:absolute; left:6px; top:0px; width:2px; height:0px; background:var(--line);"></div>
           <div id="train-progress-blob" style="position:absolute; left:1px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
@@ -3396,7 +3396,7 @@ function openTrainProgress(train, service){
   // taller than the base minimum when a delay-reason message wraps onto
   // extra lines, so a fixed-pixel-per-row calculation drifts further and
   // further off the true position the more affected rows there are.
-  function positionBlobAndLine(lastPassedIdx, fraction){
+  function positionBlobAndLine(lastPassedIdx, fraction, scrollBehavior){
     const rowsContainer = document.getElementById('train-progress-rows');
     const lineEl = document.getElementById('train-progress-line');
     const blobEl = document.getElementById('train-progress-blob');
@@ -3422,8 +3422,22 @@ function openTrainProgress(train, service){
       blobCenter = c1 + (c2 - c1) * fraction;
     }
     blobEl.style.top = `${blobCenter - 6}px`;
+
+    // Keep the blob roughly centred in view as it moves, rather than
+    // needing a manual scroll to find it — most noticeable once a train
+    // reaches the very end of a long calling-point list. Clamped to the
+    // container's real scrollable range, so it naturally does the best
+    // it can near either end rather than trying to overscroll.
+    const scrollContainer = document.getElementById('train-progress-scroll');
+    if (scrollContainer && scrollContainer.clientHeight > 0){
+      const target = Math.max(0, Math.min(
+        blobCenter - scrollContainer.clientHeight / 2,
+        scrollContainer.scrollHeight - scrollContainer.clientHeight
+      ));
+      scrollContainer.scrollTo({ top: target, behavior: scrollBehavior || 'smooth' });
+    }
   }
-  positionBlobAndLine(initial.lastPassedIdx, initial.fraction);
+  positionBlobAndLine(initial.lastPassedIdx, initial.fraction, 'auto');
 
   function rebuildDisplay(){
     const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
@@ -3431,7 +3445,7 @@ function openTrainProgress(train, service){
     const summaryEl = document.getElementById('train-progress-summary');
     if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
     if (summaryEl) summaryEl.innerHTML = rebuilt.summaryHtml;
-    positionBlobAndLine(rebuilt.lastPassedIdx, rebuilt.fraction);
+    positionBlobAndLine(rebuilt.lastPassedIdx, rebuilt.fraction, 'auto');
     const reasonToggleWrap = document.getElementById('train-progress-reason-toggle-wrap');
     const reasonToggle = document.getElementById('show-all-reasons-toggle');
     if (reasonToggleWrap) reasonToggleWrap.style.display = rebuilt.anyReasonSuppressed ? '' : 'none';
