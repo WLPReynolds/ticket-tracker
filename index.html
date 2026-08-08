@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.13:09'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.13:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3079,6 +3079,7 @@ function buildTrainProgress(train, service){
   }
 
   let summaryHtml = '';
+  let primaryReason = null;
   if (lastPassedIdx >= 0){
     const last = points[lastPassedIdx];
     const status = describePointStatus(last.schedTime, last.liveTime, last.isCancelled);
@@ -3116,6 +3117,11 @@ function buildTrainProgress(train, service){
       }
       const runningText = overallStatus.minutesLate === null ? overallStatus.text.toLowerCase() : (overallStatus.minutesLate > 0 ? `running ${overallStatus.minutesLate} min late` : 'running on time');
       summaryHtml = `Currently between ${last.locationName} and ${afterLast.locationName} — ${runningText}`;
+      // Show the reason once, here, rather than repeating it on every
+      // affected row below — rows only surface their own reason if it's
+      // genuinely different from this one.
+      primaryReason = last.reason || (afterLast && afterLast.reason) || null;
+      if (primaryReason) summaryHtml += `<div style="font-size:12px; margin-top:6px; opacity:0.85;">${primaryReason}</div>`;
     }
   } else if (points.length){
     summaryHtml = `Not yet departed ${points[0].locationName}`;
@@ -3128,8 +3134,10 @@ function buildTrainProgress(train, service){
       // The reason text often stays attached even once a point's own
       // status has recovered to genuinely on time — show it whenever
       // there's real uncertainty or an actual problem, but not once a
-      // point has positively confirmed it's back on time.
-      const showReason = !!p.reason && status.minutesLate !== 0;
+      // point has positively confirmed it's back on time. Also skip it
+      // entirely if it's the same reason already shown once at the top,
+      // in the summary box — no need to repeat it on every row.
+      const showReason = !!p.reason && status.minutesLate !== 0 && p.reason !== primaryReason;
       const reasonHtml = showReason ? `<div style="font-size:11.5px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
       return `
         <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
