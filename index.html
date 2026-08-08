@@ -700,7 +700,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.14:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-08.14:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3157,8 +3157,19 @@ function buildTrainProgress(train, service, showRawDebug){
       // every remaining point for the first one with a real confirmed
       // figure, since a nearby point is far more likely to have current
       // data than a still-distant one.
+      // The next point ahead is Darwin's freshest, most current read on
+      // how the service is running — the last-passed point's figure is
+      // already history and won't be revised further once it's actually
+      // happened. Prefer the next point's number when it has a real one,
+      // rather than defaulting to whatever the passed point locked in.
       let overallStatus = status;
-      if (overallStatus.minutesLate === null || overallStatus.minutesLate === 0){
+      const afterLastStatus = describePointStatus(afterLast.schedTime, afterLast.liveTime, afterLast.isCancelled);
+      if (afterLastStatus.minutesLate !== null && afterLastStatus.minutesLate > 0){
+        overallStatus = afterLastStatus;
+      } else if (overallStatus.minutesLate === null || overallStatus.minutesLate === 0){
+        // Neither the passed point nor the very next one has a usable
+        // figure — scan further ahead, then behind, for the first real
+        // confirmed number anywhere in the journey.
         for (const candidate of points.slice(lastPassedIdx + 1)){
           const candidateStatus = describePointStatus(candidate.schedTime, candidate.liveTime, candidate.isCancelled);
           if (candidateStatus.minutesLate !== null && candidateStatus.minutesLate > 0){
@@ -3166,10 +3177,6 @@ function buildTrainProgress(train, service, showRawDebug){
             break;
           }
         }
-        // Nothing forward had a real figure either — check backward
-        // through already-passed points as a last resort, so any real
-        // number anywhere in the journey wins over showing "on time"
-        // when the service is clearly delayed.
         if (overallStatus.minutesLate === null || overallStatus.minutesLate === 0){
           for (let j = lastPassedIdx - 1; j >= 0; j--){
             const candidateStatus = describePointStatus(points[j].schedTime, points[j].liveTime, points[j].isCancelled);
