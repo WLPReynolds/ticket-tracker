@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-09.17:18'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-09.17:34'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3007,11 +3007,18 @@ function openTrackedTrains(){
       const subLine = errorMsg
         ? `<span style="color:#ff8b7e; font-size:12px;">${escapeHtml(errorMsg)}</span>`
         : `<span style="color:var(--ink-dim); font-size:12px;">Added ${ageLabel}</span>`;
-      return `<div class="rail-detail-row" data-tracked-row="${t.serviceId}" style="flex-direction:column; align-items:stretch; gap:2px;">
+      // The refresh icon only appears once something's actually gone
+      // wrong — tapping the row itself already does the same "check and
+      // open" action, so showing it unconditionally would just be a
+      // second control doing exactly what the row already does.
+      const refreshBtn = errorMsg
+        ? `<span class="tracked-refresh-btn" data-refresh-service-id="${t.serviceId}" title="Refresh" style="display:flex; padding:9px; margin:-9px; color:var(--good); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REFRESH_ICON}</span>`
+        : '';
+      return `<div class="rail-detail-row" data-tracked-row="${t.serviceId}" style="flex-direction:column; align-items:stretch; gap:2px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-weight:600; -webkit-user-select:none; user-select:none;">${t.label}</span>
+          <span style="font-weight:600;">${t.label}</span>
           <span style="display:flex; align-items:center; gap:28px;">
-            <span class="tracked-refresh-btn" data-refresh-service-id="${t.serviceId}" title="Refresh" style="display:flex; padding:9px; margin:-9px; color:var(--good); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REFRESH_ICON}</span>
+            ${refreshBtn}
             <span class="tracked-remove-btn" data-remove-service-id="${t.serviceId}" title="Remove" style="display:flex; padding:9px; margin:-9px; color:#ff8b7e; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REMOVE_ICON}</span>
           </span>
         </div>
@@ -3023,7 +3030,6 @@ function openTrackedTrains(){
   overlay.innerHTML = `
     <div class="modal">
       <h3>Tracked trains</h3>
-      <div class="sub">Tap the refresh icon to check a train (or open it once it's found); the cross removes it immediately, whether or not it's currently working.</div>
       <div id="tracked-list">${buildListHtml()}</div>
       <div class="modal-close" id="tracked-close-btn" style="margin-top:16px;">Close</div>
     </div>
@@ -3031,55 +3037,60 @@ function openTrackedTrains(){
   document.body.appendChild(overlay);
 
   function wireList(){
-    document.querySelectorAll('#tracked-list [data-refresh-service-id]').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const serviceId = btn.dataset.refreshServiceId;
-        const tracked = trackedTrains.find(t => t.serviceId === serviceId);
-        if (!tracked) return;
-        const row = overlay.querySelector(`[data-tracked-row="${serviceId}"]`);
-        // Immediate visual feedback before the network call, so there's no
-        // dead-time gap between the tap and something visibly happening —
-        // a gap here was suspected of letting Android treat a normal tap
-        // as a stuck/long press and trigger its own screen-search gesture.
-        if (row) row.style.opacity = '0.5';
-        btn.style.pointerEvents = 'none';
-        delete trackedErrors[serviceId];
-        try{
-          const service = await fetchServiceDetails(serviceId);
-          // The user may have already closed this screen while that
-          // request was in flight — removeChild on an already-removed
-          // node throws, which would otherwise fall into the catch below
-          // and incorrectly treat a successful fetch as a failure,
-          // deleting a perfectly valid tracked train in the process.
-          if (!overlay.isConnected) return;
-          overlay.remove();
-          openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
-        }catch(e){
-          if (!overlay.isConnected) return;
-          if (e.transient){
-            // A network or server hiccup tells us nothing about whether
-            // this train is still genuinely trackable — keep it in the
-            // list untouched, just show why the last check failed. If
-            // it's actually gone for good rather than a real blip, the
-            // remove icon is right there so there's never a need to wait
-            // on a retry that will never succeed.
-            trackedErrors[serviceId] = `Couldn't reach Darwin — ${e.message}`;
-            const listEl = document.getElementById('tracked-list');
-            if (listEl) listEl.innerHTML = buildListHtml();
-            wireList();
-            return;
-          }
-          // Darwin gave a definitive answer that this service is gone —
-          // this part is real regardless of whether the user is still
-          // looking at this screen, so it happens unconditionally.
-          trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
-          delete trackedErrors[serviceId];
-          await saveTrackedTrains();
+    async function attemptOpen(serviceId){
+      const tracked = trackedTrains.find(t => t.serviceId === serviceId);
+      if (!tracked) return;
+      const row = overlay.querySelector(`[data-tracked-row="${serviceId}"]`);
+      // Immediate visual feedback before the network call, so there's no
+      // dead-time gap between the tap and something visibly happening —
+      // a gap here was suspected of letting Android treat a normal tap
+      // as a stuck/long press and trigger its own screen-search gesture.
+      if (row) row.style.opacity = '0.5';
+      delete trackedErrors[serviceId];
+      try{
+        const service = await fetchServiceDetails(serviceId);
+        // The user may have already closed this screen while that
+        // request was in flight — removeChild on an already-removed
+        // node throws, which would otherwise fall into the catch below
+        // and incorrectly treat a successful fetch as a failure,
+        // deleting a perfectly valid tracked train in the process.
+        if (!overlay.isConnected) return;
+        overlay.remove();
+        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
+      }catch(e){
+        if (!overlay.isConnected) return;
+        if (e.transient){
+          // A network or server hiccup tells us nothing about whether
+          // this train is still genuinely trackable — keep it in the
+          // list untouched, just show why the last check failed. If
+          // it's actually gone for good rather than a real blip, the
+          // remove icon is right there so there's never a need to wait
+          // on a retry that will never succeed.
+          trackedErrors[serviceId] = `Couldn't reach Darwin — ${e.message}`;
           const listEl = document.getElementById('tracked-list');
           if (listEl) listEl.innerHTML = buildListHtml();
           wireList();
+          return;
         }
+        // Darwin gave a definitive answer that this service is gone —
+        // this part is real regardless of whether the user is still
+        // looking at this screen, so it happens unconditionally.
+        trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
+        delete trackedErrors[serviceId];
+        await saveTrackedTrains();
+        const listEl = document.getElementById('tracked-list');
+        if (listEl) listEl.innerHTML = buildListHtml();
+        wireList();
+      }
+    }
+
+    document.querySelectorAll('#tracked-list [data-tracked-row]').forEach(row => {
+      row.addEventListener('click', () => attemptOpen(row.dataset.trackedRow));
+    });
+    document.querySelectorAll('#tracked-list [data-refresh-service-id]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation(); // don't also trigger the row's own tap
+        attemptOpen(btn.dataset.refreshServiceId);
       });
     });
     document.querySelectorAll('#tracked-list [data-remove-service-id]').forEach(btn => {
@@ -3595,8 +3606,17 @@ function openTrainProgress(train, service){
   if (serviceId){
     const existing = trackedTrains.find(t => t.serviceId === serviceId);
     const addedAt = existing ? existing.addedAt : Date.now(); // preserve the original tracking time — reopening shouldn't reset how long it's been tracked
+    // A configured train's own .label is just its departure time (e.g.
+    // "17:31") — fine in the Today/Live Trains screens where the route
+    // is already obvious, but not enough detail once it's sitting in a
+    // list that also holds trains tracked from anywhere. Only trains
+    // with a .toLoc need this — the debug tool and a re-tracked entry
+    // already carry a complete label.
+    const label = train.toLoc
+      ? `${train.label} ${(STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || train.fromLoc}→${(STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || train.toLoc}`
+      : train.label;
     trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
-    trackedTrains.unshift({ serviceId, label: train.label, fromLoc: train.fromLoc, addedAt });
+    trackedTrains.unshift({ serviceId, label, fromLoc: train.fromLoc, addedAt });
     trackedTrains = trackedTrains.slice(0, 5); // no need to keep more than a handful
     saveTrackedTrains();
   }
