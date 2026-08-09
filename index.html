@@ -15,15 +15,10 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
-  @font-face {
-    font-family: 'DSDigital';
-  }
   :root{
     --board: #14161f;
     --board-2: #1c1f2c;
     --tile: #23273a;
-    --tile-punched: #f2a93b;
-    --tile-punched-2: #ffcf7a;
     --ink: #e9e6da;
     --ink-dim: #9a9db0;
     --amber: #f2a93b;
@@ -40,10 +35,6 @@
     color: var(--ink);
     font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     min-height:100vh;
-    padding-bottom: 0;
-  }
-  .mono{
-    font-family: 'Courier New', 'Space Mono', monospace;
   }
   header.top{
     position: relative;
@@ -273,11 +264,6 @@
     height:1px;
     background: rgba(0,0,0,0.5);
   }
-  .flip-sep{
-    font-size: 40px;
-    color: var(--ink-dim);
-    font-weight: 300;
-  }
   .flip-of8{
     display:flex; flex-direction:column; align-items:center;
   }
@@ -313,9 +299,6 @@
     background: var(--amber);
     border-color: var(--amber);
     color: #14161f;
-  }
-  .punch.today-marker{
-    box-shadow: 0 0 0 3px rgba(242,169,59,0.35);
   }
 
   .day-progress-label{
@@ -656,7 +639,6 @@
 
   .modal-overlay-full{
     align-items: stretch;
-    padding-bottom: 0;
   }
   .modal-overlay-full .modal{
     border-radius: 0;
@@ -739,7 +721,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-08.20:36'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-09.06:02'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -748,6 +730,16 @@ let preferredGoogleEmail = ''; // used as a login hint to skip the account picke
 // become visible. Each hook's own info can look different; this is just
 // the single switch that reveals/hides all of them consistently.
 let debugModeEnabled = false;
+// Tracks the currently-open train progress screen's own teardown
+// function, if any. Every such screen shares the same hardcoded element
+// IDs (train-progress-rows, train-progress-blob, etc.) and runs its own
+// 60-second refresh timer — if a second one opened while a first was
+// still alive, both timers kept running and both wrote into whichever
+// DOM elements getElementById happened to resolve to (the first match,
+// not necessarily the one on screen), causing one train's data to
+// silently overwrite another's. Forcing any previous instance to clean
+// itself up before a new one opens makes that structurally impossible.
+let activeTrainProgressCleanup = null;
 
 // Drive auto-backup
 let driveBackupEnabled = false;
@@ -822,7 +814,7 @@ const DELAY_REPAY_THRESHOLD_MINUTES = 15;
 let railDaysBack = 3; // how far back the day list currently scrolls; grows via "Show earlier days"
 const RAIL_DAYS_BACK_STEP = 7;
 const RAIL_MAX_DAYS_BACK = 28; // matches Avanti's Delay Repay claim deadline
-let railTrains = []; // [{ key, direction: 'AM'|'PM', fromLoc, toLoc, time, label, optional }]
+let railTrains = []; // [{ key, direction: 'AM'|'PM', fromLoc, toLoc, time, label }]
 let railPerfCache = {}; // { "YYYY-MM-DD": { trainKey: { delayMinutes, onTime } } }
 let railSyncInProgress = false;
 
@@ -842,11 +834,11 @@ let railSyncInProgress = false;
 })();
 
 const DEFAULT_RAIL_TRAINS = [
-  { key: 'am-0808', direction: 'AM', fromLoc: 'CRE', toLoc: 'WGN', time: '0808', label: '08:08', optional: false },
-  { key: 'am-0727', direction: 'AM', fromLoc: 'CRE', toLoc: 'WGN', time: '0727', label: '07:27', optional: true },
-  { key: 'pm-1731', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1731', label: '17:31', optional: false },
-  { key: 'pm-1631', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1631', label: '16:31', optional: true },
-  { key: 'pm-1831', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1831', label: '18:31', optional: true },
+  { key: 'am-0808', direction: 'AM', fromLoc: 'CRE', toLoc: 'WGN', time: '0808', label: '08:08' },
+  { key: 'am-0727', direction: 'AM', fromLoc: 'CRE', toLoc: 'WGN', time: '0727', label: '07:27' },
+  { key: 'pm-1731', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1731', label: '17:31' },
+  { key: 'pm-1631', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1631', label: '16:31' },
+  { key: 'pm-1831', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1831', label: '18:31' },
 ];
 
 // Approximate station coordinates — precise enough for a rough geofencing
@@ -924,7 +916,6 @@ const LIKELY_TRAIN_TIME_WINDOW_MIN = 45; // only bother checking within this man
 let likelyTrainSuggestion = null; // { dateKey, direction, trainKey, label } — transient, not persisted
 let likelyTrainCheckTimer = null;
 let dismissedLikelyTrainKeys = new Set(); // avoids re-suggesting the same match repeatedly in one session
-let loaded = false;
 
 async function loadData(){
   try{
@@ -1058,7 +1049,6 @@ async function loadData(){
     try{ localStorage.setItem('ticket-seed-imported', JSON.stringify(true)); }catch(e){}
   }
 
-  loaded = true;
 }
 
 async function saveComments(){
@@ -1353,7 +1343,7 @@ function getPayPeriodByOffset(baseDate, offset){
 // Finds the next date flagged as a ticket-buy day, searching well beyond
 // the visible day list so it's accurate regardless of scroll position.
 function findNextBuyDateKey(today, todayKeyParam){
-  const buySearchStates = computeStates(addDays(today, 40));
+  const buySearchStates = computeStates(addDays(today, Math.max(MAX_DAYS_AHEAD, PERIOD_LENGTH)));
   let nextBuyKey = null;
   for (const key in buySearchStates){
     if (key >= todayKeyParam && buySearchStates[key].buyFlag){
@@ -1490,7 +1480,7 @@ async function uploadBackupToDrive(token, folderId){
 // folder, deleting anything older right after a new backup succeeds.
 async function pruneOldDriveBackups(token, folderId){
   const headers = { 'Authorization': `Bearer ${token}` };
-  const query = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+  const query = encodeURIComponent(`'${folderId}' in parents and trashed=false and name contains 'ticket-tracker-backup-'`);
   const listResp = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&orderBy=createdTime desc&fields=files(id,name,createdTime)`, { headers });
   if (!listResp.ok) return;
   const listData = await listResp.json();
@@ -1573,6 +1563,7 @@ async function syncGoogleCalendarEvent(dateKey){
       method = 'created';
     }
     gcalPendingSync = false;
+    gcalLastSyncFailed = false;
     await saveGcalPendingSync();
     return { ok: true, method, eventId: gcalEventId, dateKey };
   }catch(e){
@@ -1720,8 +1711,6 @@ function getRange(centerDate, before, after){
 
 let state = {
   today: new Date(),
-  editingKey: null,
-  showRecalibrate: false,
   daysAhead: 13,
   activeTab: 'today', // drives which bottom-nav icon is highlighted
 };
@@ -1731,6 +1720,14 @@ const DAYS_AHEAD_STEP = 14;
 // Closes any currently-open modal sheet — used so tapping a different
 // bottom-nav tab swaps screens cleanly rather than stacking them.
 function closeAllModals(){
+  // A plain .remove() below would rip out train-progress's DOM node
+  // without going through its own cleanup — leaving its refresh timer
+  // and visibility listener running invisibly in the background. Give it
+  // a chance to close itself properly first.
+  if (activeTrainProgressCleanup){
+    activeTrainProgressCleanup();
+    activeTrainProgressCleanup = null;
+  }
   document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
 }
 
@@ -2520,11 +2517,13 @@ function openDayReturnPriceEditor(){
 }
 
 const BACKUP_KEYS = [
-  'bank-holidays-cache','gcal-enabled','gcal-event-id','gcal-pending-sync',
-  'preferred-google-email','rail-perf-cache','rail-trains','ticket-comments',
-  'ticket-day-return-price','ticket-dismissed-months','ticket-last-notified-buy-key',
-  'ticket-last-price','ticket-parking-cost','ticket-period-start','ticket-purchases',
-  'ticket-seed-imported','ticket-travel-overrides','drive-backup-enabled','drive-backup-folder-id'
+  'bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
+  'drive-backup-enabled','drive-backup-folder-id','gcal-enabled','gcal-event-id',
+  'gcal-pending-sync','preferred-google-email','rail-perf-cache','rail-trains',
+  'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
+  'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
+  'ticket-period-start','ticket-purchases','ticket-seed-imported','ticket-travel-overrides',
+  'tracked-trains','tracked-trains-last-day'
 ];
 
 function exportBackup(){
@@ -2630,7 +2629,13 @@ function openBackupRestore(){
       if (!confirm('This will replace all current app data with the contents of this backup. Continue?')){
         return;
       }
-      for (const key in parsed.data){
+      // A restore is a replacement, not a merge. Clear known app data first
+      // so keys that existed only in the current device cannot survive the restore.
+      BACKUP_KEYS.forEach(key => {
+        try{ localStorage.removeItem(key); }catch(err){ /* ignore individual key failures */ }
+      });
+      for (const key of BACKUP_KEYS){
+        if (!Object.prototype.hasOwnProperty.call(parsed.data, key)) continue;
         try{ localStorage.setItem(key, parsed.data[key]); }catch(err){ /* ignore individual key failures */ }
       }
       status.textContent = 'Restored — reloading…';
@@ -2707,15 +2712,40 @@ async function fetchLiveBoards(){
 // has the service, regardless of how far past its departure station
 // the train has travelled.
 async function fetchServiceDetails(serviceId){
-  const resp = await fetch(DARWIN_WORKER_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ queries: [{ type: 'serviceDetails', serviceId }] })
-  });
-  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
+  let resp;
+  try{
+    resp = await fetch(DARWIN_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queries: [{ type: 'serviceDetails', serviceId }] })
+    });
+  }catch(networkErr){
+    // The fetch itself failed — no connectivity, DNS, Worker unreachable.
+    // This says nothing about whether the service itself still exists,
+    // so it's always transient.
+    const err = new Error(`Network error contacting Darwin: ${networkErr.message}`);
+    err.transient = true;
+    throw err;
+  }
+  if (!resp.ok){
+    // An HTTP-level failure from the Worker (rate limit, gateway error,
+    // etc.) — a server-side hiccup, not evidence the service is gone.
+    const err = new Error(`Darwin request failed: ${resp.status}`);
+    err.transient = true;
+    throw err;
+  }
   const data = await resp.json();
   const r = (data.results || [])[0];
-  if (!r || !r.ok || !r.data) throw new Error((r && (r.reason || `status ${r.status}`)) || 'No service data returned — this train may no longer be tracked by Darwin');
+  if (!r || !r.ok || !r.data){
+    // A specific reason from the Worker means Darwin was actually
+    // reached and gave a definitive answer about this service — the one
+    // case we can be reasonably confident means it's genuinely gone.
+    // Anything else (empty/malformed response) is treated as transient,
+    // since we can't actually tell what happened.
+    const err = new Error((r && (r.reason || `status ${r.status}`)) || 'No service data returned — this train may no longer be tracked by Darwin');
+    err.transient = !(r && r.reason);
+    throw err;
+  }
   return r.data;
 }
 
@@ -2951,19 +2981,43 @@ function openTrackedTrains(){
       row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:var(--ink-dim);">Loading…</span>`;
       try{
         const service = await fetchServiceDetails(serviceId);
-        document.body.removeChild(overlay);
+        // The user may have already closed this screen while that
+        // request was in flight — removeChild on an already-removed
+        // node throws, which would otherwise fall into the catch below
+        // and incorrectly treat a successful fetch as a failure,
+        // deleting a perfectly valid tracked train in the process.
+        if (!overlay.isConnected) return;
+        overlay.remove();
         openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
       }catch(e){
+        if (e.transient){
+          // A network or server hiccup tells us nothing about whether
+          // this train is still genuinely trackable — keep it in the
+          // list untouched and just let the row go back to being
+          // tappable, so the user can simply try again.
+          if (!overlay.isConnected) return;
+          row.style.opacity = '1';
+          row.style.pointerEvents = '';
+          row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:#ff8b7e; font-size:12px;">Couldn't reach Darwin — tap to try again ›</span>`;
+          return;
+        }
+        // Darwin gave a definitive answer that this service is gone —
+        // this part is real regardless of whether the user is still
+        // looking at this screen, so it happens unconditionally.
+        trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
+        await saveTrackedTrains();
+        // But showing a message and popping the list back open should
+        // only happen if the user is still actually here to see it.
+        if (!overlay.isConnected) return;
         // No blocking native alert, and no leaving a dead entry sitting
         // in the list — show a brief inline explanation in the app's own
         // style, then remove it and refresh the screen.
         row.style.opacity = '1';
         row.style.pointerEvents = 'none';
         row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:#ff8b7e; font-size:12px;">Unavailable — removing…</span>`;
-        trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
-        await saveTrackedTrains();
         setTimeout(() => {
-          document.body.removeChild(overlay);
+          if (!overlay.isConnected) return; // user's moved on since — don't force this screen back open
+          overlay.remove();
           openTrackedTrains();
         }, 1200);
       }
@@ -3338,11 +3392,28 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
 
 function openTrainProgress(train, service){
+  // See activeTrainProgressCleanup above — never let two of these run
+  // at once, since they share element IDs and each runs its own timer.
+  if (activeTrainProgressCleanup){
+    activeTrainProgressCleanup();
+    activeTrainProgressCleanup = null;
+  }
   let refreshTimer = null;
   let showRawDebug = false; // off by default — a temporary diagnostic toggle, not for normal use
   let showAllReasons = false; // manual override for the staleness-suppression heuristic, in case it's wrong on a given service
   let lastKnownService = service; // lets the debug toggle rebuild instantly without a fresh network call
-  let isOffline = false; // true when the last refresh attempt failed — drives the red banner and the pulsing blob
+  // Cleanup (below) clears the interval, but that alone can't cancel an
+  // already-in-flight doRefresh() that's mid-await — without this flag,
+  // that stale call could still resolve afterward and write into
+  // whatever DOM now has these element IDs, which might belong to a
+  // different train's screen by then. Every doRefresh() checks this
+  // immediately after each await, before touching anything.
+  let instanceActive = true;
+  // A second, independent guard: an interval tick and a visibility-wake
+  // tick can otherwise overlap and race each other, with whichever
+  // network response arrives second silently overwriting the other,
+  // regardless of which was actually more recent.
+  let refreshInFlight = false;
   const serviceId = train.serviceId || service.serviceID || null;
 
   // Remember this journey so it can still be found and watched later,
@@ -3392,9 +3463,9 @@ function openTrainProgress(train, service){
   // extra lines, so a fixed-pixel-per-row calculation drifts further and
   // further off the true position the more affected rows there are.
   function positionBlobAndLine(lastPassedIdx, fraction, scrollBehavior){
-    const rowsContainer = document.getElementById('train-progress-rows');
-    const lineEl = document.getElementById('train-progress-line');
-    const blobEl = document.getElementById('train-progress-blob');
+    const rowsContainer = overlay.querySelector('#train-progress-rows');
+    const lineEl = overlay.querySelector('#train-progress-line');
+    const blobEl = overlay.querySelector('#train-progress-blob');
     if (!rowsContainer || !lineEl || !blobEl) return;
     const rows = rowsContainer.querySelectorAll('[data-idx]');
     if (!rows.length) return;
@@ -3423,7 +3494,7 @@ function openTrainProgress(train, service){
     // reaches the very end of a long calling-point list. Clamped to the
     // container's real scrollable range, so it naturally does the best
     // it can near either end rather than trying to overscroll.
-    const scrollContainer = document.getElementById('train-progress-scroll');
+    const scrollContainer = overlay.querySelector('#train-progress-scroll');
     if (scrollContainer && scrollContainer.clientHeight > 0){
       const target = Math.max(0, Math.min(
         blobCenter - scrollContainer.clientHeight / 2,
@@ -3436,12 +3507,12 @@ function openTrainProgress(train, service){
 
   function rebuildDisplay(){
     const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
-    const rowsEl = document.getElementById('train-progress-rows');
-    const summaryEl = document.getElementById('train-progress-summary');
+    const rowsEl = overlay.querySelector('#train-progress-rows');
+    const summaryEl = overlay.querySelector('#train-progress-summary');
     if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
     if (summaryEl) summaryEl.innerHTML = rebuilt.summaryHtml;
     positionBlobAndLine(rebuilt.lastPassedIdx, rebuilt.fraction, 'auto');
-    const reasonToggleWrap = document.getElementById('train-progress-reason-toggle-wrap');
+    const reasonToggleWrap = overlay.querySelector('#train-progress-reason-toggle-wrap');
     const reasonToggle = document.getElementById('show-all-reasons-toggle');
     if (reasonToggleWrap) reasonToggleWrap.style.display = rebuilt.anyReasonSuppressed ? '' : 'none';
     if (reasonToggle) reasonToggle.textContent = showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway';
@@ -3469,7 +3540,7 @@ function openTrainProgress(train, service){
   // refresh interval — a pure visual indicator of "time until the next
   // check", not tied to a ticking JS interval of its own.
   function resetRefreshBar(){
-    const fill = document.getElementById('train-progress-refresh-fill');
+    const fill = overlay.querySelector('#train-progress-refresh-fill');
     if (!fill) return;
     fill.style.transition = 'none';
     fill.style.width = '0%';
@@ -3480,9 +3551,14 @@ function openTrainProgress(train, service){
   resetRefreshBar();
 
   async function doRefresh(){
+    // An interval tick and a visibility-wake tick can otherwise overlap;
+    // if one's already running, just let it finish rather than starting
+    // a second one that could resolve out of order.
+    if (refreshInFlight) return;
+    refreshInFlight = true;
     resetRefreshBar();
     const stamp = () => new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-    const lastCheckEl = document.getElementById('train-progress-last-check');
+    const lastCheckEl = overlay.querySelector('#train-progress-last-check');
     try{
       let freshService = null;
       if (serviceId){
@@ -3497,15 +3573,21 @@ function openTrainProgress(train, service){
         const wanted = `${train.time.slice(0,2)}:${train.time.slice(2,4)}`;
         freshService = board.find(s => s.std === wanted) || null;
       }
+      // This screen may have been closed (or superseded by a different
+      // train's screen reusing the same element IDs) while the request
+      // above was in flight — clearing the interval doesn't cancel an
+      // already-started await, so this is the check that actually
+      // prevents a stale response from writing into the wrong screen.
+      if (!instanceActive) return;
       if (freshService && !freshService.isCancelled){
         lastKnownService = freshService;
         const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons);
-        const rowsEl = document.getElementById('train-progress-rows');
-        const summaryEl = document.getElementById('train-progress-summary');
-        const pillEl = document.getElementById('train-progress-reverse-pill');
-        const offlineBanner = document.getElementById('train-progress-offline-banner');
-        const blobEl = document.getElementById('train-progress-blob');
-        const reasonToggleWrap = document.getElementById('train-progress-reason-toggle-wrap');
+        const rowsEl = overlay.querySelector('#train-progress-rows');
+        const summaryEl = overlay.querySelector('#train-progress-summary');
+        const pillEl = overlay.querySelector('#train-progress-reverse-pill');
+        const offlineBanner = overlay.querySelector('#train-progress-offline-banner');
+        const blobEl = overlay.querySelector('#train-progress-blob');
+        const reasonToggleWrap = overlay.querySelector('#train-progress-reason-toggle-wrap');
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
         positionBlobAndLine(fresh.lastPassedIdx, fresh.fraction);
@@ -3513,13 +3595,13 @@ function openTrainProgress(train, service){
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
         if (reasonToggleWrap) reasonToggleWrap.style.display = fresh.anyReasonSuppressed ? '' : 'none';
         // Connection's back — drop out of the offline/estimated state.
-        isOffline = false;
         if (offlineBanner) offlineBanner.style.display = 'none';
         if (blobEl) blobEl.classList.remove('blob-pulsing');
       } else if (lastCheckEl){
         lastCheckEl.textContent = `Checked ${stamp()} — no data returned`;
       }
     }catch(e){
+      if (!instanceActive) return;
       // Leave the last-known view showing rather than clearing it, but
       // make the failure visible instead of silently doing nothing — a
       // silent failure here previously looked identical to "not
@@ -3533,19 +3615,20 @@ function openTrainProgress(train, service){
       // point times compared against the real current clock — re-run it
       // against the last data we did get, so the blob keeps creeping
       // forward on a reasonable assumption rather than sitting frozen.
-      isOffline = true;
       const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
-      const rowsEl = document.getElementById('train-progress-rows');
-      const summaryEl = document.getElementById('train-progress-summary');
-      const offlineBanner = document.getElementById('train-progress-offline-banner');
-      const blobEl = document.getElementById('train-progress-blob');
-      const reasonToggleWrap = document.getElementById('train-progress-reason-toggle-wrap');
+      const rowsEl = overlay.querySelector('#train-progress-rows');
+      const summaryEl = overlay.querySelector('#train-progress-summary');
+      const offlineBanner = overlay.querySelector('#train-progress-offline-banner');
+      const blobEl = overlay.querySelector('#train-progress-blob');
+      const reasonToggleWrap = overlay.querySelector('#train-progress-reason-toggle-wrap');
       if (rowsEl) rowsEl.innerHTML = stale.rowsHtml;
       if (summaryEl) summaryEl.innerHTML = stale.summaryHtml;
       positionBlobAndLine(stale.lastPassedIdx, stale.fraction);
       if (reasonToggleWrap) reasonToggleWrap.style.display = stale.anyReasonSuppressed ? '' : 'none';
       if (offlineBanner) offlineBanner.style.display = 'block';
       if (blobEl) blobEl.classList.add('blob-pulsing');
+    }finally{
+      refreshInFlight = false;
     }
   }
 
@@ -3559,25 +3642,34 @@ function openTrainProgress(train, service){
   }
   document.addEventListener('visibilitychange', onVisible);
 
-  function closeAndStopRefresh(){
+  function closeAndStopRefresh(silent){
+    instanceActive = false;
     if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
     document.removeEventListener('visibilitychange', onVisible);
-    document.body.removeChild(overlay);
+    if (overlay.isConnected) overlay.remove();
+    if (activeTrainProgressCleanup === forceClose) activeTrainProgressCleanup = null;
     // If this was opened from Tracked Trains (the only place that passes
     // a serviceId directly on the train object), closing should return
-    // there rather than just dropping back to whatever was underneath.
-    if (train.serviceId) openTrackedTrains();
+    // there rather than just dropping back to whatever was underneath —
+    // but only on a real user-initiated close, not when this instance is
+    // being silently torn down to make way for a newly-opened one.
+    if (!silent && train.serviceId) openTrackedTrains();
   }
-  document.getElementById('train-progress-close-btn').addEventListener('click', closeAndStopRefresh);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAndStopRefresh(); });
+  function forceClose(){ closeAndStopRefresh(true); }
+  activeTrainProgressCleanup = forceClose;
+  overlay.querySelector('#train-progress-close-btn').addEventListener('click', () => closeAndStopRefresh(false));
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAndStopRefresh(false); });
 }
 
 function openRailConfig(){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  // Edit a private copy. Add/remove/time changes should not affect the live
+  // configuration until Save is pressed; Cancel must genuinely cancel.
+  let draftTrains = railTrains.map(t => ({ ...t }));
 
   function buildSectionHtml(direction, title, fromLoc, toLoc){
-    const trains = railTrains.filter(t => t.direction === direction).sort((a, b) => a.time.localeCompare(b.time));
+    const trains = draftTrains.filter(t => t.direction === direction).sort((a, b) => a.time.localeCompare(b.time));
     const rows = trains.map(t => `
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
         <input type="time" class="rail-time-input" data-key="${t.key}" value="${t.time.slice(0,2)}:${t.time.slice(2,4)}" style="flex:1;" />
@@ -3590,55 +3682,77 @@ function openRailConfig(){
     `;
   }
 
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Usual trains</h3>
-      <div class="sub">Used to check delay repay eligibility on your travel days. Add every time you sometimes catch, not just your default.</div>
-      ${buildSectionHtml('AM', 'Morning', 'CRE', 'WGN')}
-      ${buildSectionHtml('PM', 'Evening', 'WGN', 'CRE')}
-      <button class="save-btn" id="rail-config-save">Save</button>
-      <div class="modal-close" id="rail-config-close">Cancel</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+  function renderConfig(){
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3>Usual trains</h3>
+        <div class="sub">Used to check delay repay eligibility on your travel days. Add every time you sometimes catch, not just your default.</div>
+        ${buildSectionHtml('AM', 'Morning', 'CRE', 'WGN')}
+        ${buildSectionHtml('PM', 'Evening', 'WGN', 'CRE')}
+        <button class="save-btn" id="rail-config-save">Save</button>
+        <div class="modal-close" id="rail-config-close">Cancel</div>
+      </div>
+    `;
+
+    overlay.querySelector('#rail-add-AM').addEventListener('click', () => addTrain('AM'));
+    overlay.querySelector('#rail-add-PM').addEventListener('click', () => addTrain('PM'));
+
+    overlay.querySelectorAll('[data-remove-key]').forEach(el => {
+      el.addEventListener('click', () => {
+        draftTrains = draftTrains.filter(t => t.key !== el.dataset.removeKey);
+        renderConfig();
+      });
+    });
+
+    overlay.querySelector('#rail-config-save').addEventListener('click', async () => {
+      overlay.querySelectorAll('.rail-time-input').forEach(input => {
+        const train = draftTrains.find(t => t.key === input.dataset.key);
+        if (train && input.value){
+          train.time = input.value.replace(':', '');
+          train.label = input.value;
+        }
+      });
+
+      // Invalidate cached performance for any train whose configuration
+      // changed. The sync routine will then fetch the current time/route data.
+      const oldByKey = Object.fromEntries(railTrains.map(t => [t.key, t]));
+      const newByKey = Object.fromEntries(draftTrains.map(t => [t.key, t]));
+      const changedKeys = new Set();
+      for (const key of new Set([...Object.keys(oldByKey), ...Object.keys(newByKey)])){
+        const oldTrain = oldByKey[key];
+        const newTrain = newByKey[key];
+        if (!oldTrain || !newTrain || oldTrain.time !== newTrain.time || oldTrain.fromLoc !== newTrain.fromLoc || oldTrain.toLoc !== newTrain.toLoc){
+          changedKeys.add(key);
+        }
+      }
+      if (changedKeys.size){
+        for (const dateKey in railPerfCache){
+          for (const key of changedKeys) delete railPerfCache[dateKey][key];
+          if (Object.keys(railPerfCache[dateKey]).length === 0) delete railPerfCache[dateKey];
+        }
+        await saveRailPerfCache();
+      }
+
+      railTrains = draftTrains;
+      await saveRailTrains();
+      overlay.remove();
+      railSyncMissingDates();
+      render();
+    });
+    overlay.querySelector('#rail-config-close').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
 
   function addTrain(direction){
     const fromLoc = direction === 'AM' ? 'CRE' : 'WGN';
     const toLoc = direction === 'AM' ? 'WGN' : 'CRE';
     const key = `${direction.toLowerCase()}-${Date.now()}`;
-    railTrains.push({ key, direction, fromLoc, toLoc, time: direction === 'AM' ? '0800' : '1700', label: direction === 'AM' ? '08:00' : '17:00', optional: true });
-    document.body.removeChild(overlay);
-    openRailConfig(); // rebuild the modal fresh with the new row
+    draftTrains.push({ key, direction, fromLoc, toLoc, time: direction === 'AM' ? '0800' : '1700', label: direction === 'AM' ? '08:00' : '17:00' });
+    renderConfig();
   }
 
-  document.getElementById('rail-add-AM').addEventListener('click', () => addTrain('AM'));
-  document.getElementById('rail-add-PM').addEventListener('click', () => addTrain('PM'));
-
-  overlay.querySelectorAll('[data-remove-key]').forEach(el => {
-    el.addEventListener('click', () => {
-      railTrains = railTrains.filter(t => t.key !== el.dataset.removeKey);
-      document.body.removeChild(overlay);
-      openRailConfig();
-    });
-  });
-
-  document.getElementById('rail-config-save').addEventListener('click', async () => {
-    overlay.querySelectorAll('.rail-time-input').forEach(input => {
-      const train = railTrains.find(t => t.key === input.dataset.key);
-      if (train && input.value){
-        train.time = input.value.replace(':', '');
-        train.label = input.value;
-      }
-    });
-    await saveRailTrains();
-    document.body.removeChild(overlay);
-    railSyncMissingDates(); // new/changed trains mean previously-cached days may now be incomplete
-    render();
-  });
-  document.getElementById('rail-config-close').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.body.appendChild(overlay);
+  renderConfig();
 }
 
 function railDetailRows(trains, dayPerf){
@@ -4017,7 +4131,7 @@ function openManagePurchases(){
     const dateVal = document.getElementById('backfill-date-input').value;
     const costVal = parseFloat(document.getElementById('backfill-cost-input').value);
     if (dateVal && !isNaN(costVal) && costVal >= 0){
-      purchases = purchases.filter(p => p.date !== dateVal);
+      purchases = purchases.filter(p => !(p.date === dateVal && (p.type || undefined) !== 'single'));
       purchases.push({ date: dateVal, cost: costVal });
       purchases.sort((a, b) => a.date < b.date ? -1 : 1);
       await savePurchases();
@@ -4081,7 +4195,7 @@ const STAT_DEFINITIONS = [
     id: 'ticket-wastage', section: 'Tickets', label: 'Average unused journeys per ticket',
     compute: () => {
       if (purchases.length < 2) return 'Not enough history yet';
-      const sorted = [...purchases].sort((a,b) => a.date < b.date ? -1 : 1);
+      const sorted = purchases.filter(p => (p.type || undefined) !== 'single').sort((a,b) => a.date < b.date ? -1 : 1);
       const todayKeyLocal = fmtKey(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()));
       let totalUnused = 0, periodsCounted = 0;
       for (let i = 0; i < sorted.length - 1; i++){
@@ -4306,7 +4420,7 @@ function openBuyScreen(defaultType){
       periodStart = val;
       await savePeriodStart();
       if (!isNaN(costVal) && costVal >= 0){
-        purchases = purchases.filter(p => p.date !== val);
+        purchases = purchases.filter(p => !(p.date === val && (p.type || undefined) !== 'single'));
         purchases.push({ date: val, cost: costVal });
         purchases.sort((a, b) => a.date < b.date ? -1 : 1);
         lastKnownPrice = costVal;
