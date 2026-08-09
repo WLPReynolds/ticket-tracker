@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-09.07:14'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-09.16:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2996,7 +2996,10 @@ function openTrackedTrains(){
       const ageLabel = ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin/60)} hr ago`;
       return `<div class="rail-detail-row" data-service-id="${t.serviceId}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
         <span style="font-weight:600;">${t.label}</span>
-        <span style="color:var(--ink-dim);">Added ${ageLabel} ›</span>
+        <span style="display:flex; align-items:center; gap:12px;">
+          <span style="color:var(--ink-dim);">Added ${ageLabel} ›</span>
+          <span class="tracked-remove-btn" data-remove-service-id="${t.serviceId}" style="color:#ff8b7e; font-size:12px; text-decoration:underline; padding:4px 2px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Remove</span>
+        </span>
       </div>`;
     }).join('');
   }
@@ -3004,68 +3007,87 @@ function openTrackedTrains(){
   overlay.innerHTML = `
     <div class="modal">
       <h3>Tracked trains</h3>
+      <div class="sub">Not showing up? You can remove any entry manually — no need to wait for it to sort itself out.</div>
       <div id="tracked-list">${buildListHtml()}</div>
       <div class="modal-close" id="tracked-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
 
-  document.querySelectorAll('#tracked-list [data-service-id]').forEach(row => {
-    row.addEventListener('click', async () => {
-      const serviceId = row.dataset.serviceId;
-      const tracked = trackedTrains.find(t => t.serviceId === serviceId);
-      if (!tracked) return;
-      // Immediate visual feedback before the network call, so there's no
-      // dead-time gap between the tap and something visibly happening —
-      // a gap here was suspected of letting Android treat a normal tap
-      // as a stuck/long press and trigger its own screen-search gesture.
-      row.style.opacity = '0.5';
-      row.style.pointerEvents = 'none';
-      row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:var(--ink-dim);">Loading…</span>`;
-      try{
-        const service = await fetchServiceDetails(serviceId);
-        // The user may have already closed this screen while that
-        // request was in flight — removeChild on an already-removed
-        // node throws, which would otherwise fall into the catch below
-        // and incorrectly treat a successful fetch as a failure,
-        // deleting a perfectly valid tracked train in the process.
-        if (!overlay.isConnected) return;
-        overlay.remove();
-        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
-      }catch(e){
-        if (e.transient){
-          // A network or server hiccup tells us nothing about whether
-          // this train is still genuinely trackable — keep it in the
-          // list untouched and just let the row go back to being
-          // tappable, so the user can simply try again.
+  function wireList(){
+    document.querySelectorAll('#tracked-list [data-service-id]').forEach(row => {
+      row.addEventListener('click', async () => {
+        const serviceId = row.dataset.serviceId;
+        const tracked = trackedTrains.find(t => t.serviceId === serviceId);
+        if (!tracked) return;
+        // Immediate visual feedback before the network call, so there's no
+        // dead-time gap between the tap and something visibly happening —
+        // a gap here was suspected of letting Android treat a normal tap
+        // as a stuck/long press and trigger its own screen-search gesture.
+        row.style.opacity = '0.5';
+        row.style.pointerEvents = 'none';
+        row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:var(--ink-dim);">Loading…</span>`;
+        try{
+          const service = await fetchServiceDetails(serviceId);
+          // The user may have already closed this screen while that
+          // request was in flight — removeChild on an already-removed
+          // node throws, which would otherwise fall into the catch below
+          // and incorrectly treat a successful fetch as a failure,
+          // deleting a perfectly valid tracked train in the process.
           if (!overlay.isConnected) return;
+          overlay.remove();
+          openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
+        }catch(e){
+          if (e.transient){
+            // A network or server hiccup tells us nothing about whether
+            // this train is still genuinely trackable — keep it in the
+            // list untouched and just let the row go back to being
+            // tappable, so the user can simply try again. If it's
+            // actually gone for good rather than a real blip, the
+            // Remove link on the row is there so they're never stuck
+            // waiting on a retry that will never succeed.
+            if (!overlay.isConnected) return;
+            row.style.opacity = '1';
+            row.style.pointerEvents = '';
+            row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="display:flex; align-items:center; gap:12px;"><span style="color:#ff8b7e; font-size:12px;">Couldn't reach Darwin — tap to try again ›</span><span class="tracked-remove-btn" data-remove-service-id="${serviceId}" style="color:#ff8b7e; font-size:12px; text-decoration:underline; padding:4px 2px;">Remove</span></span>`;
+            wireList();
+            return;
+          }
+          // Darwin gave a definitive answer that this service is gone —
+          // this part is real regardless of whether the user is still
+          // looking at this screen, so it happens unconditionally.
+          trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
+          await saveTrackedTrains();
+          // But showing a message and popping the list back open should
+          // only happen if the user is still actually here to see it.
+          if (!overlay.isConnected) return;
+          // No blocking native alert, and no leaving a dead entry sitting
+          // in the list — show a brief inline explanation in the app's own
+          // style, then remove it and refresh the screen.
           row.style.opacity = '1';
-          row.style.pointerEvents = '';
-          row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:#ff8b7e; font-size:12px;">Couldn't reach Darwin — tap to try again ›</span>`;
-          return;
+          row.style.pointerEvents = 'none';
+          row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:#ff8b7e; font-size:12px;">Unavailable — removing…</span>`;
+          setTimeout(() => {
+            if (!overlay.isConnected) return; // user's moved on since — don't force this screen back open
+            overlay.remove();
+            openTrackedTrains();
+          }, 1200);
         }
-        // Darwin gave a definitive answer that this service is gone —
-        // this part is real regardless of whether the user is still
-        // looking at this screen, so it happens unconditionally.
+      });
+    });
+    document.querySelectorAll('#tracked-list [data-remove-service-id]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation(); // don't also trigger the row's own tap-to-view/retry
+        const serviceId = btn.dataset.removeServiceId;
         trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
         await saveTrackedTrains();
-        // But showing a message and popping the list back open should
-        // only happen if the user is still actually here to see it.
-        if (!overlay.isConnected) return;
-        // No blocking native alert, and no leaving a dead entry sitting
-        // in the list — show a brief inline explanation in the app's own
-        // style, then remove it and refresh the screen.
-        row.style.opacity = '1';
-        row.style.pointerEvents = 'none';
-        row.innerHTML = `<span style="font-weight:600;">${escapeHtml(tracked.label)}</span><span style="color:#ff8b7e; font-size:12px;">Unavailable — removing…</span>`;
-        setTimeout(() => {
-          if (!overlay.isConnected) return; // user's moved on since — don't force this screen back open
-          overlay.remove();
-          openTrackedTrains();
-        }, 1200);
-      }
+        const listEl = document.getElementById('tracked-list');
+        if (listEl) listEl.innerHTML = buildListHtml();
+        wireList();
+      });
     });
-  });
+  }
+  wireList();
 
   document.getElementById('tracked-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
