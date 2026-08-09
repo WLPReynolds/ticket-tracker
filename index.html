@@ -721,7 +721,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-09.06:02'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-09.06:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1813,6 +1813,9 @@ function render(){
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'import-history-link', label: 'Import historical data', weight: 100 });
   menuItems.push({ id: 'debug-mode-link', label: debugModeEnabled ? 'Debug mode: On' : 'Debug mode: Off', weight: 110 });
+  if (debugModeEnabled){
+    menuItems.push({ id: 'debug-track-any-link', label: 'Track any train (debug)', weight: 111 });
+  }
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
 
@@ -2228,6 +2231,8 @@ function render(){
     menuOpen = false;
     render();
   });
+  const debugTrackAnyLink = document.getElementById('debug-track-any-link');
+  if (debugTrackAnyLink) debugTrackAnyLink.addEventListener('click', () => { menuOpen = false; render(); openDebugTrainSearch(); });
   const parkingCostLink = document.getElementById('parking-cost-link');
   if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; render(); openParkingCostEditor(); });
 
@@ -2707,6 +2712,24 @@ async function fetchLiveBoards(){
   return boards;
 }
 
+// Same idea as fetchLiveBoards, but for an arbitrary station pair rather
+// than the ones in railTrains — used only by the debug "track any train"
+// tool, so testing tracking/refresh behaviour isn't limited to whichever
+// of the user's own routes happen to have a live service running.
+async function fetchDebugBoard(fromCrs, toCrs){
+  const query = toCrs ? { crs: fromCrs, filterCrs: toCrs, filterType: 'to' } : { crs: fromCrs };
+  const resp = await fetch(DARWIN_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queries: [query] })
+  });
+  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
+  const data = await resp.json();
+  const r = (data.results || [])[0];
+  if (!r || !r.ok) throw new Error((r && r.reason) || 'No board data returned');
+  return (r.data && r.data.trainServices) || [];
+}
+
 // Tracks one specific train by its serviceID, independent of any
 // station's rolling board window — works for as long as Darwin still
 // has the service, regardless of how far past its departure station
@@ -3028,6 +3051,90 @@ function openTrackedTrains(){
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+// Debug-only tool: look up a live departure board for any station pair,
+// not just the user's own configured routes, and track any result from
+// it — for exercising tracking/refresh behaviour when none of the usual
+// Crewe/Wigan services happen to be running. Uses the exact same
+// fetchServiceDetails + openTrainProgress flow as every other entry
+// point, so it's testing the real code path, not a separate one.
+function openDebugTrainSearch(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay modal-overlay-nav-safe';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Track any train (debug)</h3>
+      <div class="sub">For testing only. Pulls a real live board for any station, so tracking features can be exercised even when none of your usual routes have a train running.</div>
+      <div style="display:flex; gap:8px; margin-bottom:10px;">
+        <input type="text" id="debug-from-crs" placeholder="From (e.g. EUS)" maxlength="3" style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); text-transform:uppercase;" />
+        <input type="text" id="debug-to-crs" placeholder="To (optional)" maxlength="3" style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); text-transform:uppercase;" />
+      </div>
+      <button class="save-btn" id="debug-search-btn">Search</button>
+      <div id="debug-search-results" style="margin-top:14px;"></div>
+      <div class="modal-close" id="debug-search-close" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const resultsEl = document.getElementById('debug-search-results');
+
+  function wireResultRows(){
+    overlay.querySelectorAll('[data-debug-service-id]').forEach(row => {
+      row.addEventListener('click', async () => {
+        const debugServiceId = row.dataset.debugServiceId;
+        const label = row.dataset.debugLabel;
+        const fromLoc = row.dataset.debugFrom;
+        row.style.opacity = '0.5';
+        row.style.pointerEvents = 'none';
+        try{
+          const service = await fetchServiceDetails(debugServiceId);
+          if (!overlay.isConnected) return;
+          overlay.remove();
+          openTrainProgress({ label, fromLoc, serviceId: debugServiceId }, service);
+        }catch(e){
+          if (!overlay.isConnected) return;
+          row.style.opacity = '1';
+          row.style.pointerEvents = '';
+          row.innerHTML = `<span style="color:#ff8b7e; font-size:12px;">Couldn't load that one (${escapeHtml(e.message)}) — tap another</span>`;
+        }
+      });
+    });
+  }
+
+  document.getElementById('debug-search-btn').addEventListener('click', async () => {
+    const fromCrs = document.getElementById('debug-from-crs').value.trim().toUpperCase();
+    const toCrs = document.getElementById('debug-to-crs').value.trim().toUpperCase();
+    if (fromCrs.length !== 3){
+      resultsEl.innerHTML = `<div class="sub">Enter a 3-letter station code to search from (e.g. EUS, BHM, GLC).</div>`;
+      return;
+    }
+    resultsEl.innerHTML = `<div class="sub">Searching…</div>`;
+    try{
+      const services = await fetchDebugBoard(fromCrs, toCrs.length === 3 ? toCrs : null);
+      if (services.length === 0){
+        resultsEl.innerHTML = `<div class="sub">No live services found for that station right now.</div>`;
+        return;
+      }
+      resultsEl.innerHTML = services.slice(0, 15).map(s => {
+        const dest = (s.destination && s.destination[0] && s.destination[0].locationName) || '?';
+        const statusText = (!s.etd || s.etd === 'On time') ? 'On time' : s.etd;
+        const label = `${s.std || '?'} ${fromCrs}→${dest}`;
+        return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(label)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+          <span>${s.std || '?'} → ${escapeHtml(dest)}</span>
+          <span style="color:var(--ink-dim);">${escapeHtml(statusText)} ›</span>
+        </div>`;
+      }).join('');
+      wireResultRows();
+    }catch(e){
+      resultsEl.innerHTML = `<div class="sub" style="color:#ff8b7e;">Search failed: ${escapeHtml(e.message)}</div>`;
+    }
+  });
+
+  document.getElementById('debug-search-close').addEventListener('click', () => {
+    if (overlay.isConnected) overlay.remove();
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay && overlay.isConnected) overlay.remove(); });
 }
 
 function openLiveDepartureBoard(){
