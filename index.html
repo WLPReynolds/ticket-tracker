@@ -721,7 +721,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-09.06:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-09.06:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3554,8 +3554,8 @@ function openTrainProgress(train, service){
       </div>
       <div id="train-progress-scroll" style="flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
-          <div id="train-progress-line" style="position:absolute; left:6px; top:0px; width:2px; height:0px; background:var(--line);"></div>
-          <div id="train-progress-blob" style="position:absolute; left:1px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
+          <div id="train-progress-line" style="position:absolute; left:11px; top:0px; width:2px; height:0px; background:var(--line);"></div>
+          <div id="train-progress-blob" style="position:absolute; left:6px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
           <div id="train-progress-rows">${initial.rowsHtml}</div>
         </div>
       </div>
