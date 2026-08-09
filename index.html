@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-09.21:52'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-09.22:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3568,6 +3568,14 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
 
   const rowsHtml = points.map((p, i) => {
     try{
+      // A separator wherever the journey crosses into a new calendar
+      // day — matches National Rail's own presentation. pointDates is
+      // already correctly day-aware (built for the midnight-crossing
+      // fix), so this is just comparing each point's real date to the
+      // one before it; no new date logic needed.
+      const daySeparator = (i > 0 && pointDates[i] && pointDates[i-1] && pointDates[i].toDateString() !== pointDates[i-1].toDateString())
+        ? `<div style="text-align:center; font-size:11.5px; color:var(--ink-dim); padding:8px 0; border-bottom:1px solid var(--line); margin-left:-22px;">${pointDates[i].toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'})}</div>`
+        : '';
       const status = describePointStatus(p.schedTime, p.liveTime, p.isCancelled);
       const nameColor = p.isYourStation ? 'var(--amber)' : 'var(--ink)';
       // The reason text often stays attached even once a point's own
@@ -3614,6 +3622,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
         ? `<div style="font-family:monospace; font-size:10px; color:#6a7a8a; margin-top:2px;">${Object.entries(p.raw).map(([k,v]) => `${k}=${v === undefined || v === null ? '·' : v}`).join('  ')}</div>`
         : '';
       return `
+        ${daySeparator}
         <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
           <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
           <span style="min-width:56px;">${timeHtml}</span>
