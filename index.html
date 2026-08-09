@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-09.18:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-09.21:52'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3286,7 +3286,15 @@ function describePointStatus(schedTime, liveTime, isCancelled){
 
   const schedMins = parseInt(schedTime.slice(0,2),10)*60 + parseInt(schedTime.slice(3,5),10);
   const liveMins = parseInt(liveTime.slice(0,2),10)*60 + parseInt(liveTime.slice(3,5),10);
-  const diff = liveMins - schedMins;
+  let diff = liveMins - schedMins;
+  // Both times are bare clock values with no date attached, so a point
+  // that genuinely crosses midnight (scheduled 23:58, actual 00:01)
+  // produces a huge, nonsensical raw difference. No real single-point
+  // delay or early-running figure is ever going to be anywhere near 12
+  // hours, so treat a difference bigger than that as a midnight wrap and
+  // fold it back to the smallest equivalent difference instead.
+  if (diff > 720) diff -= 1440;
+  else if (diff < -720) diff += 1440;
   if (diff === 0) return { text: 'On time', color: 'var(--good)', minutesLate: 0, minutesEarly: 0 };
   if (diff < 0){
     // Genuinely left ahead of schedule — rare, but worth calling out
@@ -3379,6 +3387,43 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     return (p.liveTime && p.liveTime.includes(':')) ? p.liveTime : p.schedTime;
   }
   const pointDates = points.map(p => liveTimeToDate((bestTime(p) || '').replace(':', ''), now));
+  // The very first point has no earlier point to roll forward from, so it
+  // needs its own inference: a bare clock time could plausibly belong to
+  // yesterday, today, or tomorrow relative to right now — pick whichever
+  // is actually closest. Without this, viewing an overnight service
+  // shortly after midnight would anchor its pre-midnight first point to
+  // tonight (many hours in the future) instead of correctly recognising
+  // it as last night (a few minutes in the past).
+  if (pointDates[0]){
+    const hhmm = (bestTime(points[0]) || '').replace(':', '');
+    if (hhmm.length >= 4){
+      const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
+      if (!isNaN(h) && !isNaN(m)){
+        let best = pointDates[0], bestDiff = Math.abs(best.getTime() - now.getTime());
+        for (const dayOffset of [-1, 1]){
+          const candidate = new Date(now);
+          candidate.setDate(candidate.getDate() + dayOffset);
+          candidate.setHours(h, m, 0, 0);
+          const diff = Math.abs(candidate.getTime() - now.getTime());
+          if (diff < bestDiff){ bestDiff = diff; best = candidate; }
+        }
+        pointDates[0] = best;
+      }
+    }
+  }
+  // A journey can cross midnight partway through (e.g. departs 23:58,
+  // still calling at stations after 00:01 the next day). Every point is
+  // otherwise built against the same calendar day as "now", so an
+  // early-morning point would look like it already happened hours ago
+  // today, rather than genuinely being later tonight — which is exactly
+  // what made an unstarted journey look fully arrived. Points are always
+  // in chronological order, so any date that's not genuinely later than
+  // the one before it must actually belong to the next day.
+  for (let i = 1; i < pointDates.length; i++){
+    if (pointDates[i] && pointDates[i-1] && pointDates[i] <= pointDates[i-1]){
+      pointDates[i] = new Date(pointDates[i].getTime() + 24*60*60*1000);
+    }
+  }
 
   let lastPassedIdx = -1;
   pointDates.forEach((t, i) => { if (t && t <= now) lastPassedIdx = i; });
@@ -3416,7 +3461,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   let primaryReason = null;
   let knownOverallDelay = 0; // the most reliable delay figure we have, in minutes — used both for the summary headline and to infer real times for passed points Darwin only gave a generic "On time" word for
   let anyReasonSuppressed = false; // true if a reason was hidden by the staleness heuristic or the repeat-dedup — drives the "Show all reasons" reveal link
-  let journeyFinished = false; // true once there's genuinely nothing left to poll for — arrived at the booked destination, or terminated early with everything remaining cancelled
+  let journeyFinished = !!service.isCancelled; // true once there's genuinely nothing left to poll for — arrived at the booked destination, terminated early with everything remaining cancelled, or the whole service has been cancelled outright
   if (lastPassedIdx >= 0){
     const last = points[lastPassedIdx];
     const status = describePointStatus(last.schedTime, last.liveTime, last.isCancelled);
@@ -3788,7 +3833,7 @@ function openTrainProgress(train, service){
       // already-started await, so this is the check that actually
       // prevents a stale response from writing into the wrong screen.
       if (!instanceActive) return;
-      if (freshService && !freshService.isCancelled){
+      if (freshService){
         lastKnownService = freshService;
         const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons);
         const rowsEl = overlay.querySelector('#train-progress-rows');
@@ -3854,10 +3899,18 @@ function openTrainProgress(train, service){
         document.removeEventListener('visibilitychange', onVisible);
         const barWrap = overlay.querySelector('#train-progress-refresh-bar-wrap');
         if (barWrap) barWrap.style.display = 'none';
+        if (lastCheckEl) lastCheckEl.style.display = 'none';
       }
     }finally{
       refreshInFlight = false;
     }
+  }
+
+  // Screen locks/backgrounding pause the interval below without "catching
+  // up" missed ticks afterward — so on waking up, force an immediate
+  // refresh rather than potentially waiting up to another full minute.
+  function onVisible(){
+    if (document.visibilityState === 'visible') doRefresh();
   }
 
   if (initial.journeyFinished){
@@ -3867,15 +3920,8 @@ function openTrainProgress(train, service){
     if (initialLastCheckEl) initialLastCheckEl.style.display = 'none';
   } else {
     refreshTimer = setInterval(doRefresh, TRAIN_PROGRESS_REFRESH_MS);
+    document.addEventListener('visibilitychange', onVisible);
   }
-
-  // Screen locks/backgrounding pause the interval above without "catching
-  // up" missed ticks afterward — so on waking up, force an immediate
-  // refresh rather than potentially waiting up to another full minute.
-  function onVisible(){
-    if (document.visibilityState === 'visible' && refreshTimer) doRefresh();
-  }
-  document.addEventListener('visibilitychange', onVisible);
 
   function closeAndStopRefresh(silent){
     instanceActive = false;
