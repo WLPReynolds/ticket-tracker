@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-09.17:34'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-09.18:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3382,6 +3382,19 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
 
   let lastPassedIdx = -1;
   pointDates.forEach((t, i) => { if (t && t <= now) lastPassedIdx = i; });
+  // The comparison above has no concept of "cancelled" — a cancelled
+  // point's own scheduled time is no longer meaningful once the service
+  // never actually reached it, but bestTime() still falls back to it
+  // when there's no real time to use instead. Left alone, this would let
+  // lastPassedIdx keep advancing through every remaining cancelled
+  // point's original slot as real time passes them, eventually landing
+  // on the booked destination even though the train genuinely stopped
+  // much earlier — which would make both the blob position and the
+  // "Terminated at X" summary below name the wrong station. Walk back to
+  // the true last point actually reached before anything else uses this.
+  if (lastPassedIdx >= 0 && points[lastPassedIdx].isCancelled){
+    while (lastPassedIdx > 0 && points[lastPassedIdx].isCancelled) lastPassedIdx--;
+  }
 
   // How far between the last-passed and next-due point we are right now,
   // as a plain fraction of the scheduled gap between them — the same
@@ -3392,7 +3405,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // — this fraction is just "how far between these two points", applied
   // to real measurements by positionBlobAndLine().
   let fraction = 0;
-  if (lastPassedIdx >= 0 && lastPassedIdx < points.length - 1){
+  if (lastPassedIdx >= 0 && lastPassedIdx < points.length - 1 && !points[lastPassedIdx + 1].isCancelled){
     const t1 = pointDates[lastPassedIdx], t2 = pointDates[lastPassedIdx + 1];
     if (t1 && t2 && t2 > t1){
       fraction = Math.max(0, Math.min(1, (now - t1) / (t2 - t1)));
@@ -3403,6 +3416,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   let primaryReason = null;
   let knownOverallDelay = 0; // the most reliable delay figure we have, in minutes — used both for the summary headline and to infer real times for passed points Darwin only gave a generic "On time" word for
   let anyReasonSuppressed = false; // true if a reason was hidden by the staleness heuristic or the repeat-dedup — drives the "Show all reasons" reveal link
+  let journeyFinished = false; // true once there's genuinely nothing left to poll for — arrived at the booked destination, or terminated early with everything remaining cancelled
   if (lastPassedIdx >= 0){
     const last = points[lastPassedIdx];
     const status = describePointStatus(last.schedTime, last.liveTime, last.isCancelled);
@@ -3415,11 +3429,13 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     const terminatedEarly = (remaining.length > 0 && remaining.every(p => p.isCancelled)) || (!afterLast && last.isCancelled);
 
     if (terminatedEarly){
+      journeyFinished = true;
       const finalPoint = points[points.length - 1];
       const locLine = `Terminated at ${last.locationName}`;
       const statusLine = (finalPoint && finalPoint.locationName !== last.locationName) ? `Did not continue to ${finalPoint.locationName}` : '';
       summaryHtml = `<div>${locLine}</div>${statusLine ? `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${statusLine}</div>` : ''}`;
     } else if (!afterLast){
+      journeyFinished = true;
       // Genuinely reached the final booked destination — no "running",
       // the journey's over.
       const arrivalText = status.minutesLate === null ? status.text : (status.minutesLate > 0 ? `${status.minutesLate} min late` : 'On time');
@@ -3570,7 +3586,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     }
   }).join('');
 
-  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed };
+  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished };
 }
 
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
@@ -3629,7 +3645,7 @@ function openTrainProgress(train, service){
       <h3>${train.label} — live progress</h3>
       <div id="train-progress-reverse-pill">${service.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : ''}</div>
       <div class="sub">An estimate based on calling-point times.${debugModeEnabled ? ` <span id="raw-debug-toggle" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Show raw data</span>` : ''}</div>
-      <div style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
+      <div id="train-progress-refresh-bar-wrap" style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
         <div id="train-progress-refresh-fill" style="height:100%; width:0%; background:var(--amber);"></div>
       </div>
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
@@ -3790,6 +3806,16 @@ function openTrainProgress(train, service){
         // Connection's back — drop out of the offline/estimated state.
         if (offlineBanner) offlineBanner.style.display = 'none';
         if (blobEl) blobEl.classList.remove('blob-pulsing');
+        if (fresh.journeyFinished){
+          // Arrived, or terminated early with nothing left ahead that
+          // could ever change — polling further would just be repeatedly
+          // asking Darwin about a service that's permanently done.
+          if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
+          document.removeEventListener('visibilitychange', onVisible);
+          const barWrap = overlay.querySelector('#train-progress-refresh-bar-wrap');
+          if (barWrap) barWrap.style.display = 'none';
+          if (lastCheckEl) lastCheckEl.style.display = 'none';
+        }
       } else if (lastCheckEl){
         lastCheckEl.textContent = `Checked ${stamp()} — no data returned`;
       }
@@ -3820,18 +3846,34 @@ function openTrainProgress(train, service){
       if (reasonToggleWrap) reasonToggleWrap.style.display = stale.anyReasonSuppressed ? '' : 'none';
       if (offlineBanner) offlineBanner.style.display = 'block';
       if (blobEl) blobEl.classList.add('blob-pulsing');
+      if (stale.journeyFinished){
+        // Even the last data we successfully got already showed this
+        // journey was over — no point continuing to retry a connection
+        // just to re-confirm something that was already permanent.
+        if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
+        document.removeEventListener('visibilitychange', onVisible);
+        const barWrap = overlay.querySelector('#train-progress-refresh-bar-wrap');
+        if (barWrap) barWrap.style.display = 'none';
+      }
     }finally{
       refreshInFlight = false;
     }
   }
 
-  refreshTimer = setInterval(doRefresh, TRAIN_PROGRESS_REFRESH_MS);
+  if (initial.journeyFinished){
+    const barWrap = overlay.querySelector('#train-progress-refresh-bar-wrap');
+    if (barWrap) barWrap.style.display = 'none';
+    const initialLastCheckEl = overlay.querySelector('#train-progress-last-check');
+    if (initialLastCheckEl) initialLastCheckEl.style.display = 'none';
+  } else {
+    refreshTimer = setInterval(doRefresh, TRAIN_PROGRESS_REFRESH_MS);
+  }
 
   // Screen locks/backgrounding pause the interval above without "catching
   // up" missed ticks afterward — so on waking up, force an immediate
   // refresh rather than potentially waiting up to another full minute.
   function onVisible(){
-    if (document.visibilityState === 'visible') doRefresh();
+    if (document.visibilityState === 'visible' && refreshTimer) doRefresh();
   }
   document.addEventListener('visibilitychange', onVisible);
 
