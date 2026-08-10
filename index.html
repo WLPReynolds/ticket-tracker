@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.21:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.21:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4219,6 +4219,7 @@ function openTrainProgress(train, service){
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
       <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
       <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:4px;">${initial.summaryHtml}</div>
+      <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); margin-bottom:10px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
       <div id="train-progress-reason-toggle-wrap" style="margin-bottom:10px; ${initial.anyReasonSuppressed ? '' : 'display:none;'}">
         <span id="show-all-reasons-toggle" style="font-size:12px; text-decoration:underline; color:var(--ink-dim); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
       </div>
@@ -4389,6 +4390,7 @@ function openTrainProgress(train, service){
         const rowsEl = overlay.querySelector('#train-progress-rows');
         const summaryEl = overlay.querySelector('#train-progress-summary');
         const pillEl = overlay.querySelector('#train-progress-reverse-pill');
+        const operatorEl = overlay.querySelector('#train-progress-operator');
         const offlineBanner = overlay.querySelector('#train-progress-offline-banner');
         const blobEl = overlay.querySelector('#train-progress-blob');
         const reasonToggleWrap = overlay.querySelector('#train-progress-reason-toggle-wrap');
@@ -4398,6 +4400,7 @@ function openTrainProgress(train, service){
         renderGeneration++;
         applyWeather(fresh.weatherPoints, fresh.lastPassedIdx, fresh.fraction, renderGeneration);
         if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
+        if (operatorEl) operatorEl.textContent = freshService.operator ? `Operator: ${freshService.operator}` : '';
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
         if (reasonToggleWrap) reasonToggleWrap.style.display = fresh.anyReasonSuppressed ? '' : 'none';
         // Connection's back — drop out of the offline/estimated state.
