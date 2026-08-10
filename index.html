@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.19:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.20:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1842,7 +1842,6 @@ function render(){
     { id: 'day-return-price-link', label: `Set day return price (currently £${dayReturnPrice.toFixed(2)})`, weight: 0 },
     { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
-    { id: 'tracked-trains-link', label: 'Tracked trains', weight: 0 },
     { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
     { id: 'delay-claims-link', label: 'Delay repay claims', weight: 0 },
@@ -1860,9 +1859,6 @@ function render(){
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'import-history-link', label: 'Import historical data', weight: 100 });
   menuItems.push({ id: 'debug-mode-link', label: debugModeEnabled ? 'Debug mode: On' : 'Debug mode: Off', weight: 110 });
-  if (debugModeEnabled){
-    menuItems.push({ id: 'debug-track-any-link', label: 'Track any train (debug)', weight: 111 });
-  }
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
 
@@ -2251,7 +2247,7 @@ function render(){
     menuOpen = false;
     state.activeTab = 'live';
     render();
-    openLiveDepartureBoard();
+    openLiveScreen();
   });
   document.getElementById('bottom-nav-buy').addEventListener('click', () => {
     closeAllModals();
@@ -2285,8 +2281,6 @@ function render(){
     menuOpen = false;
     render();
   });
-  const debugTrackAnyLink = document.getElementById('debug-track-any-link');
-  if (debugTrackAnyLink) debugTrackAnyLink.addEventListener('click', () => { menuOpen = false; render(); openDebugTrainSearch(); });
   const parkingCostLink = document.getElementById('parking-cost-link');
   if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; render(); openParkingCostEditor(); });
 
@@ -2301,9 +2295,6 @@ function render(){
 
   const railConfigLink = document.getElementById('rail-config-link');
   if (railConfigLink) railConfigLink.addEventListener('click', () => { menuOpen = false; render(); openRailConfig(); });
-
-  const trackedTrainsLink = document.getElementById('tracked-trains-link');
-  if (trackedTrainsLink) trackedTrainsLink.addEventListener('click', () => { menuOpen = false; render(); openTrackedTrains(); });
 
   const confirmTrainLink = document.getElementById('confirm-train-link');
   if (confirmTrainLink) confirmTrainLink.addEventListener('click', () => { menuOpen = false; render(); openConfirmTrain(); });
@@ -3020,138 +3011,6 @@ function openConfirmTrain(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
-function openTrackedTrains(){
-  const overlay = document.createElement('div');
-  // Keep the bottom nav visible, but reserve its height inside this
-  // bottom-sheet so the Close control cannot be covered by the nav.
-  overlay.className = 'modal-overlay modal-overlay-nav-safe';
-
-  // Persists across list re-renders (e.g. removing one entry shouldn't
-  // reset what's shown for the others) but only for this session — not
-  // saved to storage, since it's just "what happened last time we
-  // checked", not data worth keeping.
-  const trackedErrors = {}; // serviceId -> error message string
-
-  const REFRESH_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.5L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.5L3 16"/><path d="M3 21v-5h5"/></svg>';
-  const REMOVE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-
-  function buildListHtml(){
-    if (trackedTrains.length === 0){
-      return `<div class="sub">Nothing being tracked right now. Tap a train from "Live trains" to start watching its progress — it'll keep working here even after it leaves the station.</div>`;
-    }
-    return trackedTrains.map(t => {
-      const ageMin = Math.round((Date.now() - t.addedAt) / 60000);
-      const ageLabel = ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin/60)} hr ago`;
-      const errorMsg = trackedErrors[t.serviceId];
-      const subLine = errorMsg
-        ? `<span style="color:#ff8b7e; font-size:12px;">${escapeHtml(errorMsg)}</span>`
-        : `<span style="color:var(--ink-dim); font-size:12px;">Added ${ageLabel}</span>`;
-      // The refresh icon only appears once something's actually gone
-      // wrong — tapping the row itself already does the same "check and
-      // open" action, so showing it unconditionally would just be a
-      // second control doing exactly what the row already does.
-      const refreshBtn = errorMsg
-        ? `<span class="tracked-refresh-btn" data-refresh-service-id="${t.serviceId}" title="Refresh" style="display:flex; padding:9px; margin:-9px; color:var(--good); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REFRESH_ICON}</span>`
-        : '';
-      return `<div class="rail-detail-row" data-tracked-row="${t.serviceId}" style="flex-direction:column; align-items:stretch; gap:2px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-weight:600;">${t.label}</span>
-          <span style="display:flex; align-items:center; gap:28px;">
-            ${refreshBtn}
-            <span class="tracked-remove-btn" data-remove-service-id="${t.serviceId}" title="Remove" style="display:flex; padding:9px; margin:-9px; color:#ff8b7e; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REMOVE_ICON}</span>
-          </span>
-        </div>
-        <div>${subLine}</div>
-      </div>`;
-    }).join('');
-  }
-
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Tracked trains</h3>
-      <div id="tracked-list">${buildListHtml()}</div>
-      <div class="modal-close" id="tracked-close-btn" style="margin-top:16px;">Close</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  function wireList(){
-    async function attemptOpen(serviceId){
-      const tracked = trackedTrains.find(t => t.serviceId === serviceId);
-      if (!tracked) return;
-      const row = overlay.querySelector(`[data-tracked-row="${serviceId}"]`);
-      // Immediate visual feedback before the network call, so there's no
-      // dead-time gap between the tap and something visibly happening —
-      // a gap here was suspected of letting Android treat a normal tap
-      // as a stuck/long press and trigger its own screen-search gesture.
-      if (row) row.style.opacity = '0.5';
-      delete trackedErrors[serviceId];
-      try{
-        const service = await fetchServiceDetails(serviceId);
-        // The user may have already closed this screen while that
-        // request was in flight — removeChild on an already-removed
-        // node throws, which would otherwise fall into the catch below
-        // and incorrectly treat a successful fetch as a failure,
-        // deleting a perfectly valid tracked train in the process.
-        if (!overlay.isConnected) return;
-        overlay.remove();
-        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
-      }catch(e){
-        if (!overlay.isConnected) return;
-        if (e.transient){
-          // A network or server hiccup tells us nothing about whether
-          // this train is still genuinely trackable — keep it in the
-          // list untouched, just show why the last check failed. If
-          // it's actually gone for good rather than a real blip, the
-          // remove icon is right there so there's never a need to wait
-          // on a retry that will never succeed.
-          trackedErrors[serviceId] = `Couldn't reach Darwin — ${e.message}`;
-          const listEl = document.getElementById('tracked-list');
-          if (listEl) listEl.innerHTML = buildListHtml();
-          wireList();
-          return;
-        }
-        // Darwin gave a definitive answer that this service is gone —
-        // this part is real regardless of whether the user is still
-        // looking at this screen, so it happens unconditionally.
-        trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
-        delete trackedErrors[serviceId];
-        await saveTrackedTrains();
-        const listEl = document.getElementById('tracked-list');
-        if (listEl) listEl.innerHTML = buildListHtml();
-        wireList();
-      }
-    }
-
-    document.querySelectorAll('#tracked-list [data-tracked-row]').forEach(row => {
-      row.addEventListener('click', () => attemptOpen(row.dataset.trackedRow));
-    });
-    document.querySelectorAll('#tracked-list [data-refresh-service-id]').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation(); // don't also trigger the row's own tap
-        attemptOpen(btn.dataset.refreshServiceId);
-      });
-    });
-    document.querySelectorAll('#tracked-list [data-remove-service-id]').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const serviceId = btn.dataset.removeServiceId;
-        trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
-        delete trackedErrors[serviceId];
-        await saveTrackedTrains();
-        const listEl = document.getElementById('tracked-list');
-        if (listEl) listEl.innerHTML = buildListHtml();
-        wireList();
-      });
-    });
-  }
-  wireList();
-
-  document.getElementById('tracked-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
-}
 
 // ---- Station reference data (name, CRS code, coordinates) ----
 // Station names, codes, and locations change almost never, so rather
@@ -3376,73 +3235,211 @@ function createStationPicker(opts){
   };
 }
 
-// Debug-only tool: look up a live departure board for any station pair,
-// not just the user's own configured routes, and track any result from
-// it — for exercising tracking/refresh behaviour when none of the usual
-// Crewe/Wigan services happen to be running. Uses the exact same
-// fetchServiceDetails + openTrainProgress flow as every other entry
-// point, so it's testing the real code path, not a separate one.
-function openDebugTrainSearch(){
+// Single "Live" screen combining your usual AM/PM trains, everything
+// currently tracked, and the ability to track any other train — three
+// things that used to live in separate places (the Live nav tab, a
+// menu-only "Tracked trains" screen, and a debug-gated search tool).
+// initialSubTab lets a caller land directly on 'tracked' (e.g. closing a
+// train that was opened from this list should return to this list, not
+// to whichever sub-tab happened to be active before).
+function openLiveScreen(initialSubTab){
+  let activeSubTab = initialSubTab === 'tracked' ? 'tracked' : 'yours';
+  let showAddForm = false;
+  // Session-only, same reasoning as the old Tracked Trains screen: this
+  // is "what happened last time we checked", not data worth persisting.
+  const trackedErrors = {}; // serviceId -> error message string
+  // The Live board doesn't auto-refresh once open (same as before — the
+  // status line says as much), but switching between sub-tabs shouldn't
+  // force a re-fetch every time either. Cached for this screen's
+  // lifetime; a fresh fetch only happens on a genuine reopen.
+  let yoursBoardsPromise = null;
+
+  const REFRESH_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.5L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.5L3 16"/><path d="M3 21v-5h5"/></svg>';
+  const REMOVE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
   const overlay = document.createElement('div');
+  // nav-safe: without this, the Close button can end up hidden behind
+  // the bottom nav bar — this screen replaces the old Live board, which
+  // was missing this class (Tracked Trains and the debug search both
+  // already had it, which is why only Live was affected).
   overlay.className = 'modal-overlay modal-overlay-nav-safe';
   overlay.innerHTML = `
     <div class="modal">
-      <h3>Track any train (debug)</h3>
-      <div class="sub">For testing only. Pulls a real live board for any station, so tracking features can be exercised even when none of your usual routes have a train running.</div>
-      <div id="debug-picker-row" style="display:flex; gap:8px; margin-bottom:6px;"></div>
-      <div id="debug-station-list-status" style="font-size:11.5px; color:var(--ink-dim); margin-bottom:10px;">Loading station list…</div>
-      <button class="save-btn" id="debug-search-btn">Search</button>
-      <div id="debug-search-results" style="margin-top:14px;"></div>
-      <div class="modal-close" id="debug-search-close" style="margin-top:16px;">Close</div>
+      <h3>Live trains</h3>
+      <div style="display:flex; gap:8px; margin-bottom:14px;">
+        <button class="save-btn" id="live-subtab-yours" style="flex:1; margin:0;">Your trains</button>
+        <button class="save-btn" id="live-subtab-tracked" style="flex:1; margin:0;">Tracked</button>
+      </div>
+      <div id="live-screen-body"></div>
+      <div class="modal-close" id="live-screen-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
 
-  const resultsEl = document.getElementById('debug-search-results');
+  const bodyEl = document.getElementById('live-screen-body');
+  const tabYoursBtn = document.getElementById('live-subtab-yours');
+  const tabTrackedBtn = document.getElementById('live-subtab-tracked');
 
-  const fromPicker = createStationPicker({ placeholder: 'From: name or code' });
-  const toPicker = createStationPicker({ placeholder: 'To (optional)' });
-  document.getElementById('debug-picker-row').appendChild(fromPicker.el);
-  document.getElementById('debug-picker-row').appendChild(toPicker.el);
+  function styleTabs(){
+    tabYoursBtn.style.background = activeSubTab === 'yours' ? 'var(--amber)' : 'var(--tile)';
+    tabYoursBtn.style.color = activeSubTab === 'yours' ? '#14161f' : 'var(--ink-dim)';
+    tabTrackedBtn.style.background = activeSubTab === 'tracked' ? 'var(--amber)' : 'var(--tile)';
+    tabTrackedBtn.style.color = activeSubTab === 'tracked' ? '#14161f' : 'var(--ink-dim)';
+    tabTrackedBtn.textContent = trackedTrains.length ? `Tracked (${trackedTrains.length})` : 'Tracked';
+  }
 
-  const stationStatusEl = document.getElementById('debug-station-list-status');
-  function stationListSummary(idx){
-    const date = idx.fetchedAt ? new Date(idx.fetchedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'unknown date';
-    return `${idx.list.length.toLocaleString()} stations · updated ${date}`;
-  }
-  function wireStationRefreshLink(){
-    const el = document.getElementById('debug-station-refresh-link');
-    if (el) el.addEventListener('click', () => refreshStationList(true));
-  }
-  async function refreshStationList(force){
-    if (!stationStatusEl.isConnected) return;
-    stationStatusEl.textContent = force ? 'Refreshing station list…' : 'Loading station list…';
-    try{
-      const idx = await loadStationIndex(force);
-      if (!stationStatusEl.isConnected) return;
-      stationStatusEl.innerHTML = `${stationListSummary(idx)} — <span id="debug-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Refresh</span>`;
-      wireStationRefreshLink();
-    }catch(e){
-      if (!stationStatusEl.isConnected) return;
-      stationStatusEl.innerHTML = `Couldn't load the station list (${escapeHtml(e.message)}) — codes still work, just no name lookup yet. <span id="debug-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Try again</span>`;
-      wireStationRefreshLink();
+  // ---- "Your trains" tab (your configured AM/PM services) ----
+  function timeToHHMM(t){ return t.slice(0,2) + ':' + t.slice(2,4); }
+
+  function rowForConfigured(train, service){
+    if (!service){
+      return `<div class="rail-detail-row"><span>${train.label}</span><span style="color:var(--ink-dim);">No live data right now</span></div>`;
     }
+    if (service.isCancelled){
+      return `<div class="rail-detail-row"><span style="color:#ff8b7e; font-weight:600;">${train.label}</span><span style="color:#ff8b7e;">Cancelled${service.cancelReason ? ' — ' + service.cancelReason.replace(/^This service has been cancelled /,'') : ''}</span></div>`;
+    }
+    const onTime = !service.etd || service.etd === 'On time';
+    const color = onTime ? 'var(--good)' : '#ff8b7e';
+    const statusText = onTime ? 'On time' : `Now ${service.etd}`;
+    const platformText = service.platform ? ` · Plat ${service.platform}` : '';
+    return `<div class="rail-detail-row" data-train-key="${train.key}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText} ›</span></div>`;
   }
-  refreshStationList(false);
 
-  function wireResultRows(){
+  function renderYoursTab(){
+    bodyEl.innerHTML = `<div class="sub" id="live-board-status">Loading…</div><div id="live-board-content"></div>`;
+    if (!yoursBoardsPromise) yoursBoardsPromise = fetchLiveBoards();
+    yoursBoardsPromise.then(boards => {
+      // The person may have switched to the other sub-tab, or closed the
+      // screen entirely, while this was in flight.
+      if (activeSubTab !== 'yours' || !overlay.isConnected) return;
+      const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a,b) => a.time.localeCompare(b.time));
+      const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a,b) => a.time.localeCompare(b.time));
+      const matchedServices = {}; // trainKey -> { train, service }
+
+      function sectionHtml(trains){
+        return trains.map(t => {
+          const board = boards[`${t.fromLoc}-${t.toLoc}`] || [];
+          const wanted = timeToHHMM(t.time);
+          const service = board.find(s => s.std === wanted);
+          if (service && !service.isCancelled) matchedServices[t.key] = { train: t, service };
+          return rowForConfigured(t, service);
+        }).join('');
+      }
+
+      const statusEl = document.getElementById('live-board-status');
+      if (statusEl) statusEl.textContent = 'Live from National Rail — tap a train for its progress, or Close and reopen to refresh.';
+      const contentEl = document.getElementById('live-board-content');
+      if (contentEl) contentEl.innerHTML = `
+        <div class="rail-col-header">Morning</div>
+        ${amTrains.length ? sectionHtml(amTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+        <div class="rail-col-header">Evening</div>
+        ${pmTrains.length ? sectionHtml(pmTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+      `;
+      document.querySelectorAll('#live-board-content [data-train-key]').forEach(row => {
+        row.addEventListener('click', () => {
+          const m = matchedServices[row.dataset.trainKey];
+          if (m) openTrainProgress(m.train, m.service);
+        });
+      });
+    }).catch(err => {
+      if (activeSubTab !== 'yours' || !overlay.isConnected) return;
+      const statusEl = document.getElementById('live-board-status');
+      if (statusEl) statusEl.textContent = `Couldn't load live data: ${err.message}`;
+    });
+  }
+
+  // ---- "Tracked" tab (everything tracked, plus adding a new one) ----
+  function buildTrackedListHtml(){
+    if (trackedTrains.length === 0){
+      return `<div class="sub">Nothing being tracked right now. Use "+ Track a train" above, or tap one of your usual trains — it'll keep working here even after it leaves the station.</div>`;
+    }
+    return trackedTrains.map(t => {
+      const ageMin = Math.round((Date.now() - t.addedAt) / 60000);
+      const ageLabel = ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin/60)} hr ago`;
+      const errorMsg = trackedErrors[t.serviceId];
+      const subLine = errorMsg
+        ? `<span style="color:#ff8b7e; font-size:12px;">${escapeHtml(errorMsg)}</span>`
+        : `<span style="color:var(--ink-dim); font-size:12px;">Added ${ageLabel}</span>`;
+      const refreshBtn = errorMsg
+        ? `<span class="tracked-refresh-btn" data-refresh-service-id="${t.serviceId}" title="Refresh" style="display:flex; padding:9px; margin:-9px; color:var(--good); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REFRESH_ICON}</span>`
+        : '';
+      return `<div class="rail-detail-row" data-tracked-row="${t.serviceId}" style="flex-direction:column; align-items:stretch; gap:2px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-weight:600;">${t.label}</span>
+          <span style="display:flex; align-items:center; gap:28px;">
+            ${refreshBtn}
+            <span class="tracked-remove-btn" data-remove-service-id="${t.serviceId}" title="Remove" style="display:flex; padding:9px; margin:-9px; color:#ff8b7e; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REMOVE_ICON}</span>
+          </span>
+        </div>
+        <div>${subLine}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function wireTrackedList(){
+    async function attemptOpen(serviceId){
+      const tracked = trackedTrains.find(t => t.serviceId === serviceId);
+      if (!tracked) return;
+      const row = overlay.querySelector(`[data-tracked-row="${serviceId}"]`);
+      if (row) row.style.opacity = '0.5';
+      delete trackedErrors[serviceId];
+      try{
+        const service = await fetchServiceDetails(serviceId);
+        if (!overlay.isConnected) return;
+        overlay.remove();
+        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
+      }catch(e){
+        if (!overlay.isConnected) return;
+        if (e.transient){
+          trackedErrors[serviceId] = `Couldn't reach Darwin — ${e.message}`;
+          const listEl = document.getElementById('tracked-list');
+          if (listEl) listEl.innerHTML = buildTrackedListHtml();
+          wireTrackedList();
+          return;
+        }
+        trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
+        delete trackedErrors[serviceId];
+        await saveTrackedTrains();
+        const listEl = document.getElementById('tracked-list');
+        if (listEl) listEl.innerHTML = buildTrackedListHtml();
+        wireTrackedList();
+        styleTabs();
+      }
+    }
+    overlay.querySelectorAll('#tracked-list [data-tracked-row]').forEach(row => {
+      row.addEventListener('click', () => attemptOpen(row.dataset.trackedRow));
+    });
+    overlay.querySelectorAll('#tracked-list [data-refresh-service-id]').forEach(btn => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); attemptOpen(btn.dataset.refreshServiceId); });
+    });
+    overlay.querySelectorAll('#tracked-list [data-remove-service-id]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const serviceId = btn.dataset.removeServiceId;
+        trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
+        delete trackedErrors[serviceId];
+        await saveTrackedTrains();
+        const listEl = document.getElementById('tracked-list');
+        if (listEl) listEl.innerHTML = buildTrackedListHtml();
+        wireTrackedList();
+        styleTabs();
+      });
+    });
+  }
+
+  function wireAddFormResultRows(){
     overlay.querySelectorAll('[data-debug-service-id]').forEach(row => {
       row.addEventListener('click', async () => {
-        const debugServiceId = row.dataset.debugServiceId;
+        const serviceId = row.dataset.debugServiceId;
         const label = row.dataset.debugLabel;
         const fromLoc = row.dataset.debugFrom;
         row.style.opacity = '0.5';
         row.style.pointerEvents = 'none';
         try{
-          const service = await fetchServiceDetails(debugServiceId);
+          const service = await fetchServiceDetails(serviceId);
           if (!overlay.isConnected) return;
           overlay.remove();
-          openTrainProgress({ label, fromLoc, serviceId: debugServiceId }, service);
+          openTrainProgress({ label, fromLoc, serviceId }, service);
         }catch(e){
           if (!overlay.isConnected) return;
           row.style.opacity = '1';
@@ -3453,106 +3450,104 @@ function openDebugTrainSearch(){
     });
   }
 
-  document.getElementById('debug-search-btn').addEventListener('click', async () => {
-    const fromCrs = fromPicker.getCode();
-    const toCrs = toPicker.getCode();
-    if (!fromCrs){
-      resultsEl.innerHTML = `<div class="sub">Pick a station to search from — type a name or a 3-letter code (e.g. EUS, BHM, GLC).</div>`;
-      return;
+  function renderTrackedTab(){
+    bodyEl.innerHTML = `
+      <div id="tracked-add-toggle" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">${showAddForm ? '– Cancel' : '+ Track a train'}</div>
+      <div id="tracked-add-form" style="display:${showAddForm ? 'block' : 'none'}; margin-bottom:16px;">
+        <div id="tracked-picker-row" style="display:flex; gap:8px; margin-bottom:6px;"></div>
+        <div id="tracked-station-list-status" style="font-size:11.5px; color:var(--ink-dim); margin-bottom:10px;">Loading station list…</div>
+        <button class="save-btn" id="tracked-search-btn">Search</button>
+        <div id="tracked-search-results" style="margin-top:14px;"></div>
+      </div>
+      <div id="tracked-list">${buildTrackedListHtml()}</div>
+    `;
+    wireTrackedList();
+
+    document.getElementById('tracked-add-toggle').addEventListener('click', () => {
+      showAddForm = !showAddForm;
+      renderTrackedTab();
+    });
+
+    if (!showAddForm) return;
+
+    const resultsEl = document.getElementById('tracked-search-results');
+    const fromPicker = createStationPicker({ placeholder: 'From: name or code' });
+    const toPicker = createStationPicker({ placeholder: 'To (optional)' });
+    document.getElementById('tracked-picker-row').appendChild(fromPicker.el);
+    document.getElementById('tracked-picker-row').appendChild(toPicker.el);
+
+    const stationStatusEl = document.getElementById('tracked-station-list-status');
+    function stationListSummary(idx){
+      const date = idx.fetchedAt ? new Date(idx.fetchedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'unknown date';
+      return `${idx.list.length.toLocaleString()} stations · updated ${date}`;
     }
-    const fromLabel = fromPicker.getName() || fromCrs;
-    resultsEl.innerHTML = `<div class="sub">Searching…</div>`;
-    try{
-      const services = await fetchDebugBoard(fromCrs, toCrs);
-      if (services.length === 0){
-        resultsEl.innerHTML = `<div class="sub">No live services found for that station right now.</div>`;
+    function wireStationRefreshLink(){
+      const el = document.getElementById('tracked-station-refresh-link');
+      if (el) el.addEventListener('click', () => refreshStationList(true));
+    }
+    async function refreshStationList(force){
+      if (!stationStatusEl.isConnected) return;
+      stationStatusEl.textContent = force ? 'Refreshing station list…' : 'Loading station list…';
+      try{
+        const idx = await loadStationIndex(force);
+        if (!stationStatusEl.isConnected) return;
+        stationStatusEl.innerHTML = `${stationListSummary(idx)} — <span id="tracked-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Refresh</span>`;
+        wireStationRefreshLink();
+      }catch(e){
+        if (!stationStatusEl.isConnected) return;
+        stationStatusEl.innerHTML = `Couldn't load the station list (${escapeHtml(e.message)}) — codes still work, just no name lookup yet. <span id="tracked-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Try again</span>`;
+        wireStationRefreshLink();
+      }
+    }
+    refreshStationList(false);
+
+    document.getElementById('tracked-search-btn').addEventListener('click', async () => {
+      const fromCrs = fromPicker.getCode();
+      const toCrs = toPicker.getCode();
+      if (!fromCrs){
+        resultsEl.innerHTML = `<div class="sub">Pick a station to search from — type a name or a 3-letter code (e.g. EUS, BHM, GLC).</div>`;
         return;
       }
-      resultsEl.innerHTML = services.slice(0, 15).map(s => {
-        const dest = (s.destination && s.destination[0] && s.destination[0].locationName) || '?';
-        const statusText = (!s.etd || s.etd === 'On time') ? 'On time' : s.etd;
-        const label = `${s.std || '?'} ${fromLabel}→${dest}`;
-        return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(label)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-          <span>${s.std || '?'} → ${escapeHtml(dest)}</span>
-          <span style="color:var(--ink-dim);">${escapeHtml(statusText)} ›</span>
-        </div>`;
-      }).join('');
-      wireResultRows();
-    }catch(e){
-      resultsEl.innerHTML = `<div class="sub" style="color:#ff8b7e;">Search failed: ${escapeHtml(e.message)}</div>`;
-    }
-  });
+      const fromLabel = fromPicker.getName() || fromCrs;
+      resultsEl.innerHTML = `<div class="sub">Searching…</div>`;
+      try{
+        const services = await fetchDebugBoard(fromCrs, toCrs);
+        if (services.length === 0){
+          resultsEl.innerHTML = `<div class="sub">No live services found for that station right now.</div>`;
+          return;
+        }
+        resultsEl.innerHTML = services.slice(0, 15).map(s => {
+          const dest = (s.destination && s.destination[0] && s.destination[0].locationName) || '?';
+          const statusText = (!s.etd || s.etd === 'On time') ? 'On time' : s.etd;
+          const label = `${s.std || '?'} ${fromLabel}→${dest}`;
+          return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(label)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+            <span>${s.std || '?'} → ${escapeHtml(dest)}</span>
+            <span style="color:var(--ink-dim);">${escapeHtml(statusText)} ›</span>
+          </div>`;
+        }).join('');
+        wireAddFormResultRows();
+      }catch(e){
+        resultsEl.innerHTML = `<div class="sub" style="color:#ff8b7e;">Search failed: ${escapeHtml(e.message)}</div>`;
+      }
+    });
+  }
 
-  document.getElementById('debug-search-close').addEventListener('click', () => {
+  function switchTab(tab){
+    activeSubTab = tab;
+    styleTabs();
+    if (tab === 'yours') renderYoursTab();
+    else renderTrackedTab();
+  }
+
+  tabYoursBtn.addEventListener('click', () => switchTab('yours'));
+  tabTrackedBtn.addEventListener('click', () => switchTab('tracked'));
+  styleTabs();
+  switchTab(activeSubTab);
+
+  document.getElementById('live-screen-close-btn').addEventListener('click', () => {
     if (overlay.isConnected) overlay.remove();
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay && overlay.isConnected) overlay.remove(); });
-}
-
-function openLiveDepartureBoard(){
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Live trains</h3>
-      <div class="sub" id="live-board-status">Loading…</div>
-      <div id="live-board-content"></div>
-      <div class="modal-close" id="live-board-close-btn" style="margin-top:16px;">Close</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.getElementById('live-board-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
-
-  function timeToHHMM(t){ return t.slice(0,2) + ':' + t.slice(2,4); }
-
-  function rowFor(train, service){
-    if (!service){
-      return `<div class="rail-detail-row"><span>${train.label}</span><span style="color:var(--ink-dim);">No live data right now</span></div>`;
-    }
-    if (service.isCancelled){
-      return `<div class="rail-detail-row"><span style="color:#ff8b7e; font-weight:600;">${train.label}</span><span style="color:#ff8b7e;">Cancelled${service.cancelReason ? ' — ' + service.cancelReason.replace(/^This service has been cancelled /,'') : ''}</span></div>`;
-    }
-    const onTime = !service.etd || service.etd === 'On time';
-    const color = onTime ? 'var(--good)' : '#ff8b7e';
-    const statusText = onTime ? 'On time' : `Now ${service.etd}${service.platform ? '' : ''}`;
-    const platformText = service.platform ? ` · Plat ${service.platform}` : '';
-    return `<div class="rail-detail-row" data-train-key="${train.key}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText} ›</span></div>`;
-  }
-
-  fetchLiveBoards().then(boards => {
-    const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a,b) => a.time.localeCompare(b.time));
-    const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a,b) => a.time.localeCompare(b.time));
-    const matchedServices = {}; // trainKey -> { train, service }
-
-    function sectionHtml(trains){
-      return trains.map(t => {
-        const board = boards[`${t.fromLoc}-${t.toLoc}`] || [];
-        const wanted = timeToHHMM(t.time);
-        const service = board.find(s => s.std === wanted);
-        if (service && !service.isCancelled) matchedServices[t.key] = { train: t, service };
-        return rowFor(t, service);
-      }).join('');
-    }
-
-    document.getElementById('live-board-status').textContent = 'Live from National Rail — tap a train for its progress, or Close and reopen to refresh.';
-    document.getElementById('live-board-content').innerHTML = `
-      <div class="rail-col-header">Morning</div>
-      ${amTrains.length ? sectionHtml(amTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
-      <div class="rail-col-header">Evening</div>
-      ${pmTrains.length ? sectionHtml(pmTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
-    `;
-    document.querySelectorAll('#live-board-content [data-train-key]').forEach(row => {
-      row.addEventListener('click', () => {
-        const m = matchedServices[row.dataset.trainKey];
-        if (m) openTrainProgress(m.train, m.service);
-      });
-    });
-  }).catch(err => {
-    document.getElementById('live-board-status').textContent = `Couldn't load live data: ${err.message}`;
-  });
 }
 
 // Builds the "where is this train now" timeline: every calling point in
@@ -4437,12 +4432,13 @@ function openTrainProgress(train, service){
     document.removeEventListener('visibilitychange', onVisible);
     if (overlay.isConnected) overlay.remove();
     if (activeTrainProgressCleanup === forceClose) activeTrainProgressCleanup = null;
-    // If this was opened from Tracked Trains (the only place that passes
-    // a serviceId directly on the train object), closing should return
-    // there rather than just dropping back to whatever was underneath —
-    // but only on a real user-initiated close, not when this instance is
-    // being silently torn down to make way for a newly-opened one.
-    if (!silent && train.serviceId) openTrackedTrains();
+    // If this was opened from the Tracked sub-tab (the only place that
+    // passes a serviceId directly on the train object), closing should
+    // return there rather than just dropping back to whatever was
+    // underneath — but only on a real user-initiated close, not when
+    // this instance is being silently torn down to make way for a
+    // newly-opened one.
+    if (!silent && train.serviceId) openLiveScreen('tracked');
   }
   function forceClose(){ closeAndStopRefresh(true); }
   activeTrainProgressCleanup = forceClose;
