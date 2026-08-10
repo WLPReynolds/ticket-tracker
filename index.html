@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.09:09'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.12:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3606,6 +3606,15 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       // marked as an estimate rather than presented as confirmed data.
       const isInferred = !hasRealTime && !status.confirmed && i <= lastPassedIdx && status.minutesLate === 0 && knownOverallDelay > 0 && !p.isCancelled;
       const inferredTime = isInferred ? addMinutesToTime(p.schedTime, knownOverallDelay) : null;
+      // A passed point Darwin never gave real data for (the Crewe-origin
+      // limitation), but with no known overall delay elsewhere to infer a
+      // real time from — e.g. the rest of the journey has since recovered
+      // to on time. Still genuinely unconfirmed, so it must not fall
+      // through to look identical to a point Darwin actively confirmed —
+      // that's the bug where Crewe silently flipped from "estimated" to
+      // plain green "On time" once the later delay cleared, even though
+      // Darwin's data for Crewe itself never changed.
+      const isUnconfirmedOnTime = !hasRealTime && !isInferred && !status.confirmed && i <= lastPassedIdx && status.minutesLate === 0 && !p.isCancelled;
 
       let timeHtml, statusText, statusColor;
       if (hasRealTime){
@@ -3615,6 +3624,10 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       } else if (isInferred && inferredTime){
         timeHtml = `<span style="text-decoration:line-through; color:var(--ink-dim); font-size:11.5px;">${p.schedTime || ''}</span><br/><span style="color:#e8935f; font-style:italic;">~${inferredTime}</span>`;
         statusText = `~${knownOverallDelay} min late (estimated)`;
+        statusColor = '#e8935f';
+      } else if (isUnconfirmedOnTime){
+        timeHtml = p.schedTime || '';
+        statusText = 'On time (estimated)';
         statusColor = '#e8935f';
       } else {
         timeHtml = p.schedTime || '';
