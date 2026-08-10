@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.19:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.19:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4127,6 +4127,15 @@ function openTrainProgress(train, service){
   // network response arrives second silently overwriting the other,
   // regardless of which was actually more recent.
   let refreshInFlight = false;
+  // Same idea, scoped to weather: applyWeather() fetches independently of
+  // the Darwin refresh cycle above, so an older weather request can still
+  // be in flight when a newer Darwin refresh rebuilds the rows. Each
+  // render bumps this counter and hands its own value to applyWeather;
+  // if the counter's moved on by the time that fetch resolves, its
+  // result belongs to a row set (and a lastPassedIdx/fraction) that no
+  // longer exists, and gets discarded rather than written in or used to
+  // reposition the blob.
+  let renderGeneration = 0;
   const serviceId = train.serviceId || service.serviceID || null;
 
   // Remember this journey so it can still be found and watched later,
@@ -4231,10 +4240,15 @@ function openTrainProgress(train, service){
   // after the fact — the rows themselves have already rendered and
   // positioned by the time this resolves, so a slow or failed weather
   // fetch can never hold up or affect the actual train-tracking display.
-  async function applyWeather(weatherPoints, lastPassedIdx, fraction){
+  // gen is this call's render-generation token (see renderGeneration
+  // above) — if a newer render has happened by the time the fetch
+  // resolves, this result is for rows that no longer exist and is
+  // dropped rather than written into whatever's there now.
+  async function applyWeather(weatherPoints, lastPassedIdx, fraction, gen){
     if (!weatherEnabled || !weatherPoints || !weatherPoints.length) return;
     const results = await fetchWeatherForPoints(weatherPoints);
     if (!instanceActive || !overlay.isConnected || !results.size) return;
+    if (gen !== renderGeneration) return; // superseded by a newer render while this was in flight
     results.forEach((wx, idx) => {
       const badge = overlay.querySelector(`[data-wx-idx="${idx}"]`);
       if (badge) badge.textContent = `${wx.icon} ${wx.temp}° `;
@@ -4244,7 +4258,8 @@ function openTrainProgress(train, service){
     // rendered layout rather than where it was before they appeared.
     positionBlobAndLine(lastPassedIdx, fraction, 'auto');
   }
-  applyWeather(initial.weatherPoints, initial.lastPassedIdx, initial.fraction);
+  renderGeneration++;
+  applyWeather(initial.weatherPoints, initial.lastPassedIdx, initial.fraction, renderGeneration);
 
   function rebuildDisplay(){
     const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
@@ -4257,7 +4272,8 @@ function openTrainProgress(train, service){
     const reasonToggle = document.getElementById('show-all-reasons-toggle');
     if (reasonToggleWrap) reasonToggleWrap.style.display = rebuilt.anyReasonSuppressed ? '' : 'none';
     if (reasonToggle) reasonToggle.textContent = showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway';
-    applyWeather(rebuilt.weatherPoints, rebuilt.lastPassedIdx, rebuilt.fraction);
+    renderGeneration++;
+    applyWeather(rebuilt.weatherPoints, rebuilt.lastPassedIdx, rebuilt.fraction, renderGeneration);
     return rebuilt;
   }
 
@@ -4333,7 +4349,8 @@ function openTrainProgress(train, service){
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
         positionBlobAndLine(fresh.lastPassedIdx, fresh.fraction);
-        applyWeather(fresh.weatherPoints, fresh.lastPassedIdx, fresh.fraction);
+        renderGeneration++;
+        applyWeather(fresh.weatherPoints, fresh.lastPassedIdx, fresh.fraction, renderGeneration);
         if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
         if (reasonToggleWrap) reasonToggleWrap.style.display = fresh.anyReasonSuppressed ? '' : 'none';
@@ -4377,7 +4394,8 @@ function openTrainProgress(train, service){
       if (rowsEl) rowsEl.innerHTML = stale.rowsHtml;
       if (summaryEl) summaryEl.innerHTML = stale.summaryHtml;
       positionBlobAndLine(stale.lastPassedIdx, stale.fraction);
-      applyWeather(stale.weatherPoints, stale.lastPassedIdx, stale.fraction);
+      renderGeneration++;
+      applyWeather(stale.weatherPoints, stale.lastPassedIdx, stale.fraction, renderGeneration);
       if (reasonToggleWrap) reasonToggleWrap.style.display = stale.anyReasonSuppressed ? '' : 'none';
       if (offlineBanner) offlineBanner.style.display = 'block';
       if (blobEl) blobEl.classList.add('blob-pulsing');
