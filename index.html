@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.17:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.17:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3958,7 +3958,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // whenever BST is in effect, since that forces UTC.
   const weatherPoints = points
     .map((p, i) => ({ idx: i, crs: p.crs, dueAt: pointDates[i] ? localWallClockString(pointDates[i]) : null }))
-    .filter(wp => wp.crs && wp.dueAt && !points[wp.idx].isCancelled && wp.idx >= lastPassedIdx);
+    .filter(wp => wp.crs && wp.dueAt && !points[wp.idx].isCancelled && wp.idx > lastPassedIdx);
 
   return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints };
 }
