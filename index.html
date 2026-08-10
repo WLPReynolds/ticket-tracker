@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.21:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.21:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3775,18 +3775,29 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
 
   let lastPassedIdx = -1;
   pointDates.forEach((t, i) => { if (t && t <= now) lastPassedIdx = i; });
-  // The comparison above has no concept of "cancelled" — a cancelled
-  // point's own scheduled time is no longer meaningful once the service
-  // never actually reached it, but bestTime() still falls back to it
-  // when there's no real time to use instead. Left alone, this would let
-  // lastPassedIdx keep advancing through every remaining cancelled
-  // point's original slot as real time passes them, eventually landing
-  // on the booked destination even though the train genuinely stopped
-  // much earlier — which would make both the blob position and the
-  // "Terminated at X" summary below name the wrong station. Walk back to
-  // the true last point actually reached before anything else uses this.
-  if (lastPassedIdx >= 0 && points[lastPassedIdx].isCancelled){
-    while (lastPassedIdx > 0 && points[lastPassedIdx].isCancelled) lastPassedIdx--;
+  // The comparison above has no concept of "cancelled", or of Darwin's
+  // explicit "Delayed" flag — genuinely different from having no data at
+  // all, since it means the departure/arrival time is actively unknown
+  // rather than just running some estimatable number of minutes late.
+  // Left to scheduled-time comparison alone:
+  // - a cancelled point's own scheduled time is no longer meaningful
+  //   once the service never actually reached it, but bestTime() still
+  //   falls back to it when there's no real time to use instead — this
+  //   would let lastPassedIdx keep advancing through every remaining
+  //   cancelled point's original slot as real time passes them,
+  //   eventually landing on the booked destination even though the
+  //   train genuinely stopped much earlier.
+  // - a "Delayed" point's schedule time having elapsed can't
+  //   distinguish "left a minute late" from "still sitting at the
+  //   platform 20 minutes on" — assuming the schedule still held would
+  //   show the train partway to the next stop it may never have
+  //   actually left for.
+  // Both cases mean the same thing here: don't trust this point as
+  // "reached", walk back to the true last point genuinely confirmed —
+  // all the way to -1 (giving the correct "Not yet departed" state) if
+  // every point up to and including the very first is affected.
+  while (lastPassedIdx >= 0 && (points[lastPassedIdx].isCancelled || points[lastPassedIdx].liveTime === 'Delayed')){
+    lastPassedIdx--;
   }
 
   // How far between the last-passed and next-due point we are right now,
