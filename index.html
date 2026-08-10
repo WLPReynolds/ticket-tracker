@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.15:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.15:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3583,11 +3583,26 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
 
   // The best available time for each point — a real timestamp if Darwin
   // gave us one, falling back to the scheduled time if it only gave a
-  // status word ("On time"/"Delayed") rather than an actual time.
+  // status word ("On time"/"Delayed") rather than an actual time. Used
+  // for display.
   function bestTime(p){
     return (p.liveTime && p.liveTime.includes(':')) ? p.liveTime : p.schedTime;
   }
-  const pointDates = points.map(p => liveTimeToDate((bestTime(p) || '').replace(':', ''), now));
+  // For inferring which calendar day each point falls on, always use the
+  // *scheduled* time rather than bestTime(). A live time reflects how
+  // delayed a point is — but a cancelled point typically has no live
+  // estimate at all and falls back to its own untouched scheduled time.
+  // Comparing those two side by side (a delayed real point vs. a
+  // cancelled point's un-delayed schedule time) can make the schedule
+  // look like it's gone backwards even on an ordinary same-day service,
+  // which the midnight-rollover logic below misreads as having crossed
+  // into the next day. The timetable itself — not how late a train is
+  // running — is what actually determines which calendar day a point
+  // belongs to, so date inference is kept on a consistent basis.
+  function scheduleTime(p){
+    return p.schedTime || bestTime(p);
+  }
+  const pointDates = points.map(p => liveTimeToDate((scheduleTime(p) || '').replace(':', ''), now));
   // The very first point has no earlier point to roll forward from, so it
   // needs its own inference: a bare clock time could plausibly belong to
   // yesterday, today, or tomorrow relative to right now — pick whichever
@@ -3596,7 +3611,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // tonight (many hours in the future) instead of correctly recognising
   // it as last night (a few minutes in the past).
   if (pointDates[0]){
-    const hhmm = (bestTime(points[0]) || '').replace(':', '');
+    const hhmm = (scheduleTime(points[0]) || '').replace(':', '');
     if (hhmm.length >= 4){
       const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
       if (!isNaN(h) && !isNaN(m)){
