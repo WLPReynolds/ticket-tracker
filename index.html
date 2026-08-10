@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.18:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.18:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -937,7 +937,20 @@ const TRACKED_TRAIN_MAX_AGE_MS = 6 * 60 * 60 * 1000; // stop tracking after 6 ho
 // "I think you're on this train" detection
 const GEOFENCE_RADIUS_M = 500; // informed by real field-test readings — Crewe/Wigan both fall well inside this
 const LIKELY_TRAIN_CHECK_INTERVAL_MS = 2 * 60 * 1000; // how often to check while the app is open
-const LIKELY_TRAIN_TIME_WINDOW_MIN = 45; // only bother checking within this many minutes either side of a configured train time
+// Was 45 — wide enough that adjacent configured trains an hour apart
+// (e.g. 16:31/17:31) had overlapping windows, so simply being near the
+// station well before your actual train could bring an earlier one into
+// scope at all. Tightened so neighbouring hourly-ish trains no longer
+// overlap under normal circumstances.
+const LIKELY_TRAIN_TIME_WINDOW_MIN = 20; // only bother checking within this many minutes either side of a configured train time
+// How close a candidate's own live departure must be to right now before
+// it's confident enough to silently confirm without asking. Separate from
+// (and stricter than) the general 15-minute threshold below that decides
+// which train even counts as "closest" in the first place — that wider
+// threshold is still fine for deciding whether to show the ask-first
+// banner on a genuine mismatch; it was only ever a problem when it also
+// governed the *silent* write.
+const SILENT_CONFIRM_MAX_DIFF_MIN = 5;
 let likelyTrainSuggestion = null; // { dateKey, direction, trainKey, label } — transient, not persisted
 let likelyTrainCheckTimer = null;
 let dismissedLikelyTrainKeys = new Set(); // avoids re-suggesting the same match repeatedly in one session
@@ -2916,10 +2929,15 @@ async function checkLikelyTrain(){
       showLocalNotification('Is this your train?', `Looks like you might be on the delayed ${closest.label} instead of your usual one — open the app to confirm.`);
       render();
       return; // one interactive suggestion at a time is plenty
-    } else if (closest && closest.key === nominal.key){
+    } else if (closest && closest.key === nominal.key && closestDiff <= SILENT_CONFIRM_MAX_DIFF_MIN){
       // No surprise — you're at the station, and the train that's actually
       // about to leave is the one you'd expect anyway. Nothing ambiguous
-      // to ask about, so just quietly confirm it.
+      // to ask about, so just quietly confirm it. Only once its own live
+      // departure is genuinely imminent, though — being merely "in range"
+      // isn't enough to commit a silent, un-askable write for the rest of
+      // the day; it previously used the same loose 15-minute threshold as
+      // candidate selection above, which let an early false match lock in
+      // hours before you'd actually left for the station.
       if (!confirmedTrains[todayKeyLocal]) confirmedTrains[todayKeyLocal] = {};
       confirmedTrains[todayKeyLocal][direction] = closest.key;
       saveConfirmedTrains();
