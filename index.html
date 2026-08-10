@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.15:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.17:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -750,6 +750,11 @@ let preferredGoogleEmail = ''; // used as a login hint to skip the account picke
 // become visible. Each hook's own info can look different; this is just
 // the single switch that reveals/hides all of them consistently.
 let debugModeEnabled = false;
+// Weather badges on the live-progress screen — on by default, but a
+// single toggle to switch off entirely if the extra fetches ever cause
+// noticeable lag or just get annoying. Purely a novelty display; never
+// blocks or slows the actual train-tracking data underneath it.
+let weatherEnabled = true;
 // Tracks the currently-open train progress screen's own teardown
 // function, if any. Every such screen shares the same hardcoded element
 // IDs (train-progress-rows, train-progress-blob, etc.) and runs its own
@@ -979,6 +984,10 @@ async function loadData(){
     debugModeEnabled = dm ? JSON.parse(dm) : false;
   }catch(e){ debugModeEnabled = false; }
   try{
+    const we = localStorage.getItem('weather-enabled');
+    weatherEnabled = we ? JSON.parse(we) : true;
+  }catch(e){ weatherEnabled = true; }
+  try{
     const dbe = localStorage.getItem('drive-backup-enabled');
     driveBackupEnabled = dbe ? JSON.parse(dbe) : false;
   }catch(e){ driveBackupEnabled = false; }
@@ -1109,6 +1118,10 @@ async function savePreferredGoogleEmail(){
 }
 async function saveDebugMode(){
   try{ localStorage.setItem('debug-mode-enabled', JSON.stringify(debugModeEnabled)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveWeatherEnabled(){
+  try{ localStorage.setItem('weather-enabled', JSON.stringify(weatherEnabled)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveDriveBackupEnabled(){
@@ -1830,6 +1843,7 @@ function render(){
     menuItems.push({ id: 'connect-gcal-link', label: 'Connect Google Calendar', weight: 0 });
   }
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
+  menuItems.push({ id: 'weather-toggle-link', label: weatherEnabled ? 'Weather on live progress: On' : 'Weather on live progress: Off', weight: 20 });
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'import-history-link', label: 'Import historical data', weight: 100 });
   menuItems.push({ id: 'debug-mode-link', label: debugModeEnabled ? 'Debug mode: On' : 'Debug mode: Off', weight: 110 });
@@ -2248,6 +2262,13 @@ function render(){
   if (debugModeLink) debugModeLink.addEventListener('click', async () => {
     debugModeEnabled = !debugModeEnabled;
     await saveDebugMode();
+    menuOpen = false;
+    render();
+  });
+  const weatherToggleLink = document.getElementById('weather-toggle-link');
+  if (weatherToggleLink) weatherToggleLink.addEventListener('click', async () => {
+    weatherEnabled = !weatherEnabled;
+    await saveWeatherEnabled();
     menuOpen = false;
     render();
   });
@@ -3114,19 +3135,25 @@ function openTrackedTrains(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
-// ---- Station reference data (CRS code <-> full name) ----
-// Station names and codes change almost never, so rather than asking
-// for this on every visit, it's fetched once from a public dataset and
-// cached in localStorage indefinitely. "Refresh" (in the station
-// picker UI below) re-pulls it on demand, for the rare case a brand
-// new station doesn't resolve yet. Served via jsDelivr rather than
-// hitting the source GitHub repo directly — jsDelivr keeps a permanent
-// cached copy of whatever it's first served, so this keeps working
-// even if that small repo is ever renamed or taken down.
-const STATION_LIST_KEY = 'station-list-v1';
-const STATION_LIST_URL = 'https://cdn.jsdelivr.net/gh/AvGeekAlex/uk-train-stations-json@master/stations.json';
+// ---- Station reference data (name, CRS code, coordinates) ----
+// Station names, codes, and locations change almost never, so rather
+// than asking for this on every visit, it's fetched once from a public
+// dataset and cached in localStorage indefinitely. "Refresh" (in the
+// station picker UI below) re-pulls it on demand, for the rare case a
+// brand new station doesn't resolve yet. Served via jsDelivr rather
+// than hitting the source GitHub repo directly — jsDelivr keeps a
+// permanent cached copy of whatever it's first served, so this keeps
+// working even if that small repo is ever renamed or taken down.
+//
+// v2 swaps in a richer dataset (adds lat/lon alongside name+CRS, in a
+// single CSV) so the same lookup that powers the station picker can
+// also drive the live-progress weather feature below, rather than
+// maintaining two separate station lists that both need to agree on
+// CRS codes.
+const STATION_LIST_KEY = 'station-list-v2';
+const STATION_LIST_URL = 'https://cdn.jsdelivr.net/gh/ellcom/UK-Train-Station-Locations@master/uk-train-stations.csv';
 
-let stationIndexCache = null; // { byCrs: Map, list: [{name,crs}], fetchedAt } — built once per page load
+let stationIndexCache = null; // { byCrs: Map, list: [{name,crs,lat,lon}], fetchedAt } — built once per page load
 
 function getCachedStationList(){
   try{
@@ -3135,14 +3162,56 @@ function getCachedStationList(){
   }catch(e){ return null; }
 }
 
+// Minimal RFC4180-ish CSV line parser — just enough to handle the
+// quoted-name, bare-number shape this particular file uses (no
+// multi-line quoted fields, which this dataset doesn't have).
+function parseCsvLine(line){
+  const fields = [];
+  let cur = '', inQuotes = false;
+  for (let i = 0; i < line.length; i++){
+    const ch = line[i];
+    if (inQuotes){
+      if (ch === '"'){
+        if (line[i+1] === '"'){ cur += '"'; i++; }
+        else inQuotes = false;
+      } else cur += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ','){ fields.push(cur); cur = ''; }
+      else cur += ch;
+    }
+  }
+  fields.push(cur);
+  return fields;
+}
+
+function parseStationCsv(text){
+  const lines = text.split('\n').filter(l => l.trim().length);
+  const entries = [];
+  // First line is the header ("3alpha","station_name","latitude","longitude") — skip it.
+  for (let i = 1; i < lines.length; i++){
+    const [crs, rawName, lat, lon] = parseCsvLine(lines[i]);
+    const latNum = parseFloat(lat), lonNum = parseFloat(lon);
+    if (!crs || !rawName || isNaN(latNum) || isNaN(lonNum)) continue;
+    // This dataset suffixes every entry with "Rail Station" (e.g. "Wigan
+    // North Western Rail Station") — stripped here to match the plain
+    // names already shown throughout the app (station boards, calling
+    // points, the picker itself).
+    const name = rawName.replace(/\s+Rail Station$/i, '').trim();
+    entries.push({ crs, name, lat: latNum, lon: lonNum });
+  }
+  return entries;
+}
+
 function buildStationIndex(entries, fetchedAt){
   const byCrs = new Map();
   const list = [];
   entries.forEach(e => {
     const name = e.name, crs = (e.crs || '').toUpperCase();
     if (!name || crs.length !== 3) return;
-    byCrs.set(crs, name);
-    list.push({ name, crs });
+    const record = { name, crs, lat: e.lat, lon: e.lon };
+    byCrs.set(crs, record);
+    list.push(record);
   });
   list.sort((a,b) => a.name.localeCompare(b.name));
   return { byCrs, list, fetchedAt };
@@ -3161,8 +3230,8 @@ async function loadStationIndex(force){
   }
   const resp = await fetch(STATION_LIST_URL);
   if (!resp.ok) throw new Error(`fetch failed (${resp.status})`);
-  const data = await resp.json();
-  const entries = (data.stations || []).map(s => ({ name: s['Station Name'], crs: s['CRS Code'] }));
+  const text = await resp.text();
+  const entries = parseStationCsv(text);
   if (!entries.length) throw new Error('came back empty');
   const fetchedAt = new Date().toISOString();
   try{ localStorage.setItem(STATION_LIST_KEY, JSON.stringify({ entries, fetchedAt })); }
@@ -3173,7 +3242,14 @@ async function loadStationIndex(force){
 
 function stationNameForCrs(crs){
   const c = (crs || '').toUpperCase();
-  return (stationIndexCache && stationIndexCache.byCrs.get(c)) || null;
+  const rec = stationIndexCache && stationIndexCache.byCrs.get(c);
+  return rec ? rec.name : null;
+}
+
+function stationCoordsForCrs(crs){
+  const c = (crs || '').toUpperCase();
+  const rec = stationIndexCache && stationIndexCache.byCrs.get(c);
+  return rec ? { lat: rec.lat, lon: rec.lon } : null;
 }
 
 // A text input that accepts either a station name or a 3-letter CRS
@@ -3534,6 +3610,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     isCancelled: !!cp.isCancelled,
     reason: cp.delayReason || cp.cancelReason || null,
     platform: cp.platform || null,
+    crs: cp.crs || null,
     raw: { st: cp.st, at: cp.at, et: cp.et },
   }));
   const here = [{
@@ -3544,6 +3621,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     reason: service.delayReason || service.cancelReason || null,
     isYourStation: true,
     platform: service.platform || null,
+    crs: train.fromLoc || null,
     raw: { std: service.std, sta: service.sta, etd: service.etd, eta: service.eta },
   }];
   const after = pointsFrom(service.subsequentCallingPoints).map(cp => ({
@@ -3557,6 +3635,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     isCancelled: !!cp.isCancelled,
     reason: cp.delayReason || cp.cancelReason || null,
     platform: cp.platform || null,
+    crs: cp.crs || null,
     raw: { st: cp.st, at: cp.at, et: cp.et },
   }));
   const points = [...before, ...here, ...after];
@@ -3856,7 +3935,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
           <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
           <span style="min-width:56px;">${timeHtml}</span>
           <span style="flex:1; text-align:right;">
-            <span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName || 'Unknown'}</span>
+            <span class="wx-badge" data-wx-idx="${i}" style="margin-right:6px; font-size:12.5px; white-space:nowrap;"></span><span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName || 'Unknown'}</span>
             <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}${platformText}</div>
             ${reasonHtml}
             ${debugHtml}
@@ -3869,10 +3948,123 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     }
   }).join('');
 
-  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished };
+  // Points worth fetching weather for: not already passed (a forecast for
+  // a station the train left an hour ago is meaningless), not cancelled
+  // (it's never actually going to stop there), and with a CRS code to
+  // resolve coordinates from at all — Darwin doesn't always supply one.
+  // dueAt is kept as a local wall-clock string (no timezone conversion)
+  // to match Open-Meteo's own local-time response format one-for-one —
+  // going via toISOString() here would silently shift by an hour
+  // whenever BST is in effect, since that forces UTC.
+  const weatherPoints = points
+    .map((p, i) => ({ idx: i, crs: p.crs, dueAt: pointDates[i] ? localWallClockString(pointDates[i]) : null }))
+    .filter(wp => wp.crs && wp.dueAt && !points[wp.idx].isCancelled && wp.idx >= lastPassedIdx);
+
+  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints };
 }
 
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
+
+// ---- Weather badges (novelty, live-progress screen only) ----
+// Open-Meteo — free, no API key, hourly forecast, good UK coverage via
+// the Met Office model among others. Called directly from the client:
+// no secret key involved (unlike Darwin), so there's nothing here that
+// needs a Cloudflare Worker in front of it.
+const WEATHER_API_URL = 'https://api.open-meteo.com/v1/forecast';
+// Same station coordinates the picker resolves names from — one shared
+// dataset rather than a second one that could disagree with it.
+// A point's forecast doesn't meaningfully change minute to minute, and
+// several calling points can round to the same hour — this just avoids
+// re-fetching identical data on every 60-second Darwin refresh. Purely
+// in-memory: no need for this to survive a page reload.
+const weatherCache = new Map(); // `${crs}|${hourKey}` -> { code, temp }
+const WEATHER_CACHE_TTL_MS = 20 * 60 * 1000;
+const weatherCacheTimestamps = new Map(); // same key -> Date.now() when cached
+
+// WMO weather codes (the standard Open-Meteo reports) collapsed down to
+// the four categories asked for — sun, cloud, rain, snow — rather than
+// trying to show a distinct icon per one of the ~30 real codes.
+function weatherIconForCode(code){
+  if (code === 0 || code === 1) return '☀️';
+  if ([2,3,45,48].includes(code)) return '☁️';
+  if ([71,73,75,77,85,86].includes(code)) return '❄️';
+  if ([51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99].includes(code)) return '🌧️';
+  return '☁️'; // unrecognised code — cloud is the safest generic fallback
+}
+
+// Formats a Date using its *local* wall-clock components (no timezone
+// conversion) as "YYYY-MM-DDTHH:mm:ss" — deliberately not toISOString(),
+// which forces UTC and would shift the hour whenever BST is in effect.
+function localWallClockString(date){
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function hourKeyFor(localWallClock){
+  // Both this and Open-Meteo's own hourly.time entries (requested with
+  // timezone=Europe/London) are local wall-clock strings in the same
+  // "YYYY-MM-DDTHH..." shape — truncating to the hour is enough to match
+  // them directly, with no Date parsing or timezone conversion involved
+  // on either side.
+  return localWallClock.slice(0, 13);
+}
+
+// Fetches (or reads from cache) weather for a batch of { idx, crs, dueAt }
+// points, returning a Map of idx -> { icon, temp }. Never throws — a
+// failure here should just mean no weather badges show up, not that the
+// train-tracking screen around it breaks.
+async function fetchWeatherForPoints(weatherPoints){
+  const results = new Map();
+  if (!weatherEnabled || !weatherPoints.length) return results;
+
+  const now = Date.now();
+  const toFetch = []; // { idx, crs, lat, lon, hourKey }
+  for (const wp of weatherPoints){
+    const coords = stationCoordsForCrs(wp.crs);
+    if (!coords) continue; // station not in the cached list yet — skip quietly
+    const hourKey = hourKeyFor(wp.dueAt);
+    const cacheKey = `${wp.crs}|${hourKey}`;
+    const cached = weatherCache.get(cacheKey);
+    const cachedAt = weatherCacheTimestamps.get(cacheKey);
+    if (cached && cachedAt && (now - cachedAt) < WEATHER_CACHE_TTL_MS){
+      results.set(wp.idx, cached);
+    } else {
+      toFetch.push({ idx: wp.idx, crs: wp.crs, lat: coords.lat, lon: coords.lon, hourKey });
+    }
+  }
+  if (!toFetch.length) return results;
+
+  // One request covers every still-uncached point at once — Open-Meteo
+  // accepts comma-separated coordinate lists for exactly this.
+  const lats = toFetch.map(f => f.lat).join(',');
+  const lons = toFetch.map(f => f.lon).join(',');
+  const url = `${WEATHER_API_URL}?latitude=${lats}&longitude=${lons}&hourly=temperature_2m,weather_code&timezone=Europe%2FLondon&forecast_days=2`;
+  let data;
+  try{
+    const resp = await fetch(url);
+    if (!resp.ok) return results; // fail quietly — see comment above
+    data = await resp.json();
+  }catch(e){ return results; }
+
+  // A single-location request returns one object; multiple locations
+  // return an array in the same order they were requested in.
+  const perLocation = Array.isArray(data) ? data : [data];
+  toFetch.forEach((f, i) => {
+    const loc = perLocation[i];
+    if (!loc || !loc.hourly || !Array.isArray(loc.hourly.time)) return;
+    const hourIdx = loc.hourly.time.findIndex(t => t.startsWith(f.hourKey));
+    if (hourIdx === -1) return; // requested time outside the 2-day window returned
+    const code = loc.hourly.weather_code[hourIdx];
+    const temp = loc.hourly.temperature_2m[hourIdx];
+    if (code === undefined || temp === undefined || temp === null) return;
+    const entry = { icon: weatherIconForCode(code), temp: Math.round(temp) };
+    const cacheKey = `${f.crs}|${f.hourKey}`;
+    weatherCache.set(cacheKey, entry);
+    weatherCacheTimestamps.set(cacheKey, now);
+    results.set(f.idx, entry);
+  });
+  return results;
+}
 
 function openTrainProgress(train, service){
   // See activeTrainProgressCleanup above — never let two of these run
@@ -3997,6 +4189,25 @@ function openTrainProgress(train, service){
   }
   positionBlobAndLine(initial.lastPassedIdx, initial.fraction);
 
+  // Fetches and injects weather badges for the given points, entirely
+  // after the fact — the rows themselves have already rendered and
+  // positioned by the time this resolves, so a slow or failed weather
+  // fetch can never hold up or affect the actual train-tracking display.
+  async function applyWeather(weatherPoints, lastPassedIdx, fraction){
+    if (!weatherEnabled || !weatherPoints || !weatherPoints.length) return;
+    const results = await fetchWeatherForPoints(weatherPoints);
+    if (!instanceActive || !overlay.isConnected || !results.size) return;
+    results.forEach((wx, idx) => {
+      const badge = overlay.querySelector(`[data-wx-idx="${idx}"]`);
+      if (badge) badge.textContent = `${wx.icon} ${wx.temp}° `;
+    });
+    // Badges add a little width/height to their row — re-measure so the
+    // progress line and blob stay correctly aligned against the real
+    // rendered layout rather than where it was before they appeared.
+    positionBlobAndLine(lastPassedIdx, fraction, 'auto');
+  }
+  applyWeather(initial.weatherPoints, initial.lastPassedIdx, initial.fraction);
+
   function rebuildDisplay(){
     const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
     const rowsEl = overlay.querySelector('#train-progress-rows');
@@ -4008,6 +4219,7 @@ function openTrainProgress(train, service){
     const reasonToggle = document.getElementById('show-all-reasons-toggle');
     if (reasonToggleWrap) reasonToggleWrap.style.display = rebuilt.anyReasonSuppressed ? '' : 'none';
     if (reasonToggle) reasonToggle.textContent = showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway';
+    applyWeather(rebuilt.weatherPoints, rebuilt.lastPassedIdx, rebuilt.fraction);
     return rebuilt;
   }
 
@@ -4083,6 +4295,7 @@ function openTrainProgress(train, service){
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
         positionBlobAndLine(fresh.lastPassedIdx, fresh.fraction);
+        applyWeather(fresh.weatherPoints, fresh.lastPassedIdx, fresh.fraction);
         if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
         if (reasonToggleWrap) reasonToggleWrap.style.display = fresh.anyReasonSuppressed ? '' : 'none';
@@ -4126,6 +4339,7 @@ function openTrainProgress(train, service){
       if (rowsEl) rowsEl.innerHTML = stale.rowsHtml;
       if (summaryEl) summaryEl.innerHTML = stale.summaryHtml;
       positionBlobAndLine(stale.lastPassedIdx, stale.fraction);
+      applyWeather(stale.weatherPoints, stale.lastPassedIdx, stale.fraction);
       if (reasonToggleWrap) reasonToggleWrap.style.display = stale.anyReasonSuppressed ? '' : 'none';
       if (offlineBanner) offlineBanner.style.display = 'block';
       if (blobEl) blobEl.classList.add('blob-pulsing');
