@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.20:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.21:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -933,6 +933,7 @@ async function saveDelayClaims(){
 // first spotted it from, and even across closing/reopening the app.
 let trackedTrains = []; // [{ serviceId, label, fromLoc, addedAt }]
 const TRACKED_TRAIN_MAX_AGE_MS = 6 * 60 * 60 * 1000; // stop tracking after 6 hours regardless — a journey this long has almost certainly finished
+const TRACKED_TRAIN_MAX = 5; // matches the cap enforced when a train is opened (see openTrainProgress) — kept in one place so the "+ Track a train" flow can check it before adding, rather than only finding out after something's already been silently dropped
 
 // "I think you're on this train" detection
 const GEOFENCE_RADIUS_M = 500; // informed by real field-test readings — Crewe/Wigan both fall well inside this
@@ -3433,6 +3434,20 @@ function openLiveScreen(initialSubTab){
         const serviceId = row.dataset.debugServiceId;
         const label = row.dataset.debugLabel;
         const fromLoc = row.dataset.debugFrom;
+        // Opening a train you've already got tracked just refreshes its
+        // position — no new slot needed. Only a genuinely new one needs
+        // checking against the cap, and needs checking *before* it's
+        // added — the cap inside openTrainProgress enforces the limit
+        // either way, but silently, by dropping whichever tracked train
+        // is oldest. That's the right fallback for it being hit some
+        // other way, but here, where the person's deliberately choosing
+        // to track something new, they should find out and get the
+        // choice, not lose an existing one without being told.
+        const alreadyTracked = trackedTrains.some(t => t.serviceId === serviceId);
+        if (!alreadyTracked && trackedTrains.length >= TRACKED_TRAIN_MAX){
+          row.innerHTML = `<span style="color:#ff8b7e; font-size:12px;">You're tracking ${TRACKED_TRAIN_MAX} already — remove one from the list below first.</span>`;
+          return;
+        }
         row.style.opacity = '0.5';
         row.style.pointerEvents = 'none';
         try{
@@ -3452,9 +3467,10 @@ function openLiveScreen(initialSubTab){
 
   function renderTrackedTab(){
     bodyEl.innerHTML = `
-      <div id="tracked-add-toggle" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">${showAddForm ? 'Cancel' : '+ Track a train'}</div>
+      ${showAddForm ? '' : `<div id="tracked-add-toggle" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">+ Track a train</div>`}
       <div id="tracked-add-form" style="display:${showAddForm ? 'block' : 'none'}; margin-bottom:16px;">
-        <div id="tracked-picker-row" style="display:flex; gap:8px; margin-bottom:6px;"></div>
+        <div id="tracked-picker-row" style="display:flex; gap:8px; margin-bottom:10px;"></div>
+        <div id="tracked-add-cancel" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:10px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">Cancel</div>
         <div id="tracked-station-list-status" style="font-size:11.5px; color:var(--ink-dim); margin-bottom:10px;">Loading station list…</div>
         <button class="save-btn" id="tracked-search-btn">Search</button>
         <div id="tracked-search-results" style="margin-top:14px;"></div>
@@ -3463,8 +3479,14 @@ function openLiveScreen(initialSubTab){
     `;
     wireTrackedList();
 
-    document.getElementById('tracked-add-toggle').addEventListener('click', () => {
-      showAddForm = !showAddForm;
+    const addToggle = document.getElementById('tracked-add-toggle');
+    if (addToggle) addToggle.addEventListener('click', () => {
+      showAddForm = true;
+      renderTrackedTab();
+    });
+    const addCancel = document.getElementById('tracked-add-cancel');
+    if (addCancel) addCancel.addEventListener('click', () => {
+      showAddForm = false;
       renderTrackedTab();
     });
 
@@ -3506,6 +3528,10 @@ function openLiveScreen(initialSubTab){
       const toCrs = toPicker.getCode();
       if (!fromCrs){
         resultsEl.innerHTML = `<div class="sub">Pick a station to search from — type a name or a 3-letter code (e.g. EUS, BHM, GLC).</div>`;
+        return;
+      }
+      if (trackedTrains.length >= TRACKED_TRAIN_MAX){
+        resultsEl.innerHTML = `<div class="sub">You're already tracking ${TRACKED_TRAIN_MAX} trains — remove one from the list below before adding another.</div>`;
         return;
       }
       const fromLabel = fromPicker.getName() || fromCrs;
@@ -4164,7 +4190,7 @@ function openTrainProgress(train, service){
       : train.label;
     trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
     trackedTrains.unshift({ serviceId, label, fromLoc: train.fromLoc, addedAt });
-    trackedTrains = trackedTrains.slice(0, 5); // no need to keep more than a handful
+    trackedTrains = trackedTrains.slice(0, TRACKED_TRAIN_MAX); // no need to keep more than a handful
     saveTrackedTrains();
   }
 
