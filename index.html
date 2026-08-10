@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.20:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.20:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3452,7 +3452,7 @@ function openLiveScreen(initialSubTab){
 
   function renderTrackedTab(){
     bodyEl.innerHTML = `
-      <div id="tracked-add-toggle" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">${showAddForm ? '– Cancel' : '+ Track a train'}</div>
+      <div id="tracked-add-toggle" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">${showAddForm ? 'Cancel' : '+ Track a train'}</div>
       <div id="tracked-add-form" style="display:${showAddForm ? 'block' : 'none'}; margin-bottom:16px;">
         <div id="tracked-picker-row" style="display:flex; gap:8px; margin-bottom:6px;"></div>
         <div id="tracked-station-list-status" style="font-size:11.5px; color:var(--ink-dim); margin-bottom:10px;">Loading station list…</div>
@@ -3517,11 +3517,25 @@ function openLiveScreen(initialSubTab){
           return;
         }
         resultsEl.innerHTML = services.slice(0, 15).map(s => {
-          const dest = (s.destination && s.destination[0] && s.destination[0].locationName) || '?';
-          const statusText = (!s.etd || s.etd === 'On time') ? 'On time' : s.etd;
-          const label = `${s.std || '?'} ${fromLabel}→${dest}`;
+          // Darwin's board here is combined arrivals+departures: a result
+          // can be a service that departs FROM the searched station
+          // (has std), or one that only arrives there — e.g. terminates
+          // there — which has no std at all, only sta. Treating the
+          // searched station as "the origin" regardless produced results
+          // like "Manchester Victoria → Manchester Victoria" for a train
+          // actually arriving there from Clitheroe. origin/destination
+          // are always both present on the service itself no matter
+          // which kind of board entry this is, so those — not which
+          // station was searched from — are what determine the label.
+          const departsHere = !!s.std;
+          const origin = departsHere ? fromLabel : ((s.origin && s.origin[0] && s.origin[0].locationName) || '?');
+          const dest = departsHere ? ((s.destination && s.destination[0] && s.destination[0].locationName) || '?') : fromLabel;
+          const time = departsHere ? (s.std || '?') : (s.sta || s.eta || '?');
+          const liveField = departsHere ? s.etd : (s.eta || s.ata);
+          const statusText = (!liveField || liveField === 'On time') ? 'On time' : liveField;
+          const label = `${time} ${origin}→${dest}`;
           return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(label)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-            <span>${s.std || '?'} → ${escapeHtml(dest)}</span>
+            <span>${escapeHtml(time)} ${escapeHtml(origin)} → ${escapeHtml(dest)}</span>
             <span style="color:var(--ink-dim);">${escapeHtml(statusText)} ›</span>
           </div>`;
         }).join('');
