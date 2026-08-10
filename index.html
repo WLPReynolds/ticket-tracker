@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.18:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.19:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4001,9 +4001,13 @@ const weatherCacheTimestamps = new Map(); // same key -> Date.now() when cached
 
 // WMO weather codes (the standard Open-Meteo reports) collapsed down to
 // the four categories asked for — sun, cloud, rain, snow — rather than
-// trying to show a distinct icon per one of the ~30 real codes.
-function weatherIconForCode(code){
-  if (code === 0 || code === 1) return '☀️';
+// trying to show a distinct icon per one of the ~30 real codes. isDay
+// swaps a clear/mostly-clear reading to a moon rather than a sun once
+// it's actually dark — Open-Meteo's own astronomical sunrise/sunset
+// calculation, not just a guess from the clock. Only clear skies need
+// this: cloud/rain/snow look the same regardless of time of day.
+function weatherIconForCode(code, isDay){
+  if (code === 0 || code === 1) return isDay ? '☀️' : '🌙';
   if ([2,3,45,48].includes(code)) return '☁️';
   if ([71,73,75,77,85,86].includes(code)) return '❄️';
   if ([51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99].includes(code)) return '🌧️';
@@ -4065,10 +4069,13 @@ async function fetchWeatherForPoints(weatherPoints){
   if (!toFetch.length) return results;
 
   // One request covers every still-uncached point at once — Open-Meteo
-  // accepts comma-separated coordinate lists for exactly this.
+  // accepts comma-separated coordinate lists for exactly this. is_day is
+  // Open-Meteo's own astronomical sunrise/sunset calculation per hour —
+  // used to swap a clear-sky reading to a moon rather than a sun once
+  // it's genuinely dark, instead of a sun icon showing up at 23:30.
   const lats = toFetch.map(f => f.lat).join(',');
   const lons = toFetch.map(f => f.lon).join(',');
-  const url = `${WEATHER_API_URL}?latitude=${lats}&longitude=${lons}&hourly=temperature_2m,weather_code&timezone=Europe%2FLondon&forecast_days=2`;
+  const url = `${WEATHER_API_URL}?latitude=${lats}&longitude=${lons}&hourly=temperature_2m,weather_code,is_day&timezone=Europe%2FLondon&forecast_days=2`;
   let data;
   try{
     const resp = await fetch(url);
@@ -4086,8 +4093,9 @@ async function fetchWeatherForPoints(weatherPoints){
     if (hourIdx === -1) return; // requested time outside the 2-day window returned
     const code = loc.hourly.weather_code[hourIdx];
     const temp = loc.hourly.temperature_2m[hourIdx];
+    const isDay = Array.isArray(loc.hourly.is_day) ? loc.hourly.is_day[hourIdx] === 1 : true;
     if (code === undefined || temp === undefined || temp === null) return;
-    const entry = { icon: weatherIconForCode(code), temp: Math.round(temp) };
+    const entry = { icon: weatherIconForCode(code, isDay), temp: Math.round(temp) };
     const cacheKey = `${f.crs}|${f.hourKey}`;
     weatherCache.set(cacheKey, entry);
     weatherCacheTimestamps.set(cacheKey, now);
