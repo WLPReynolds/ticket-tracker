@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.17:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.18:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4016,6 +4016,18 @@ function hourKeyFor(localWallClock){
 async function fetchWeatherForPoints(weatherPoints){
   const results = new Map();
   if (!weatherEnabled || !weatherPoints.length) return results;
+
+  // Station coordinates come from the same cached list the picker uses —
+  // but nothing else in the app guarantees it's actually been loaded this
+  // session (previously it only got populated as a side effect of opening
+  // the debug "Track any train" screen, which is exactly why this worked
+  // sometimes and not others). Loading it here, keyed off its own cache,
+  // makes weather self-sufficient: instant from localStorage after the
+  // very first time ever, one real fetch before that.
+  if (!stationIndexCache){
+    try{ await loadStationIndex(false); }
+    catch(e){ return results; } // no station data at all — nothing to show, fail quietly
+  }
 
   const now = Date.now();
   const toFetch = []; // { idx, crs, lat, lon, hourKey }
