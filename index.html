@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.14:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.15:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3537,7 +3537,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     raw: { st: cp.st, at: cp.at, et: cp.et },
   }));
   const here = [{
-    locationName: STATION_COORDS[train.fromLoc] ? STATION_COORDS[train.fromLoc].name : train.fromLoc,
+    locationName: (STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc,
     schedTime: service.std || service.sta,
     liveTime: service.etd || service.std || service.sta,
     isCancelled: !!service.isCancelled,
