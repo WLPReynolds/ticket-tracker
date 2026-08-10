@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-09.22:12'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.09:09'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3274,15 +3274,19 @@ function openLiveDepartureBoard(){
 // whatever Darwin actually gave us — a literal status word ("On time",
 // "Delayed", "Cancelled") or a specific time to compare against schedule.
 function describePointStatus(schedTime, liveTime, isCancelled){
-  if (isCancelled) return { text: 'Cancelled', color: '#ff8b7e', minutesLate: null, minutesEarly: 0 };
-  if (!liveTime || liveTime === schedTime) return { text: 'On time', color: 'var(--good)', minutesLate: 0, minutesEarly: 0 };
-  if (liveTime === 'On time') return { text: 'On time', color: 'var(--good)', minutesLate: 0, minutesEarly: 0 };
-  if (liveTime === 'Delayed') return { text: 'Delayed', color: '#ff8b7e', minutesLate: null, minutesEarly: 0 };
-  if (!liveTime.includes(':')) return { text: liveTime, color: 'var(--ink-dim)', minutesLate: null, minutesEarly: 0 };
+  if (isCancelled) return { text: 'Cancelled', color: '#ff8b7e', minutesLate: null, minutesEarly: 0, confirmed: true };
+  // No live time at all, or it's identical to schedule because that's
+  // literally what got used as the fallback — this is the one case where
+  // we genuinely don't know anything, as opposed to every branch below,
+  // where Darwin gave us something real (even if just a status word).
+  if (!liveTime || liveTime === schedTime) return { text: 'On time', color: 'var(--good)', minutesLate: 0, minutesEarly: 0, confirmed: false };
+  if (liveTime === 'On time') return { text: 'On time', color: 'var(--good)', minutesLate: 0, minutesEarly: 0, confirmed: true };
+  if (liveTime === 'Delayed') return { text: 'Delayed', color: '#ff8b7e', minutesLate: null, minutesEarly: 0, confirmed: true };
+  if (!liveTime.includes(':')) return { text: liveTime, color: 'var(--ink-dim)', minutesLate: null, minutesEarly: 0, confirmed: true };
   // A live time with no scheduled time to compare against — Darwin has
   // occasionally been seen to omit it on a given poll for a given point.
   // Show what we've got rather than crashing the whole refresh over it.
-  if (!schedTime || !schedTime.includes(':')) return { text: liveTime, color: 'var(--ink-dim)', minutesLate: null, minutesEarly: 0 };
+  if (!schedTime || !schedTime.includes(':')) return { text: liveTime, color: 'var(--ink-dim)', minutesLate: null, minutesEarly: 0, confirmed: true };
 
   const schedMins = parseInt(schedTime.slice(0,2),10)*60 + parseInt(schedTime.slice(3,5),10);
   const liveMins = parseInt(liveTime.slice(0,2),10)*60 + parseInt(liveTime.slice(3,5),10);
@@ -3295,15 +3299,15 @@ function describePointStatus(schedTime, liveTime, isCancelled){
   // fold it back to the smallest equivalent difference instead.
   if (diff > 720) diff -= 1440;
   else if (diff < -720) diff += 1440;
-  if (diff === 0) return { text: 'On time', color: 'var(--good)', minutesLate: 0, minutesEarly: 0 };
+  if (diff === 0) return { text: 'On time', color: 'var(--good)', minutesLate: 0, minutesEarly: 0, confirmed: true };
   if (diff < 0){
     // Genuinely left ahead of schedule — rare, but worth calling out
     // distinctly rather than folding into "on time", since an early
     // departure is the one case where that label could actively mislead
     // someone who isn't already on the platform.
-    return { text: `${Math.abs(diff)} min early`, color: '#7fb8e0', minutesLate: 0, minutesEarly: Math.abs(diff) };
+    return { text: `${Math.abs(diff)} min early`, color: '#7fb8e0', minutesLate: 0, minutesEarly: Math.abs(diff), confirmed: true };
   }
-  return { text: `${diff} min late`, color: '#ff8b7e', minutesLate: diff, minutesEarly: 0 };
+  return { text: `${diff} min late`, color: '#ff8b7e', minutesLate: diff, minutesEarly: 0, confirmed: true };
 }
 
 // Adds a number of minutes to an "HH:MM" string, wrapping correctly
@@ -3600,7 +3604,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       // time" word for, despite the service clearly running late overall
       // — infer a rough real time from the known overall delay, clearly
       // marked as an estimate rather than presented as confirmed data.
-      const isInferred = !hasRealTime && i <= lastPassedIdx && status.minutesLate === 0 && knownOverallDelay > 0 && !p.isCancelled;
+      const isInferred = !hasRealTime && !status.confirmed && i <= lastPassedIdx && status.minutesLate === 0 && knownOverallDelay > 0 && !p.isCancelled;
       const inferredTime = isInferred ? addMinutesToTime(p.schedTime, knownOverallDelay) : null;
 
       let timeHtml, statusText, statusColor;
