@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.12:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-10.14:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3114,6 +3114,174 @@ function openTrackedTrains(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
+// ---- Station reference data (CRS code <-> full name) ----
+// Station names and codes change almost never, so rather than asking
+// for this on every visit, it's fetched once from a public dataset and
+// cached in localStorage indefinitely. "Refresh" (in the station
+// picker UI below) re-pulls it on demand, for the rare case a brand
+// new station doesn't resolve yet. Served via jsDelivr rather than
+// hitting the source GitHub repo directly — jsDelivr keeps a permanent
+// cached copy of whatever it's first served, so this keeps working
+// even if that small repo is ever renamed or taken down.
+const STATION_LIST_KEY = 'station-list-v1';
+const STATION_LIST_URL = 'https://cdn.jsdelivr.net/gh/AvGeekAlex/uk-train-stations-json@master/stations.json';
+
+let stationIndexCache = null; // { byCrs: Map, list: [{name,crs}], fetchedAt } — built once per page load
+
+function getCachedStationList(){
+  try{
+    const raw = localStorage.getItem(STATION_LIST_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+
+function buildStationIndex(entries, fetchedAt){
+  const byCrs = new Map();
+  const list = [];
+  entries.forEach(e => {
+    const name = e.name, crs = (e.crs || '').toUpperCase();
+    if (!name || crs.length !== 3) return;
+    byCrs.set(crs, name);
+    list.push({ name, crs });
+  });
+  list.sort((a,b) => a.name.localeCompare(b.name));
+  return { byCrs, list, fetchedAt };
+}
+
+// Instant from localStorage once cached; only hits the network the
+// first time ever, or when force is true (the manual refresh control).
+async function loadStationIndex(force){
+  if (!force && stationIndexCache) return stationIndexCache;
+  if (!force){
+    const cached = getCachedStationList();
+    if (cached && Array.isArray(cached.entries) && cached.entries.length){
+      stationIndexCache = buildStationIndex(cached.entries, cached.fetchedAt);
+      return stationIndexCache;
+    }
+  }
+  const resp = await fetch(STATION_LIST_URL);
+  if (!resp.ok) throw new Error(`fetch failed (${resp.status})`);
+  const data = await resp.json();
+  const entries = (data.stations || []).map(s => ({ name: s['Station Name'], crs: s['CRS Code'] }));
+  if (!entries.length) throw new Error('came back empty');
+  const fetchedAt = new Date().toISOString();
+  try{ localStorage.setItem(STATION_LIST_KEY, JSON.stringify({ entries, fetchedAt })); }
+  catch(e){ /* storage full — still usable for this session */ }
+  stationIndexCache = buildStationIndex(entries, fetchedAt);
+  return stationIndexCache;
+}
+
+function stationNameForCrs(crs){
+  const c = (crs || '').toUpperCase();
+  return (stationIndexCache && stationIndexCache.byCrs.get(c)) || null;
+}
+
+// A text input that accepts either a station name or a 3-letter CRS
+// code, with a live filtered dropdown, and always resolves to a
+// { code, name } pair. Falls back to a bare code (name left
+// unresolved) for a station not yet in the cached list — e.g. a
+// genuinely brand-new one — rather than blocking the search.
+function createStationPicker(opts){
+  const onChange = (opts && opts.onChange) || function(){};
+  const placeholder = (opts && opts.placeholder) || 'Station name or code';
+  const initialCode = opts && opts.initialCode;
+  const initialName = opts && opts.initialName;
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:relative; flex:1;';
+  const initialValue = initialCode ? (initialName ? `${initialName} (${initialCode})` : initialCode) : '';
+  wrap.innerHTML = `
+    <input type="text" class="station-picker-input" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(initialValue)}"
+      style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); box-sizing:border-box;" />
+    <div class="station-picker-dropdown" style="display:none; position:absolute; left:0; right:0; top:100%; margin-top:4px; background:var(--board-2); border:1px solid var(--line); border-radius:8px; max-height:220px; overflow-y:auto; z-index:20;"></div>
+  `;
+  const input = wrap.querySelector('.station-picker-input');
+  const dropdown = wrap.querySelector('.station-picker-dropdown');
+  let selected = initialCode ? { code: initialCode.toUpperCase(), name: initialName || null } : { code: null, name: null };
+
+  function closeDropdown(){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; }
+
+  function pick(entry){
+    selected = { code: entry.crs, name: entry.name };
+    input.value = `${entry.name} (${entry.crs})`;
+    closeDropdown();
+    onChange(selected.code, selected.name);
+  }
+
+  function renderMatches(q){
+    const idx = stationIndexCache;
+    const query = (q || '').trim();
+    if (!idx || !query){ closeDropdown(); return; }
+    const lowerQ = query.toLowerCase();
+    const upperQ = query.toUpperCase();
+    let matches = idx.list.filter(e => e.name.toLowerCase().includes(lowerQ) || e.crs === upperQ);
+    matches.sort((a,b) => {
+      const aExact = a.crs === upperQ ? 0 : 1, bExact = b.crs === upperQ ? 0 : 1;
+      if (aExact !== bExact) return aExact - bExact;
+      const aStarts = a.name.toLowerCase().startsWith(lowerQ) ? 0 : 1;
+      const bStarts = b.name.toLowerCase().startsWith(lowerQ) ? 0 : 1;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return a.name.localeCompare(b.name);
+    });
+    matches = matches.slice(0, 8);
+    if (!matches.length){
+      if (/^[A-Z]{3}$/.test(upperQ)){
+        dropdown.innerHTML = `<div style="padding:10px 12px; font-size:12.5px; color:var(--ink-dim);">Not in the station list — will be used as typed: <strong style="color:var(--ink);">${escapeHtml(upperQ)}</strong></div>`;
+        dropdown.style.display = 'block';
+      } else {
+        closeDropdown();
+      }
+      return;
+    }
+    dropdown.innerHTML = matches.map(m => `
+      <div class="station-picker-option" data-crs="${m.crs}" style="padding:10px 12px; cursor:pointer; border-bottom:1px solid var(--line); -webkit-user-select:none; user-select:none;">
+        <span style="color:var(--ink);">${escapeHtml(m.name)}</span>
+        <span style="color:var(--ink-dim); float:right;">${m.crs}</span>
+      </div>
+    `).join('');
+    dropdown.style.display = 'block';
+    dropdown.querySelectorAll('.station-picker-option').forEach(el => {
+      // mousedown, not click — fires before the input's own blur handler
+      // would otherwise close the dropdown first and swallow the tap.
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const entry = matches.find(m => m.crs === el.dataset.crs);
+        if (entry) pick(entry);
+      });
+    });
+  }
+
+  input.addEventListener('input', () => {
+    selected = { code: null, name: null }; // typing invalidates the old selection until re-confirmed
+    renderMatches(input.value);
+  });
+  input.addEventListener('focus', () => { if (input.value) renderMatches(input.value); });
+  input.addEventListener('blur', () => {
+    setTimeout(() => {
+      closeDropdown();
+      if (selected.code) return; // already resolved via a dropdown pick
+      const raw = input.value.trim().toUpperCase();
+      if (/^[A-Z]{3}$/.test(raw)){
+        const name = stationNameForCrs(raw);
+        selected = { code: raw, name };
+        input.value = name ? `${name} (${raw})` : raw;
+        onChange(raw, name);
+      } else if (raw === ''){
+        selected = { code: null, name: null };
+        onChange(null, null);
+      }
+      // else: unresolved free text left as typed — no valid selection
+      // until it's fixed, same as leaving a required field blank.
+    }, 150);
+  });
+
+  return {
+    el: wrap,
+    getCode: () => selected.code,
+    getName: () => selected.name
+  };
+}
+
 // Debug-only tool: look up a live departure board for any station pair,
 // not just the user's own configured routes, and track any result from
 // it — for exercising tracking/refresh behaviour when none of the usual
@@ -3127,10 +3295,8 @@ function openDebugTrainSearch(){
     <div class="modal">
       <h3>Track any train (debug)</h3>
       <div class="sub">For testing only. Pulls a real live board for any station, so tracking features can be exercised even when none of your usual routes have a train running.</div>
-      <div style="display:flex; gap:8px; margin-bottom:10px;">
-        <input type="text" id="debug-from-crs" placeholder="From (e.g. EUS)" maxlength="3" style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); text-transform:uppercase;" />
-        <input type="text" id="debug-to-crs" placeholder="To (optional)" maxlength="3" style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); text-transform:uppercase;" />
-      </div>
+      <div id="debug-picker-row" style="display:flex; gap:8px; margin-bottom:6px;"></div>
+      <div id="debug-station-list-status" style="font-size:11.5px; color:var(--ink-dim); margin-bottom:10px;">Loading station list…</div>
       <button class="save-btn" id="debug-search-btn">Search</button>
       <div id="debug-search-results" style="margin-top:14px;"></div>
       <div class="modal-close" id="debug-search-close" style="margin-top:16px;">Close</div>
@@ -3139,6 +3305,36 @@ function openDebugTrainSearch(){
   document.body.appendChild(overlay);
 
   const resultsEl = document.getElementById('debug-search-results');
+
+  const fromPicker = createStationPicker({ placeholder: 'From: name or code' });
+  const toPicker = createStationPicker({ placeholder: 'To (optional)' });
+  document.getElementById('debug-picker-row').appendChild(fromPicker.el);
+  document.getElementById('debug-picker-row').appendChild(toPicker.el);
+
+  const stationStatusEl = document.getElementById('debug-station-list-status');
+  function stationListSummary(idx){
+    const date = idx.fetchedAt ? new Date(idx.fetchedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'unknown date';
+    return `${idx.list.length.toLocaleString()} stations · updated ${date}`;
+  }
+  function wireStationRefreshLink(){
+    const el = document.getElementById('debug-station-refresh-link');
+    if (el) el.addEventListener('click', () => refreshStationList(true));
+  }
+  async function refreshStationList(force){
+    if (!stationStatusEl.isConnected) return;
+    stationStatusEl.textContent = force ? 'Refreshing station list…' : 'Loading station list…';
+    try{
+      const idx = await loadStationIndex(force);
+      if (!stationStatusEl.isConnected) return;
+      stationStatusEl.innerHTML = `${stationListSummary(idx)} — <span id="debug-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Refresh</span>`;
+      wireStationRefreshLink();
+    }catch(e){
+      if (!stationStatusEl.isConnected) return;
+      stationStatusEl.innerHTML = `Couldn't load the station list (${escapeHtml(e.message)}) — codes still work, just no name lookup yet. <span id="debug-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Try again</span>`;
+      wireStationRefreshLink();
+    }
+  }
+  refreshStationList(false);
 
   function wireResultRows(){
     overlay.querySelectorAll('[data-debug-service-id]').forEach(row => {
@@ -3164,15 +3360,16 @@ function openDebugTrainSearch(){
   }
 
   document.getElementById('debug-search-btn').addEventListener('click', async () => {
-    const fromCrs = document.getElementById('debug-from-crs').value.trim().toUpperCase();
-    const toCrs = document.getElementById('debug-to-crs').value.trim().toUpperCase();
-    if (fromCrs.length !== 3){
-      resultsEl.innerHTML = `<div class="sub">Enter a 3-letter station code to search from (e.g. EUS, BHM, GLC).</div>`;
+    const fromCrs = fromPicker.getCode();
+    const toCrs = toPicker.getCode();
+    if (!fromCrs){
+      resultsEl.innerHTML = `<div class="sub">Pick a station to search from — type a name or a 3-letter code (e.g. EUS, BHM, GLC).</div>`;
       return;
     }
+    const fromLabel = fromPicker.getName() || fromCrs;
     resultsEl.innerHTML = `<div class="sub">Searching…</div>`;
     try{
-      const services = await fetchDebugBoard(fromCrs, toCrs.length === 3 ? toCrs : null);
+      const services = await fetchDebugBoard(fromCrs, toCrs);
       if (services.length === 0){
         resultsEl.innerHTML = `<div class="sub">No live services found for that station right now.</div>`;
         return;
@@ -3180,7 +3377,7 @@ function openDebugTrainSearch(){
       resultsEl.innerHTML = services.slice(0, 15).map(s => {
         const dest = (s.destination && s.destination[0] && s.destination[0].locationName) || '?';
         const statusText = (!s.etd || s.etd === 'On time') ? 'On time' : s.etd;
-        const label = `${s.std || '?'} ${fromCrs}→${dest}`;
+        const label = `${s.std || '?'} ${fromLabel}→${dest}`;
         return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(label)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
           <span>${s.std || '?'} → ${escapeHtml(dest)}</span>
           <span style="color:var(--ink-dim);">${escapeHtml(statusText)} ›</span>
