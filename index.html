@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.09:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.09:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -955,6 +955,15 @@ const SILENT_CONFIRM_MAX_DIFF_MIN = 5;
 let likelyTrainSuggestion = null; // { dateKey, direction, trainKey, label } — transient, not persisted
 let likelyTrainCheckTimer = null;
 let dismissedLikelyTrainKeys = new Set(); // avoids re-suggesting the same match repeatedly in one session
+// A passive, no-response-needed notice that the silent-confirm branch
+// above actually fired — the "no surprise, just quietly confirm it" path
+// otherwise leaves no trace anywhere the person would see it. Persisted
+// (unlike likelyTrainSuggestion) so it survives a reload/backgrounding
+// and genuinely stays up "until dismissed" rather than just for the
+// session — but only ever needs writing once per direction per day,
+// since confirmedTrains itself blocks the underlying check from firing
+// again for that direction once it's set.
+let silentConfirmBanner = null; // { dateKey, direction, trainKey, label } | null
 
 async function loadData(){
   try{
@@ -1041,6 +1050,15 @@ async function loadData(){
     const ct = localStorage.getItem('confirmed-trains');
     confirmedTrains = ct ? JSON.parse(ct) : {};
   }catch(e){ confirmedTrains = {}; }
+  try{
+    const scb = localStorage.getItem('silent-confirm-banner');
+    const parsed = scb ? JSON.parse(scb) : null;
+    // Only meaningful for today — a leftover banner from a previous day
+    // (e.g. the app wasn't opened again before the day rolled over) has
+    // nothing left to dismiss; it should just be gone, not show up
+    // referencing yesterday's train.
+    silentConfirmBanner = (parsed && parsed.dateKey === fmtKey(new Date())) ? parsed : null;
+  }catch(e){ silentConfirmBanner = null; }
   try{
     const dc = localStorage.getItem('delay-claims');
     delayClaims = dc ? JSON.parse(dc) : {};
@@ -1169,6 +1187,12 @@ async function saveRailPerfCache(){
 async function saveConfirmedTrains(){
   try{ localStorage.setItem('confirmed-trains', JSON.stringify(confirmedTrains)); }
   catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveSilentConfirmBanner(){
+  try{
+    if (silentConfirmBanner) localStorage.setItem('silent-confirm-banner', JSON.stringify(silentConfirmBanner));
+    else localStorage.removeItem('silent-confirm-banner');
+  }catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveTrackedTrains(){
   try{ localStorage.setItem('tracked-trains', JSON.stringify(trackedTrains)); }
@@ -2933,6 +2957,13 @@ async function checkLikelyTrain(){
       if (!confirmedTrains[todayKeyLocal]) confirmedTrains[todayKeyLocal] = {};
       confirmedTrains[todayKeyLocal][direction] = closest.key;
       saveConfirmedTrains();
+      // A passive notice that this just happened — otherwise the silent
+      // path lives up to its name a little too well, and the only way to
+      // know it fired at all is to go check "Confirm train used" and
+      // look for yourself.
+      silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: closest.key, label: closest.label };
+      saveSilentConfirmBanner();
+      renderSilentConfirmBanner();
       render();
     }
   }
@@ -5353,9 +5384,47 @@ function openImportHistory(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
+// ---- Silent-confirm banner ----
+// Lives entirely outside the normal render() cycle, as its own
+// fixed-position element appended once at startup — render() rebuilds
+// #app wholesale on every call, and this needs to stay visible and
+// stable across that (including while a full-screen modal like train
+// progress is open), not get wiped out and rebuilt with it. Mounted
+// once in init(); after that, only mountSilentConfirmBanner()'s own
+// dismiss handler and renderSilentConfirmBanner() (called whenever
+// silentConfirmBanner changes) ever touch it again.
+function mountSilentConfirmBanner(){
+  const el = document.createElement('div');
+  el.id = 'silent-confirm-banner';
+  el.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:200; display:none; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; padding-top:calc(10px + env(safe-area-inset-top)); background:rgba(111,191,138,0.92); color:#0f2a1a; font-size:13.5px; font-weight:600; box-shadow:0 2px 8px rgba(0,0,0,0.25);';
+  el.innerHTML = `
+    <span id="silent-confirm-banner-text"></span>
+    <span id="silent-confirm-banner-dismiss" style="cursor:pointer; font-weight:800; font-size:16px; line-height:1; padding:6px 8px; margin:-6px -6px -6px 0; -webkit-user-select:none; user-select:none; touch-action:manipulation;">×</span>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('silent-confirm-banner-dismiss').addEventListener('click', () => {
+    silentConfirmBanner = null;
+    saveSilentConfirmBanner();
+    renderSilentConfirmBanner();
+  });
+  renderSilentConfirmBanner(); // reflect whatever was loaded from storage
+}
+function renderSilentConfirmBanner(){
+  const el = document.getElementById('silent-confirm-banner');
+  const textEl = document.getElementById('silent-confirm-banner-text');
+  if (!el || !textEl) return;
+  if (silentConfirmBanner){
+    textEl.textContent = `Confirmed: your usual ${silentConfirmBanner.label}`;
+    el.style.display = 'flex';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 (async function init(){
   await loadData();
   render();
+  mountSilentConfirmBanner();
 
   // Check for bank holidays after the initial render so startup isn't
   // delayed by a network call. Re-render only if new dates were filled in.
