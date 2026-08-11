@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.11:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.11:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4261,8 +4261,7 @@ function openTrainProgress(train, service){
       </div>
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
       <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
-      <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:4px;">${initial.summaryHtml}</div>
-      <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); margin-bottom:2px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
+      <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:10px;">${initial.summaryHtml}</div>
       <div id="train-progress-reason-toggle-wrap" style="margin-bottom:10px; ${initial.anyReasonSuppressed ? '' : 'display:none;'}">
         <span id="show-all-reasons-toggle" style="font-size:12px; text-decoration:underline; color:var(--ink-dim); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
       </div>
@@ -4273,6 +4272,7 @@ function openTrainProgress(train, service){
           <div id="train-progress-rows">${initial.rowsHtml}</div>
         </div>
       </div>
+      <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); text-align:right; padding-top:10px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
       <div class="modal-close" id="train-progress-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
