@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.11:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.11:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4270,9 +4270,9 @@ function openTrainProgress(train, service){
           <div id="train-progress-line" style="position:absolute; left:11px; top:0px; width:2px; height:0px; background:var(--line);"></div>
           <div id="train-progress-blob" style="position:absolute; left:6px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
           <div id="train-progress-rows">${initial.rowsHtml}</div>
+          <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); text-align:right; margin-top:5px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
         </div>
       </div>
-      <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); text-align:right; padding-top:10px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
       <div class="modal-close" id="train-progress-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
