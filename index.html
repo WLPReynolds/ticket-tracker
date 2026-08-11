@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.19:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.19:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -866,9 +866,16 @@ const DEFAULT_RAIL_TRAINS = [
   { key: 'pm-1831', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1831', label: '18:31' },
 ];
 
-// Approximate station coordinates — precise enough for a rough geofencing
-// test; worth refining with a proper lookup later if this becomes a real
-// feature rather than a proof of concept.
+// Crewe and Wigan North Western: manually verified, field-tested
+// coordinates — gathered on-site (via a since-removed temporary debug
+// tool for capturing precise coordinates in and around each station),
+// not looked up from the official/public dataset. These were found to
+// differ from official coordinates in ways that matter for this app's
+// geofencing, so they intentionally override the general station
+// dataset below for these two stations specifically. Do not replace
+// these with dataset-derived coordinates — the dataset remains the
+// right fallback for every other station, and for names generally
+// (see stationNameForCrs), just not for Crewe/Wigan's coordinates.
 const STATION_COORDS = {
   CRE: { lat: 53.0896, lon: -2.4333, name: 'Crewe' },
   WGN: { lat: 53.5433, lon: -2.6326, name: 'Wigan North Western' },
@@ -1145,24 +1152,20 @@ async function loadData(){
   try{
     const tt = localStorage.getItem('tracked-trains');
     trackedTrains = tt ? JSON.parse(tt) : [];
+    // Elapsed-time expiry only — deliberately not tied to the calendar
+    // day. A previous version also cleared the whole list outright on
+    // the first app open of a new day, on the reasoning that a train
+    // tracked yesterday evening has no business surviving into this
+    // morning's commute. But that only ever fired at app-load, so a
+    // genuinely overnight service tracked at 23:00 and still running
+    // when the app was reopened at 00:05 would be wiped outright, not
+    // just stale-looking — the exact case this app's own midnight-aware
+    // date logic elsewhere is built to handle correctly. Tracked-train
+    // persistence should follow the journey's actual lifetime, which
+    // this age check already does correctly across a midnight crossing,
+    // not the calendar date.
     const now = Date.now();
     trackedTrains = trackedTrains.filter(t => (now - t.addedAt) < TRACKED_TRAIN_MAX_AGE_MS);
-
-    // Also clear the whole list outright on the first app open of a new
-    // calendar day — a train tracked yesterday evening has no business
-    // surviving into this morning's commute, even if it's inside the
-    // 6-hour window (e.g. tracked at 23:00, opened again at 04:00).
-    // Only acts when there's an actual prior day on record — a missing
-    // key (first run after this feature was added) must NOT be treated
-    // as evidence of a day change, or it wrongly wipes same-day tracking
-    // the very first time this code runs on a given phone.
-    const todayKeyForTracking = fmtKey(new Date());
-    const lastTrackedDay = localStorage.getItem('tracked-trains-last-day');
-    if (lastTrackedDay && lastTrackedDay !== todayKeyForTracking){
-      trackedTrains = [];
-      localStorage.setItem('tracked-trains', JSON.stringify(trackedTrains));
-    }
-    localStorage.setItem('tracked-trains-last-day', todayKeyForTracking);
   }catch(e){ trackedTrains = []; }
   try{
     const cpsc = localStorage.getItem('confirmed-point-status-cache');
@@ -2690,7 +2693,7 @@ const BACKUP_KEYS = [
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
   'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
   'ticket-period-start','ticket-purchases','ticket-seed-imported','ticket-travel-overrides',
-  'tracked-trains','tracked-trains-last-day'
+  'tracked-trains'
 ];
 
 function exportBackup(){
@@ -4399,7 +4402,7 @@ function openTrainProgress(train, service){
     // with a .toLoc need this — the debug tool and a re-tracked entry
     // already carry a complete label.
     const label = train.toLoc
-      ? `${train.label} ${(STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || train.fromLoc}→${(STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || train.toLoc}`
+      ? `${train.label} ${(STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc}→${(STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || stationNameForCrs(train.toLoc) || train.toLoc}`
       : train.label;
     trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
     trackedTrains.unshift({ serviceId, label, fromLoc: train.fromLoc, addedAt });
