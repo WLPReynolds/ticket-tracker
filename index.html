@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.22:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.23:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3774,14 +3774,24 @@ function openLiveScreen(initialSubTab){
           // reuses this text either way — it's rebuilt from the real
           // calling points once they're available — but this is still
           // what's visible here in the results list itself.)
-          const displayText = departsHere
-            ? `${time} Departure from ${origin} to ${dest}`
-            : `${time} Arrival at ${dest} from ${origin}`;
+          const descriptionText = departsHere
+            ? `Departure from ${origin} to ${dest}`
+            : `Arrival at ${dest} from ${origin}`;
+          const displayText = `${time} ${descriptionText}`;
           const liveField = departsHere ? s.etd : (s.eta || s.ata);
           const statusText = (!liveField || liveField === 'On time') ? 'On time' : liveField;
-          return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(displayText)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-            <span>${escapeHtml(displayText)}</span>
-            <span style="color:var(--ink-dim);">${escapeHtml(statusText)} ›</span>
+          // Three columns (time / description / status) rather than the
+          // usual two — this description is a full sentence and can run
+          // to two lines on a narrow phone screen, and a plain two-column
+          // flex row put the status off awkwardly to the side of the
+          // wrapped text rather than pinned cleanly to the top. Grid with
+          // top alignment keeps time and status both anchored to the
+          // first line regardless of how many lines the description
+          // itself wraps to.
+          return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(displayText)}" data-debug-from="${fromCrs}" style="display:grid; grid-template-columns:44px 1fr auto; column-gap:8px; align-items:start; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+            <span style="color:var(--ink-dim); white-space:nowrap;">${escapeHtml(time)}</span>
+            <span>${escapeHtml(descriptionText)}</span>
+            <span style="color:var(--ink-dim); text-align:right; white-space:nowrap;">${escapeHtml(statusText)} ›</span>
           </div>`;
         }).join('');
         wireAddFormResultRows();
