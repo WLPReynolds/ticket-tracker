@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-10.21:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.09:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3864,7 +3864,18 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       const afterLastStatus = describePointStatus(afterLast.schedTime, afterLast.liveTime, afterLast.isCancelled);
       if (afterLastStatus.minutesLate !== null && afterLastStatus.minutesLate > 0){
         overallStatus = afterLastStatus;
-      } else if (overallStatus.minutesLate === null || overallStatus.minutesLate === 0){
+      } else if (overallStatus.minutesLate === null || (overallStatus.minutesLate === 0 && !overallStatus.confirmed)){
+        // Genuinely confirmed on time (or early) at the current point is
+        // real, current information — not the same as having no data.
+        // The scan below exists to find a usable figure when there's
+        // truly nothing to go on (unconfirmed "Delayed", or no live time
+        // at all yet), but it was also firing whenever the current point
+        // had *resolved back* to on time, walking back through the
+        // entire already-passed journey for the first old delay it could
+        // find — e.g. reporting a 2-minute delay from Wigan as the
+        // train's current status long after Preston, Lancaster and
+        // Oxenholme had all confirmed it back on schedule. Only search
+        // when there's actually nothing confirmed to trust instead.
         // Neither the passed point nor the very next one has a usable
         // figure — scan further ahead, then behind, for the first real
         // confirmed number anywhere in the journey.
