@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.11:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.12:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1859,7 +1859,7 @@ function render(){
   // Hamburger menu items, built as a weighted list so ordering is
   // controlled by 'weight' rather than by where an item happens to sit in
   // this template — new items default to the main group, and anything
-  // given a high weight (like Import historical data) always sorts to
+  // given a high weight (like Bulk import comments) always sorts to
   // the bottom, however many other items get added later.
   const earlyDismissedCheck = !!dismissedMonths[fmtKey(getPayPeriodByOffset(today, 0).start)];
   const menuItems = [
@@ -1882,7 +1882,7 @@ function render(){
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
   menuItems.push({ id: 'weather-toggle-link', label: weatherEnabled ? 'Weather on live progress: On' : 'Weather on live progress: Off', weight: 20 });
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
-  menuItems.push({ id: 'import-history-link', label: 'Import historical data', weight: 100 });
+  menuItems.push({ id: 'import-history-link', label: 'Bulk import comments', weight: 100 });
   menuItems.push({ id: 'debug-mode-link', label: debugModeEnabled ? 'Debug mode: On' : 'Debug mode: Off', weight: 110 });
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
@@ -4270,7 +4270,7 @@ function openTrainProgress(train, service){
           <div id="train-progress-line" style="position:absolute; left:11px; top:0px; width:2px; height:0px; background:var(--line);"></div>
           <div id="train-progress-blob" style="position:absolute; left:6px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
           <div id="train-progress-rows">${initial.rowsHtml}</div>
-          <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); text-align:right; margin-top:5px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
+          <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); margin-top:5px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
         </div>
       </div>
       <div class="modal-close" id="train-progress-close-btn" style="margin-top:16px;">Close</div>
@@ -5335,8 +5335,8 @@ function openImportHistory(){
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h3>Import historical data</h3>
-      <div class="sub">Paste a JSON object of date → comment entries, e.g. from an old spreadsheet export. Existing entries for the same date are kept as-is; only blank dates get filled in.</div>
+      <h3>Bulk import comments</h3>
+      <div class="sub">Paste a JSON object of date → comment entries — WFH, holidays, or anything else — e.g. from an old spreadsheet export. Existing entries for the same date are kept as-is; only blank dates get filled in.</div>
       <textarea id="import-textarea" rows="8" style="width:100%; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:'Courier New',monospace; font-size:13px; margin-bottom:12px;" placeholder='{"2025-09-26": "WFH", "2025-11-10": "HOLIDAY"}'></textarea>
       <div id="import-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;"></div>
       <button class="save-btn" id="import-save-btn">Import</button>
