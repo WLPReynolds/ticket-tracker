@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.21:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.21:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3023,6 +3023,29 @@ function liveTimeToDate(hhmm, referenceDate){
   return d;
 }
 
+// A bare "HH:MM" could plausibly belong to yesterday, today, or tomorrow
+// relative to referenceDate — this picks whichever is actually closest.
+// Extracted from the midnight-crossing fix in buildTrainProgress (still
+// used there for the first calling point) so the same reasoning can be
+// reused anywhere else a scheduled time needs to be compared against
+// "now" — e.g. the polling cadence, which had its own, simpler
+// same-day-only version of this that broke for a service due just after
+// midnight.
+function closestDateForTime(hhmm, referenceDate){
+  const base = liveTimeToDate(hhmm, referenceDate);
+  if (!base) return null;
+  let best = base, bestDiff = Math.abs(best.getTime() - referenceDate.getTime());
+  const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
+  for (const dayOffset of [-1, 1]){
+    const candidate = new Date(referenceDate);
+    candidate.setDate(candidate.getDate() + dayOffset);
+    candidate.setHours(h, m, 0, 0);
+    const diff = Math.abs(candidate.getTime() - referenceDate.getTime());
+    if (diff < bestDiff){ bestDiff = diff; best = candidate; }
+  }
+  return best;
+}
+
 // The core check: are you plausibly at the station right now, and is an
 // earlier (delayed) configured train about to leave in place of your
 // nominally-expected one? Deliberately conservative — only fires when
@@ -3743,11 +3766,19 @@ function openLiveScreen(initialSubTab){
           const origin = departsHere ? fromLabel : ((s.origin && s.origin[0] && s.origin[0].locationName) || '?');
           const dest = departsHere ? ((s.destination && s.destination[0] && s.destination[0].locationName) || '?') : fromLabel;
           const time = departsHere ? (s.std || '?') : (s.sta || s.eta || '?');
+          // For an arrival-only record, `time` is when it arrives at
+          // `dest`, not when it departs `origin` — the label previously
+          // read identically either way (e.g. "18:59 Manchester
+          // Piccadilly → Crewe"), which looks exactly like a departure
+          // time even though 18:59 was really the arrival at Crewe (the
+          // real departure had been 18:07). Marked explicitly instead of
+          // relying on the reader to infer it from context.
+          const timeText = departsHere ? time : `${time} (arr)`;
           const liveField = departsHere ? s.etd : (s.eta || s.ata);
           const statusText = (!liveField || liveField === 'On time') ? 'On time' : liveField;
-          const label = `${time} ${origin}→${dest}`;
+          const label = `${timeText} ${origin}→${dest}`;
           return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(label)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-            <span>${escapeHtml(time)} ${escapeHtml(origin)} → ${escapeHtml(dest)}</span>
+            <span>${escapeHtml(timeText)} ${escapeHtml(origin)} → ${escapeHtml(dest)}</span>
             <span style="color:var(--ink-dim);">${escapeHtml(statusText)} ›</span>
           </div>`;
         }).join('');
@@ -4013,18 +4044,8 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   if (pointDates[0]){
     const hhmm = (scheduleTime(points[0]) || '').replace(':', '');
     if (hhmm.length >= 4){
-      const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
-      if (!isNaN(h) && !isNaN(m)){
-        let best = pointDates[0], bestDiff = Math.abs(best.getTime() - now.getTime());
-        for (const dayOffset of [-1, 1]){
-          const candidate = new Date(now);
-          candidate.setDate(candidate.getDate() + dayOffset);
-          candidate.setHours(h, m, 0, 0);
-          const diff = Math.abs(candidate.getTime() - now.getTime());
-          if (diff < bestDiff){ bestDiff = diff; best = candidate; }
-        }
-        pointDates[0] = best;
-      }
+      const closest = closestDateForTime(hhmm, now);
+      if (closest) pointDates[0] = closest;
     }
   }
   // A journey can cross midnight partway through (e.g. departs 23:58,
@@ -4483,6 +4504,20 @@ function openTrainProgress(train, service){
   // reposition the blob.
   let renderGeneration = 0;
   const serviceId = train.serviceId || service.serviceID || null;
+  // A configured train's own .label is just its departure time (e.g.
+  // "17:31") — fine for the compact board row it came from, but not
+  // enough detail once it's the title of this screen, or sitting in the
+  // tracked list alongside entries from elsewhere that already show a
+  // full route. Computed once, here, and reused for both — previously
+  // this only happened for the tracked-list save, leaving the title
+  // itself showing just the bare time when opened from "Your trains".
+  // Manual override first (covers Crewe/Wigan, this app's actual
+  // regular stations), then the full station dataset, then the bare
+  // code as a last resort. Only trains with a .toLoc need this — the
+  // debug tool and a re-tracked entry already carry a complete label.
+  const displayLabel = train.toLoc
+    ? `${train.label} ${(STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc}→${(STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || stationNameForCrs(train.toLoc) || train.toLoc}`
+    : train.label;
 
   // Remember this journey so it can still be found and watched later,
   // even after it's rolled off the departure station's own board, or
@@ -4490,17 +4525,8 @@ function openTrainProgress(train, service){
   if (serviceId){
     const existing = trackedTrains.find(t => t.serviceId === serviceId);
     const addedAt = existing ? existing.addedAt : Date.now(); // preserve the original tracking time — reopening shouldn't reset how long it's been tracked
-    // A configured train's own .label is just its departure time (e.g.
-    // "17:31") — fine in the Today/Live Trains screens where the route
-    // is already obvious, but not enough detail once it's sitting in a
-    // list that also holds trains tracked from anywhere. Only trains
-    // with a .toLoc need this — the debug tool and a re-tracked entry
-    // already carry a complete label.
-    const label = train.toLoc
-      ? `${train.label} ${(STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc}→${(STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || stationNameForCrs(train.toLoc) || train.toLoc}`
-      : train.label;
     trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
-    trackedTrains.unshift({ serviceId, label, fromLoc: train.fromLoc, addedAt });
+    trackedTrains.unshift({ serviceId, label: displayLabel, fromLoc: train.fromLoc, addedAt });
     trackedTrains = trackedTrains.slice(0, TRACKED_TRAIN_MAX); // no need to keep more than a handful
     saveTrackedTrains();
   }
@@ -4511,7 +4537,7 @@ function openTrainProgress(train, service){
   overlay.innerHTML = `
     <div class="modal">
       <div class="eyebrow">Live progress</div>
-      <h3 style="margin-top:0;">${train.label}</h3>
+      <h3 style="margin-top:0;">${displayLabel}</h3>
       <div id="train-progress-reverse-pill">${service.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : ''}</div>
       <div class="sub">An estimate based on calling-point times.${debugModeEnabled ? ` <span id="raw-debug-toggle" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Show raw data</span>` : ''}</div>
       <div id="train-progress-refresh-bar-wrap" style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
@@ -4668,7 +4694,14 @@ function openTrainProgress(train, service){
     if (buildResult.lastPassedIdx === -1){
       const schedStr = lastKnownService && (lastKnownService.std || lastKnownService.sta);
       if (schedStr && schedStr.includes(':')){
-        const schedDate = liveTimeToDate(schedStr.replace(':', ''), new Date());
+        // closestDateForTime, not a same-day-only liveTimeToDate — a
+        // service due at 00:43 tracked at 22:48 the evening before needs
+        // to resolve to tomorrow's 00:43, not today's (which would put
+        // it hours in the past and silently fall through to the flat
+        // cadence below instead of the intended long pre-departure
+        // wait). Same reasoning already proven correct for the first
+        // calling point above.
+        const schedDate = closestDateForTime(schedStr.replace(':', ''), new Date());
         if (schedDate){
           const minutesToGo = (schedDate.getTime() - Date.now()) / 60000;
           if (minutesToGo > pollBeforeDepartureMin){
