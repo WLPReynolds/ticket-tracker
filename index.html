@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.12:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.19:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1165,6 +1165,11 @@ async function loadData(){
     localStorage.setItem('tracked-trains-last-day', todayKeyForTracking);
   }catch(e){ trackedTrains = []; }
   try{
+    const cpsc = localStorage.getItem('confirmed-point-status-cache');
+    confirmedPointStatusCache = cpsc ? new Map(JSON.parse(cpsc)) : new Map();
+    pruneConfirmedPointStatusCache(); // trackedTrains is already fully loaded/filtered by this point above
+  }catch(e){ confirmedPointStatusCache = new Map(); }
+  try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
   }catch(e){ periodStart = DEFAULT_PERIOD_START; }
@@ -1276,6 +1281,10 @@ async function saveSilentConfirmBanner(){
 async function saveTrackedTrains(){
   try{ localStorage.setItem('tracked-trains', JSON.stringify(trackedTrains)); }
   catch(e){ /* save failed silently; will retry next change */ }
+  // Keeps the confirmed-status cache from outliving the tracked train it
+  // belongs to, however that train's entry came to be removed.
+  pruneConfirmedPointStatusCache();
+  saveConfirmedPointStatusCache();
 }
 async function savePeriodStart(){
   try{ localStorage.setItem('ticket-period-start', JSON.stringify(periodStart)); }
@@ -3750,6 +3759,67 @@ function describePointStatus(schedTime, liveTime, isCancelled){
   return { text: `${diff} min late`, color: '#ff8b7e', minutesLate: diff, minutesEarly: 0, confirmed: true };
 }
 
+// Remembers the last genuinely CONFIRMED status Darwin gave for a given
+// point on a given service, and falls back to it whenever a later poll
+// omits the live field entirely. Darwin doesn't reliably repeat a live
+// time on every single poll for every point — without this, a point
+// that's already been confirmed (delayed, early, or on time) could
+// silently regress back to looking unconfirmed the moment one poll
+// happens to leave the field blank, even though nothing about the
+// train's actual status changed. Confirmed data always overwrites the
+// cache immediately, so a genuine change (delay easing off, or getting
+// worse) is never held back by this — only a gap in reporting is.
+// In-memory only, for the lifetime of the page — same tradeoff already
+// accepted for the weather cache further down. That also means it can't
+// retroactively fix a point that's already regressed in an
+// already-open session before this existed; it needs to observe one
+// more real confirmation to start protecting a point from then on.
+// Persisted (see loadData/saveConfirmedPointStatusCache below) so it
+// survives the app actually being closed and reopened, not just staying
+// alive within one page session. Lifetime is deliberately tied to
+// trackedTrains' own lifecycle (pruned in saveTrackedTrains, right
+// alongside the same 6-hour age-based expiry it already uses) rather
+// than to the calendar day — trackedTrains itself has a separate
+// day-boundary clear that runs at app-load time, which is a real,
+// pre-existing gap for a train tracked before midnight and still
+// genuinely running after it (flagged for the backlog, not fixed here).
+// Piggybacking a fresh midnight check onto this cache would only
+// reproduce that same problem a second time, so this deliberately
+// doesn't add one — an entry lives exactly as long as its tracked train
+// does, on elapsed time and explicit removal only.
+let confirmedPointStatusCache = new Map(); // `${serviceId}|${pointKey}` -> last confirmed describePointStatus() result
+
+// Discards any cached point statuses whose service is no longer in
+// trackedTrains — called from saveTrackedTrains() so this always stays
+// in step with however that list already decided to shrink, whether
+// that's the explicit remove button, the 5-item cap evicting the
+// oldest, or its own 6-hour age filter. Never adds its own expiry
+// logic on top; it only ever mirrors trackedTrains' current contents.
+function pruneConfirmedPointStatusCache(){
+  const liveServiceIds = new Set(trackedTrains.map(t => t.serviceId));
+  for (const cacheKey of Array.from(confirmedPointStatusCache.keys())){
+    const serviceId = cacheKey.slice(0, cacheKey.indexOf('|'));
+    if (!liveServiceIds.has(serviceId)) confirmedPointStatusCache.delete(cacheKey);
+  }
+}
+async function saveConfirmedPointStatusCache(){
+  try{ localStorage.setItem('confirmed-point-status-cache', JSON.stringify(Array.from(confirmedPointStatusCache.entries()))); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+
+
+function describePointStatusRemembered(serviceId, pointKey, schedTime, liveTime, isCancelled){
+  const status = describePointStatus(schedTime, liveTime, isCancelled);
+  if (isCancelled || !serviceId || !pointKey) return status; // cancellation is unambiguous either way; no key to remember against
+  const cacheKey = `${serviceId}|${pointKey}`;
+  if (status.confirmed){
+    confirmedPointStatusCache.set(cacheKey, status);
+    return status;
+  }
+  const remembered = confirmedPointStatusCache.get(cacheKey);
+  return remembered || status;
+}
+
 // Adds a number of minutes to an "HH:MM" string, wrapping correctly
 // across midnight — used to infer a real time for an already-passed
 // point that Darwin only gave a generic "On time" word for, despite the
@@ -3937,7 +4007,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   let journeyFinished = !!service.isCancelled; // true once there's genuinely nothing left to poll for — arrived at the booked destination, terminated early with everything remaining cancelled, or the whole service has been cancelled outright
   if (lastPassedIdx >= 0){
     const last = points[lastPassedIdx];
-    const status = describePointStatus(last.schedTime, last.liveTime, last.isCancelled);
+    const status = describePointStatusRemembered(service.serviceID, last.crs || `idx-${lastPassedIdx}`, last.schedTime, last.liveTime, last.isCancelled);
     const afterLast = points[lastPassedIdx + 1];
     const remaining = points.slice(lastPassedIdx + 1);
     // "Terminated early" — every remaining booked calling point has been
@@ -4060,7 +4130,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       const daySeparator = (i > 0 && pointDates[i] && pointDates[i-1] && pointDates[i].toDateString() !== pointDates[i-1].toDateString())
         ? `<div style="text-align:center; font-size:11.5px; color:var(--amber); padding:8px 0; border-bottom:1px solid var(--line); margin-left:6px;">${pointDates[i].toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'})}</div>`
         : '';
-      const status = describePointStatus(p.schedTime, p.liveTime, p.isCancelled);
+      const status = describePointStatusRemembered(service.serviceID, p.crs || `idx-${i}`, p.schedTime, p.liveTime, p.isCancelled);
       const nameColor = p.isYourStation ? 'var(--amber)' : 'var(--ink)';
       // The reason text often stays attached even once a point's own
       // status has recovered to genuinely on time — show it whenever
@@ -4148,6 +4218,13 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   const weatherPoints = points
     .map((p, i) => ({ idx: i, crs: p.crs, dueAt: pointDates[i] ? localWallClockString(pointDates[i]) : null }))
     .filter(wp => wp.crs && wp.dueAt && !points[wp.idx].isCancelled && wp.idx > lastPassedIdx);
+
+  // Persisted here (fire-and-forget, once per call — not from inside
+  // describePointStatusRemembered itself, which runs once per point and
+  // would otherwise trigger several redundant writes per single render)
+  // so a freshly-confirmed status survives the app actually being killed
+  // between polls, not just staying alive for the rest of this session.
+  saveConfirmedPointStatusCache();
 
   return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints };
 }
