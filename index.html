@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.12:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.12:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -894,6 +894,85 @@ let confirmedTrains = {}; // "YYYY-MM-DD" -> { AM: trainKey, PM: trainKey } — 
 // happened to be delayed that day but weren't the one actually ridden.
 let delayClaims = {};
 const AVANTI_CLAIM_URL = 'https://delayrepay.avantiwestcoast.co.uk/';
+
+// ---- Pass photo storage (IndexedDB) ----
+// Delay repay claims almost always want a photo of your pass. Stored
+// here as a Blob rather than in localStorage, which can only hold
+// strings and has nowhere near enough quota for an image. A single
+// fixed record ('current') — uploading a new photo replaces it, so
+// there's never more than one to manage or clean up.
+const PASS_PHOTO_DB_NAME = 'pass-photo-store';
+const PASS_PHOTO_DB_VERSION = 1;
+const PASS_PHOTO_STORE = 'photos';
+const PASS_PHOTO_KEY = 'current';
+
+function openPassPhotoDB(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(PASS_PHOTO_DB_NAME, PASS_PHOTO_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(PASS_PHOTO_STORE)) db.createObjectStore(PASS_PHOTO_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function savePassPhoto(blob){
+  const db = await openPassPhotoDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PASS_PHOTO_STORE, 'readwrite');
+    tx.objectStore(PASS_PHOTO_STORE).put({ blob, type: blob.type, uploadedAt: new Date().toISOString() }, PASS_PHOTO_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function getPassPhoto(){
+  const db = await openPassPhotoDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PASS_PHOTO_STORE, 'readonly');
+    const req = tx.objectStore(PASS_PHOTO_STORE).get(PASS_PHOTO_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function deletePassPhoto(){
+  const db = await openPassPhotoDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PASS_PHOTO_STORE, 'readwrite');
+    tx.objectStore(PASS_PHOTO_STORE).delete(PASS_PHOTO_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+// Drops the saved pass photo straight into the downloads folder — named
+// with today's date so repeat downloads stay distinguishable during an
+// occasional manual tidy-up, with the extension matched to whatever was
+// actually uploaded rather than assumed. Being the most recently
+// downloaded file, it normally sorts first in a file/photo picker,
+// without the app being able to pin it there directly. Silent in the
+// sense of no extra tap or dialog — Android's own "file downloaded"
+// notification is still outside any web app's control. Never throws:
+// no photo saved (or a failed read) just means the claim flow continues
+// without one, exactly as it always did before this existed.
+async function triggerPassPhotoDownload(){
+  let record;
+  try{ record = await getPassPhoto(); }
+  catch(e){ return; }
+  if (!record || !record.blob) return;
+  const ext = (record.type && record.type.includes('/')) ? record.type.split('/')[1].replace('jpeg', 'jpg') : 'jpg';
+  const filename = `pass-photo-${fmtKey(new Date())}.${ext}`;
+  const url = URL.createObjectURL(record.blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoked shortly after rather than immediately — the object URL needs
+  // to stay valid long enough for the download to actually complete.
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
 // Confirmed against two real Avanti claims on the Flexi 8 ticket: a 15-29
 // min delay paid £2.40 and a 30-59 min delay paid £4.80, both matching
 // (ticket price ÷ 16) × band exactly at £153.60. Worth re-checking if the
@@ -1870,6 +1949,7 @@ function render(){
     { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
     { id: 'delay-claims-link', label: 'Delay repay claims', weight: 0 },
+    { id: 'pass-photo-link', label: 'Delay repay pass photo', weight: 0 },
   ];
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
     menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
@@ -2329,6 +2409,9 @@ function render(){
 
   const delayClaimsLink = document.getElementById('delay-claims-link');
   if (delayClaimsLink) delayClaimsLink.addEventListener('click', () => { menuOpen = false; render(); openDelayClaimsManager(); });
+
+  const passPhotoLink = document.getElementById('pass-photo-link');
+  if (passPhotoLink) passPhotoLink.addEventListener('click', () => { menuOpen = false; render(); openPassPhotoManager(); });
 
   const enableNotificationsLink = document.getElementById('enable-notifications-link');
   if (enableNotificationsLink){
@@ -4716,6 +4799,12 @@ function wireClaimHandlers(overlay, reopen){
       });
       await saveDelayClaims();
       window.open(AVANTI_CLAIM_URL, '_blank');
+      // After opening the claim site, not before — window.open needs to
+      // stay as close to the original tap as possible to avoid Chrome's
+      // popup blocker treating it as unrelated to a user gesture. The
+      // photo download itself isn't nearly as strict about this, so it's
+      // safe to let the extra IndexedDB read happen afterward.
+      triggerPassPhotoDownload();
       reopen();
     });
   });
@@ -4790,6 +4879,77 @@ function openDelayClaimsManager(){
     });
   });
   document.getElementById('delay-claims-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openPassPhotoManager(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Delay repay pass photo</h3>
+      <div class="sub">Saved here once, then dropped straight into your downloads folder whenever you start a claim — so it's right there instead of buried months back in your photo library.</div>
+      <div id="pass-photo-preview-wrap" style="margin:14px 0; text-align:center;"></div>
+      <input type="file" accept="image/*" id="pass-photo-input" style="display:none;" />
+      <button class="save-btn" id="pass-photo-choose-btn">Choose photo</button>
+      <div id="pass-photo-remove-wrap" style="text-align:center; margin-top:10px; display:none;">
+        <span id="pass-photo-remove-link" style="font-size:12px; color:#ff8b7e; text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Remove saved photo</span>
+      </div>
+      <div class="modal-close" id="pass-photo-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const previewWrap = document.getElementById('pass-photo-preview-wrap');
+  const removeWrap = document.getElementById('pass-photo-remove-wrap');
+
+  async function refreshPreview(){
+    previewWrap.innerHTML = `<div class="sub" style="margin-top:0;">Loading…</div>`;
+    try{
+      const record = await getPassPhoto();
+      if (!overlay.isConnected) return;
+      if (record && record.blob){
+        const url = URL.createObjectURL(record.blob);
+        const uploadedDate = record.uploadedAt ? new Date(record.uploadedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '';
+        previewWrap.innerHTML = `
+          <img src="${url}" style="max-width:100%; max-height:220px; border-radius:8px; border:1px solid var(--line);" />
+          <div class="sub" style="margin-top:8px;">Saved ${uploadedDate}</div>
+        `;
+        removeWrap.style.display = 'block';
+      } else {
+        previewWrap.innerHTML = `<div class="sub" style="margin-top:0;">No photo saved yet.</div>`;
+        removeWrap.style.display = 'none';
+      }
+    }catch(e){
+      if (!overlay.isConnected) return;
+      previewWrap.innerHTML = `<div class="sub" style="margin-top:0; color:#ff8b7e;">Couldn't load the saved photo (${escapeHtml(e.message)}).</div>`;
+    }
+  }
+  refreshPreview();
+
+  document.getElementById('pass-photo-choose-btn').addEventListener('click', () => {
+    document.getElementById('pass-photo-input').click();
+  });
+  document.getElementById('pass-photo-input').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    previewWrap.innerHTML = `<div class="sub" style="margin-top:0;">Saving…</div>`;
+    try{
+      await savePassPhoto(file); // a File is already a Blob — stores directly, no conversion needed
+      await refreshPreview();
+    }catch(err){
+      if (!overlay.isConnected) return;
+      previewWrap.innerHTML = `<div class="sub" style="margin-top:0; color:#ff8b7e;">Couldn't save that photo (${escapeHtml(err.message)}).</div>`;
+    }
+  });
+  document.getElementById('pass-photo-remove-link').addEventListener('click', async () => {
+    try{ await deletePassPhoto(); }catch(e){ /* nothing meaningful to surface if this fails */ }
+    await refreshPreview();
+  });
+
+  document.getElementById('pass-photo-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
