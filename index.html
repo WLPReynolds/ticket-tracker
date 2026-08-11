@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.21:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.22:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3767,18 +3767,20 @@ function openLiveScreen(initialSubTab){
           const dest = departsHere ? ((s.destination && s.destination[0] && s.destination[0].locationName) || '?') : fromLabel;
           const time = departsHere ? (s.std || '?') : (s.sta || s.eta || '?');
           // For an arrival-only record, `time` is when it arrives at
-          // `dest`, not when it departs `origin` — the label previously
-          // read identically either way (e.g. "18:59 Manchester
-          // Piccadilly → Crewe"), which looks exactly like a departure
-          // time even though 18:59 was really the arrival at Crewe (the
-          // real departure had been 18:07). Marked explicitly instead of
-          // relying on the reader to infer it from context.
-          const timeText = departsHere ? time : `${time} (arr)`;
+          // `dest`, not when it departs `origin` — spelled out in full
+          // now rather than the more compact arrow format used for a
+          // genuine departure, so it can't be misread as one. (The title
+          // shown after actually tapping into one of these no longer
+          // reuses this text either way — it's rebuilt from the real
+          // calling points once they're available — but this is still
+          // what's visible here in the results list itself.)
+          const displayText = departsHere
+            ? `${time} Departure from ${origin} to ${dest}`
+            : `${time} Arrival at ${dest} from ${origin}`;
           const liveField = departsHere ? s.etd : (s.eta || s.ata);
           const statusText = (!liveField || liveField === 'On time') ? 'On time' : liveField;
-          const label = `${timeText} ${origin}→${dest}`;
-          return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(label)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-            <span>${escapeHtml(timeText)} ${escapeHtml(origin)} → ${escapeHtml(dest)}</span>
+          return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(displayText)}" data-debug-from="${fromCrs}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+            <span>${escapeHtml(displayText)}</span>
             <span style="color:var(--ink-dim);">${escapeHtml(statusText)} ›</span>
           </div>`;
         }).join('');
@@ -4331,7 +4333,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // between polls, not just staying alive for the rest of this session.
   saveConfirmedPointStatusCache();
 
-  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints };
+  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints, departsHere, firstPoint: points[0] || null, lastPoint: points[points.length - 1] || null };
 }
 
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
@@ -4504,6 +4506,11 @@ function openTrainProgress(train, service){
   // reposition the blob.
   let renderGeneration = 0;
   const serviceId = train.serviceId || service.serviceID || null;
+  // Computed early (rather than at its previous spot, right before the
+  // overlay markup) because the label below now needs to know whether
+  // this station genuinely has its own departure, or whether the
+  // tracked/searched station turned out to be an arrival-only point.
+  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons);
   // A configured train's own .label is just its departure time (e.g.
   // "17:31") — fine for the compact board row it came from, but not
   // enough detail once it's the title of this screen, or sitting in the
@@ -4511,13 +4518,29 @@ function openTrainProgress(train, service){
   // full route. Computed once, here, and reused for both — previously
   // this only happened for the tracked-list save, leaving the title
   // itself showing just the bare time when opened from "Your trains".
-  // Manual override first (covers Crewe/Wigan, this app's actual
-  // regular stations), then the full station dataset, then the bare
-  // code as a last resort. Only trains with a .toLoc need this — the
-  // debug tool and a re-tracked entry already carry a complete label.
-  const displayLabel = train.toLoc
-    ? `${train.label} ${(STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc}→${(STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || stationNameForCrs(train.toLoc) || train.toLoc}`
-    : train.label;
+  let displayLabel;
+  if (train.toLoc){
+    // Manual override first (covers Crewe/Wigan, this app's actual
+    // regular stations), then the full station dataset, then the bare
+    // code as a last resort. This is your own configured route boundary
+    // — kept exactly as configured even if the wider physical train
+    // actually starts earlier or continues further, since that's the
+    // segment that's actually meaningful to you day to day.
+    displayLabel = `${train.label} ${(STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc}→${(STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || stationNameForCrs(train.toLoc) || train.toLoc}`;
+  } else if (initial.firstPoint && initial.lastPoint){
+    // Any other tracked/searched train — built from the genuine calling
+    // points (the same real data shown in the grid below) rather than
+    // whatever label happened to be built at search time, which could
+    // only ever describe the segment between the searched station and
+    // one specific stop, and — for an arrival-only result — could
+    // mislead by leading with an arrival time in the exact position
+    // every other title uses for a departure time. This reads the same
+    // way regardless of whether the search that found it was a genuine
+    // departure or an arrival-only result.
+    displayLabel = `${initial.firstPoint.schedTime || '?'} ${initial.firstPoint.locationName || '?'}→${initial.lastPoint.locationName || '?'}`;
+  } else {
+    displayLabel = train.label;
+  }
 
   // Remember this journey so it can still be found and watched later,
   // even after it's rolled off the departure station's own board, or
@@ -4531,7 +4554,6 @@ function openTrainProgress(train, service){
     saveTrackedTrains();
   }
 
-  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons);
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay modal-overlay-full';
   overlay.innerHTML = `
