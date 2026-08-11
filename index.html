@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.21:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.21:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3924,21 +3924,16 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // the estimate, so a point that had already been genuinely confirmed
   // could still show as unconfirmed if Darwin stopped repeating the
   // estimate once the real time was known (a common Darwin pattern).
+  // (A side-by-side arrival+departure display was tried here briefly,
+  // but reverted — Darwin only ever gives one time per ordinary calling
+  // point, departure-only or arrival-only depending on position, so
+  // showing both would only ever be possible for this one row and
+  // nowhere else in the list, which read as inconsistent rather than
+  // useful. This single governing status remains correctly atd/ata-
+  // aware either way.)
   const departsHere = !!(service.std || service.etd || service.atd);
   const hereSchedTime = departsHere ? service.std : service.sta;
   const hereLiveTime = departsHere ? (service.atd || service.etd || service.std) : (service.ata || service.eta || service.sta);
-  // The *other* side, shown as a second line alongside the main one
-  // whenever it genuinely exists — i.e. this station is a real
-  // mid-journey calling point (the train both arrives and later departs
-  // here), not the true start or end of the whole physical working, in
-  // which case only one side is meaningful at all. Deliberately never
-  // inferred from the other side — e.g. arrival being confirmed doesn't
-  // imply departure has happened too, which is exactly the shortcut
-  // that annoys about some other apps' delay-repay claim flows.
-  const hereOtherSchedTime = departsHere ? service.sta : service.std;
-  const hereOtherLiveTime = departsHere
-    ? (service.sta || service.eta || service.ata ? (service.ata || service.eta || service.sta) : null)
-    : (service.std || service.etd || service.atd ? (service.atd || service.etd || service.std) : null);
   const here = [{
     locationName: (STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc,
     schedTime: hereSchedTime,
@@ -3946,9 +3941,6 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     isCancelled: !!service.isCancelled,
     reason: service.delayReason || service.cancelReason || null,
     isYourStation: true,
-    departsHere,
-    otherSchedTime: hereOtherSchedTime,
-    otherLiveTime: hereOtherLiveTime,
     platform: service.platform || null,
     crs: train.fromLoc || null,
     raw: { std: service.std, sta: service.sta, etd: service.etd, eta: service.eta, atd: service.atd, ata: service.ata },
@@ -4277,24 +4269,6 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
         statusColor = status.color;
       }
       const platformText = p.platform ? ` <span style="color:var(--ink-dim);">· Platform ${p.platform}</span>` : '';
-      // The "here" row's own second status line — arrival and departure
-      // shown side by side, but only when this station genuinely has
-      // both (a real mid-journey calling point), never inferred from
-      // one another. Its own separate cache key, since arrival and
-      // departure are two genuinely different events that shouldn't
-      // share a single remembered status.
-      let otherLine = '';
-      let mainLabel = '';
-      if (p.isYourStation && p.otherLiveTime){
-        const otherKey = `${p.crs || 'idx-' + i}-other`;
-        const otherStatus = describePointStatusRemembered(service.serviceID, otherKey, p.otherSchedTime, p.otherLiveTime, p.isCancelled);
-        const otherUnconfirmedOnTime = !otherStatus.confirmed && otherStatus.minutesLate === 0;
-        const otherText = otherUnconfirmedOnTime ? 'On time (estimated)' : otherStatus.text;
-        const otherColor = otherUnconfirmedOnTime ? '#e8935f' : otherStatus.color;
-        const otherLabel = p.departsHere ? 'Arrival' : 'Departure';
-        otherLine = `<div style="color:${otherColor}; font-size:12.5px; margin-top:2px;">${otherLabel}: ${otherText}</div>`;
-        mainLabel = p.departsHere ? 'Departure: ' : 'Arrival: ';
-      }
       const debugHtml = (showRawDebug && p.raw)
         ? `<div style="font-family:monospace; font-size:10px; color:#6a7a8a; margin-top:2px;">${Object.entries(p.raw).map(([k,v]) => `${k}=${v === undefined || v === null ? '·' : v}`).join('  ')}</div>`
         : '';
@@ -4305,8 +4279,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
           <span style="min-width:56px;">${timeHtml}</span>
           <span style="flex:1; text-align:right;">
             <span class="wx-badge" data-wx-idx="${i}" style="margin-right:6px; font-size:12.5px; white-space:nowrap;"></span><span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName || 'Unknown'}</span>
-            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${mainLabel}${statusText}${platformText}</div>
-            ${otherLine}
+            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}${platformText}</div>
             ${reasonHtml}
             ${debugHtml}
           </span>
