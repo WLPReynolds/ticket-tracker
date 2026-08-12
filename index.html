@@ -801,7 +801,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-12.09:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-12.17:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2038,30 +2038,18 @@ function render(){
   // the bottom, however many other items get added later.
   const earlyDismissedCheck = !!dismissedMonths[fmtKey(getPayPeriodByOffset(today, 0).start)];
   const menuItems = [
-    { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
-    { id: 'polling-settings-link', label: 'Live progress polling', weight: 0 },
+    { id: 'settings-link', label: 'Settings', weight: 0 },
     { id: 'depboard-link', label: 'Station board', weight: 0 },
-    { id: 'day-return-price-link', label: `Set day return price (currently £${dayReturnPrice.toFixed(2)})`, weight: 0 },
-    { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
-    { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
     { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
     { id: 'delay-claims-link', label: 'Delay repay claims', weight: 0 },
-    { id: 'pass-photo-link', label: 'Delay repay pass photo', weight: 0 },
   ];
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
     menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
   }
-  if (gcalEnabled){
-    menuItems.push({ id: 'disconnect-gcal-link', label: 'Disconnect Google Calendar', weight: 0 });
-  } else {
-    menuItems.push({ id: 'connect-gcal-link', label: 'Connect Google Calendar', weight: 0 });
-  }
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
-  menuItems.push({ id: 'weather-toggle-link', label: weatherEnabled ? 'Weather on live progress: On' : 'Weather on live progress: Off', weight: 20 });
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'import-history-link', label: 'Bulk import comments', weight: 100 });
-  menuItems.push({ id: 'debug-mode-link', label: debugModeEnabled ? 'Debug mode: On' : 'Debug mode: Off', weight: 110 });
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
 
@@ -2470,6 +2458,9 @@ function render(){
   const importHistoryLink = document.getElementById('import-history-link');
   if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
 
+  const settingsLink = document.getElementById('settings-link');
+  if (settingsLink) settingsLink.addEventListener('click', () => { menuOpen = false; render(); openSettingsMenu(); });
+
   const debugModeLink = document.getElementById('debug-mode-link');
   if (debugModeLink) debugModeLink.addEventListener('click', async () => {
     debugModeEnabled = !debugModeEnabled;
@@ -2722,6 +2713,95 @@ function openDayEditor(key){
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openSettingsMenu(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Settings</h3>
+      <div class="settings-link" id="settings-costs-link">Costs</div>
+      <div class="settings-link" id="settings-polling-link">Live progress polling</div>
+      <div class="settings-link" id="settings-preferred-google-link">${preferredGoogleEmail ? `Preferred Google account: ${escapeHtml(preferredGoogleEmail)}` : 'Set preferred Google account'}</div>
+      <div class="settings-link" id="settings-gcal-link">${gcalEnabled ? 'Disconnect Google Calendar' : 'Connect Google Calendar'}</div>
+      <div class="settings-link" id="settings-rail-config-link">Configure usual trains</div>
+      <div class="settings-link" id="settings-pass-photo-link">Delay repay pass photo</div>
+      <div class="settings-link" id="settings-weather-link">Weather on live progress: ${weatherEnabled ? 'On' : 'Off'}</div>
+      <div class="settings-link" id="settings-debug-link">Debug mode: ${debugModeEnabled ? 'On' : 'Off'}</div>
+      <div class="modal-close" id="settings-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  function close(){ if (overlay.isConnected) document.body.removeChild(overlay); }
+
+  document.getElementById('settings-costs-link').addEventListener('click', () => { close(); openCostsMenu(); });
+  document.getElementById('settings-polling-link').addEventListener('click', () => { close(); openPollingSettingsEditor(); });
+  document.getElementById('settings-preferred-google-link').addEventListener('click', () => { close(); openPreferredGoogleEditor(); });
+  document.getElementById('settings-rail-config-link').addEventListener('click', () => { close(); openRailConfig(); });
+  document.getElementById('settings-pass-photo-link').addEventListener('click', () => { close(); openPassPhotoManager(); });
+  document.getElementById('settings-weather-link').addEventListener('click', async () => {
+    weatherEnabled = !weatherEnabled;
+    await saveWeatherEnabled();
+    close();
+    render();
+  });
+  document.getElementById('settings-debug-link').addEventListener('click', async () => {
+    debugModeEnabled = !debugModeEnabled;
+    await saveDebugMode();
+    close();
+    render();
+  });
+  document.getElementById('settings-gcal-link').addEventListener('click', async () => {
+    if (gcalEnabled){
+      gcalEnabled = false;
+      await saveGcalEnabled();
+      close();
+      render();
+      return;
+    }
+    close();
+    render();
+    if (GOOGLE_CLIENT_ID.includes('YOUR_CLIENT_ID')){
+      alert('Google Calendar isn\'t set up yet. See the setup notes for what\'s needed.');
+      return;
+    }
+    const token = await getGoogleAccessToken();
+    if (token){
+      gcalEnabled = true;
+      await saveGcalEnabled();
+      // today/todayKey aren't available here the way they are inside
+      // render() itself (where this logic used to live) — recomputed
+      // the same way render() does, rather than assuming a global.
+      const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+      const todayKey = fmtKey(today);
+      const nb = findNextBuyDateKey(today, todayKey);
+      if (nb){ gcalPendingSync = true; await syncGoogleCalendarEvent(nb); }
+      render();
+    }
+  });
+  document.getElementById('settings-close-btn').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
+function openCostsMenu(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Costs</h3>
+      <div class="sub">Daily costs used to estimate what to set aside each payday.</div>
+      <div class="settings-link" id="costs-parking-link">Set daily parking cost (currently £${parkingCost.toFixed(2)})</div>
+      <div class="settings-link" id="costs-day-return-link">Set day return price (currently £${dayReturnPrice.toFixed(2)})</div>
+      <div class="modal-close" id="costs-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  function close(){ if (overlay.isConnected) document.body.removeChild(overlay); }
+  document.getElementById('costs-parking-link').addEventListener('click', () => { close(); openParkingCostEditor(); });
+  document.getElementById('costs-day-return-link').addEventListener('click', () => { close(); openDayReturnPriceEditor(); });
+  document.getElementById('costs-close-btn').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 }
 
 function openParkingCostEditor(){
