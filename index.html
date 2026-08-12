@@ -801,7 +801,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-12.07:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-12.08:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2040,7 +2040,7 @@ function render(){
   const menuItems = [
     { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
     { id: 'polling-settings-link', label: 'Live progress polling', weight: 0 },
-    { id: 'depboard-link', label: 'Departure board', weight: 0 },
+    { id: 'depboard-link', label: 'Station board', weight: 0 },
     { id: 'day-return-price-link', label: `Set day return price (currently £${dayReturnPrice.toFixed(2)})`, weight: 0 },
     { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
@@ -2813,9 +2813,9 @@ function openDepartureBoardView(){
   overlay.className = 'modal-overlay modal-overlay-full';
   overlay.style.alignItems = 'stretch';
   overlay.innerHTML = `
-    <div class="modal" style="height:100vh; max-height:100vh; display:flex; flex-direction:column; padding:0; border-radius:0; overflow:hidden;">
+    <div class="modal" style="height:calc(100vh - 80px - env(safe-area-inset-bottom)); max-height:calc(100vh - 80px - env(safe-area-inset-bottom)); display:flex; flex-direction:column; padding:0; border-radius:0; overflow:hidden;">
       <div id="depboard-picker-step" style="padding:20px 18px; overflow-y:auto;">
-        <h3>Departure board</h3>
+        <h3>Station board</h3>
         <div class="sub">A retro-style live departures and arrivals board for any station — refreshes every 30 seconds for 3 minutes, then waits for you to ask for more.</div>
         <div id="depboard-picker-row" style="margin:14px 0;"></div>
         <button class="save-btn" id="depboard-show-btn">Show board</button>
@@ -2835,6 +2835,11 @@ function openDepartureBoardView(){
 
   const picker = createStationPicker({ placeholder: 'Station name or code' });
   document.getElementById('depboard-picker-row').appendChild(picker.el);
+  // Warms the shared station-name cache — without this, typing a name
+  // (rather than a bare code) has nothing to match against yet, since
+  // this is a fresh screen that's never triggered the load the way the
+  // Tracked tab's own search does.
+  loadStationIndex(false);
   document.getElementById('depboard-picker-close-btn').addEventListener('click', () => {
     if (overlay.isConnected) document.body.removeChild(overlay);
   });
@@ -2852,6 +2857,7 @@ function openDepartureBoardView(){
   let pageCycleTimer = null;
   let clockTimer = null;
   let stationCrs = null, stationName = '';
+  let depFetchError = null, arrFetchError = null;
 
   function stopPolling(){
     if (dataTimer){ clearInterval(dataTimer); dataTimer = null; }
@@ -2878,14 +2884,20 @@ function openDepartureBoardView(){
     if (overlay.isConnected) document.body.removeChild(overlay);
   });
 
-  function renderPanel(panelId, title, rows, page, isArrivals){
+  function renderPanel(panelId, title, rows, page, isArrivals, fetchError){
     const panel = document.getElementById(panelId);
     if (!panel) return;
     const totalPages = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
     const safePage = page % totalPages;
     const pageRows = rows.slice(safePage * ROWS_PER_PAGE, safePage * ROWS_PER_PAGE + ROWS_PER_PAGE);
     const clock = new Date().toLocaleTimeString('en-GB', { hour12: false });
-    const rowsHtml = pageRows.length ? pageRows.map(s => {
+    // A failed fetch is shown outright rather than quietly presented as
+    // an empty board — this is the actual content of the screen, not a
+    // decorative extra, so silently hiding *why* it's empty just hides
+    // a real problem behind what looks like a legitimately quiet board.
+    const rowsHtml = fetchError
+      ? `<div style="padding:10px 0; color:#ff6a5a; font-size:12px;">Couldn't load: ${escapeHtml(fetchError)}</div>`
+      : (pageRows.length ? pageRows.map(s => {
       const d = depBoardRowData(s, isArrivals);
       const noteHtml = d.note ? `<div class="depboard-note-row">${escapeHtml(d.note)}</div>` : '';
       return `<div class="depboard-row${d.isCancelled ? ' cancelled' : ''}">
@@ -2894,7 +2906,7 @@ function openDepartureBoardView(){
         <span>${escapeHtml(d.platform)}</span>
         <span>${escapeHtml(d.expected)}</span>
       </div>${noteHtml}`;
-    }).join('') : `<div style="padding:10px 0; opacity:0.7;">No services currently shown</div>`;
+    }).join('') : `<div style="padding:10px 0; opacity:0.7;">No services currently shown</div>`);
     panel.innerHTML = `
       <div class="depboard-title">${escapeHtml(stationName)} — ${title}</div>
       <div class="depboard-header-row">
@@ -2909,26 +2921,27 @@ function openDepartureBoardView(){
   }
   function renderBoth(){
     if (!active) return;
-    renderPanel('depboard-dep-panel', 'Departures', depRows, depPage, false);
-    renderPanel('depboard-arr-panel', 'Arrivals', arrRows, arrPage, true);
+    renderPanel('depboard-dep-panel', 'Departures', depRows, depPage, false, depFetchError);
+    renderPanel('depboard-arr-panel', 'Arrivals', arrRows, arrPage, true, arrFetchError);
   }
 
   async function fetchData(){
     if (!stationCrs) return;
-    try{
-      const [dep, arr] = await Promise.all([
-        fetchPureBoard(stationCrs, 'dep', 30),
-        fetchPureBoard(stationCrs, 'arr', 30)
-      ]);
-      if (!active) return;
-      depRows = dep; arrRows = arr;
-      depPage = 0; arrPage = 0;
-      renderBoth();
-    }catch(e){
-      // Fails quietly, same reasoning as the weather feature — a board
-      // that briefly can't refresh should keep showing the last data it
-      // had rather than break the whole view over one bad poll.
-    }
+    // Fetched independently (not a single combined try/catch) so one
+    // board failing doesn't hide data the other genuinely got back —
+    // and each panel gets its own specific error rather than one vague
+    // failure blamed on both.
+    const [depResult, arrResult] = await Promise.allSettled([
+      fetchPureBoard(stationCrs, 'dep', 30),
+      fetchPureBoard(stationCrs, 'arr', 30)
+    ]);
+    if (!active) return;
+    if (depResult.status === 'fulfilled'){ depRows = depResult.value; depFetchError = null; }
+    else { depFetchError = depResult.reason.message; }
+    if (arrResult.status === 'fulfilled'){ arrRows = arrResult.value; arrFetchError = null; }
+    else { arrFetchError = arrResult.reason.message; }
+    depPage = 0; arrPage = 0;
+    renderBoth();
   }
 
   function showRefreshButton(){
@@ -3212,7 +3225,20 @@ async function fetchPureBoard(crs, boardType, numRows){
   if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
   const data = await resp.json();
   const r = (data.results || [])[0];
-  if (!r || !r.ok) throw new Error((r && r.reason) || 'No board data returned');
+  if (!r || !r.ok){
+    // The worker's own failure objects carry either .reason (a JS-level
+    // exception, or a missing-param check) or .status/.body (an actual
+    // HTTP-level failure talking to Darwin) — the previous version of
+    // this only ever looked at .reason, silently losing the status code
+    // and response body that would actually explain *why* a call
+    // failed (e.g. a subscription that doesn't cover this specific
+    // Darwin method), and made every failure look like a generic empty
+    // board instead.
+    const detail = r
+      ? (r.reason || `status ${r.status}${r.body ? ': ' + String(r.body).slice(0, 200) : ''}`)
+      : 'no response from worker';
+    throw new Error(detail);
+  }
   return (r.data && r.data.trainServices) || [];
 }
 
