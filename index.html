@@ -712,6 +712,66 @@
   .blob-pulsing{
     animation: blob-pulse 1.4s ease-in-out infinite;
   }
+
+  /* Retro split-flap departure board — deliberately its own visual
+     language (black background, amber monospace text) rather than the
+     app's usual dark-navy/amber palette, since the whole point is to
+     look like a real station board, not like the rest of this app. */
+  .depboard-panel{
+    background: #000;
+    color: #ffb000;
+    font-family: 'Courier New', monospace;
+    padding: 8px 12px 4px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .depboard-title{
+    text-align: center;
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: #fff;
+    padding-bottom: 4px;
+  }
+  .depboard-header-row, .depboard-row{
+    display: grid;
+    grid-template-columns: 52px 1fr 40px 84px;
+    column-gap: 6px;
+  }
+  .depboard-header-row{
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #333;
+    margin-bottom: 2px;
+  }
+  .depboard-rows-wrap{
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .depboard-row{
+    font-size: 14px;
+    padding: 3px 0;
+    letter-spacing: 0.5px;
+  }
+  .depboard-row.cancelled{ color: #ff4d3d; }
+  .depboard-note-row{
+    font-size: 10.5px;
+    color: #ffb000;
+    opacity: 0.75;
+    padding: 0 0 3px 58px;
+  }
+  .depboard-footer{
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #fff;
+    padding: 4px 0 2px;
+    border-top: 1px solid #333;
+  }
 </style>
 </head>
 <body>
@@ -741,7 +801,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-12.07:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-12.07:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1980,6 +2040,7 @@ function render(){
   const menuItems = [
     { id: 'parking-cost-link', label: `Set daily parking cost (currently £${parkingCost.toFixed(2)})`, weight: 0 },
     { id: 'polling-settings-link', label: 'Live progress polling', weight: 0 },
+    { id: 'depboard-link', label: 'Departure board', weight: 0 },
     { id: 'day-return-price-link', label: `Set day return price (currently £${dayReturnPrice.toFixed(2)})`, weight: 0 },
     { id: 'preferred-google-link', label: preferredGoogleEmail ? `Preferred Google account: ${preferredGoogleEmail}` : 'Set preferred Google account', weight: 0 },
     { id: 'rail-config-link', label: 'Configure usual trains', weight: 0 },
@@ -2429,6 +2490,9 @@ function render(){
   const pollingSettingsLink = document.getElementById('polling-settings-link');
   if (pollingSettingsLink) pollingSettingsLink.addEventListener('click', () => { menuOpen = false; render(); openPollingSettingsEditor(); });
 
+  const depboardLink = document.getElementById('depboard-link');
+  if (depboardLink) depboardLink.addEventListener('click', () => { menuOpen = false; render(); openDepartureBoardView(); });
+
   const dayReturnPriceLink = document.getElementById('day-return-price-link');
   if (dayReturnPriceLink) dayReturnPriceLink.addEventListener('click', () => { menuOpen = false; render(); openDayReturnPriceEditor(); });
 
@@ -2719,6 +2783,199 @@ function openPollingSettingsEditor(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
+// Builds one row's worth of display data from a raw Darwin board entry,
+// for the retro departure-board view. Shared between the departures and
+// arrivals panels — isArrivals picks which time/place fields matter.
+function depBoardRowData(s, isArrivals){
+  const time = isArrivals ? (s.sta || '?') : (s.std || '?');
+  const place = isArrivals
+    ? ((s.origin && s.origin[0] && s.origin[0].locationName) || '?')
+    : ((s.destination && s.destination[0] && s.destination[0].locationName) || '?');
+  const platform = s.platform || '';
+  let expected;
+  if (s.isCancelled){
+    expected = 'Cancelled';
+  } else {
+    const liveField = isArrivals ? s.eta : s.etd;
+    expected = (!liveField || liveField === 'On time') ? 'On time' : liveField;
+  }
+  // The closest real equivalent to a classic board's occasional note row
+  // (e.g. "Calls at Didcot Parkway") — Darwin doesn't give a curated list
+  // of "principal" calling points to reproduce that specific convention
+  // faithfully, but a genuine delay/cancellation reason is real data and
+  // serves the same "extra line under this service" purpose.
+  const note = s.isCancelled ? (s.cancelReason || '') : (s.delayReason || '');
+  return { time, place, platform, expected, note, isCancelled: !!s.isCancelled };
+}
+
+function openDepartureBoardView(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay modal-overlay-full';
+  overlay.style.alignItems = 'stretch';
+  overlay.innerHTML = `
+    <div class="modal" style="height:100vh; max-height:100vh; display:flex; flex-direction:column; padding:0; border-radius:0; overflow:hidden;">
+      <div id="depboard-picker-step" style="padding:20px 18px; overflow-y:auto;">
+        <h3>Departure board</h3>
+        <div class="sub">A retro-style live departures and arrivals board for any station — refreshes every 30 seconds for 3 minutes, then waits for you to ask for more.</div>
+        <div id="depboard-picker-row" style="margin:14px 0;"></div>
+        <button class="save-btn" id="depboard-show-btn">Show board</button>
+        <div class="modal-close" id="depboard-picker-close-btn" style="margin-top:16px;">Close</div>
+      </div>
+      <div id="depboard-display-step" style="display:none; flex-direction:column; flex:1; min-height:0;">
+        <div id="depboard-dep-panel" class="depboard-panel" style="flex:1;"></div>
+        <div id="depboard-arr-panel" class="depboard-panel" style="flex:1; border-top:2px solid #333;"></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:var(--board-2); border-top:1px solid var(--line);">
+          <span id="depboard-refresh-wrap" style="font-size:14px; font-weight:700; color:var(--amber);"></span>
+          <span id="depboard-close-btn" style="color:var(--ink-dim); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Close</span>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const picker = createStationPicker({ placeholder: 'Station name or code' });
+  document.getElementById('depboard-picker-row').appendChild(picker.el);
+  document.getElementById('depboard-picker-close-btn').addEventListener('click', () => {
+    if (overlay.isConnected) document.body.removeChild(overlay);
+  });
+
+  const ROWS_PER_PAGE = 5;
+  const SESSION_LENGTH_MS = 3 * 60 * 1000;
+  const REFRESH_INTERVAL_MS = 30 * 1000;
+  const PAGE_CYCLE_MS = 6 * 1000;
+
+  let active = true;
+  let depRows = [], arrRows = [];
+  let depPage = 0, arrPage = 0;
+  let dataTimer = null;
+  let sessionTimeout = null;
+  let pageCycleTimer = null;
+  let clockTimer = null;
+  let stationCrs = null, stationName = '';
+
+  function stopPolling(){
+    if (dataTimer){ clearInterval(dataTimer); dataTimer = null; }
+    if (sessionTimeout){ clearTimeout(sessionTimeout); sessionTimeout = null; }
+    if (pageCycleTimer){ clearInterval(pageCycleTimer); pageCycleTimer = null; }
+    if (clockTimer){ clearInterval(clockTimer); clockTimer = null; }
+  }
+  function teardown(){
+    active = false;
+    stopPolling();
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+  }
+  // Leaving the screen — closing it outright, or just switching away
+  // from the tab/app — stops polling immediately, same discipline as
+  // the train-progress screen. A board left open in the background has
+  // no reason to keep refreshing twice a minute.
+  function onVisibilityChange(){
+    if (document.visibilityState === 'hidden') stopPolling();
+    else if (active && overlay.isConnected && !dataTimer && !sessionTimeout) startSession();
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  document.getElementById('depboard-close-btn').addEventListener('click', () => {
+    teardown();
+    if (overlay.isConnected) document.body.removeChild(overlay);
+  });
+
+  function renderPanel(panelId, title, rows, page, isArrivals){
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    const totalPages = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
+    const safePage = page % totalPages;
+    const pageRows = rows.slice(safePage * ROWS_PER_PAGE, safePage * ROWS_PER_PAGE + ROWS_PER_PAGE);
+    const clock = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    const rowsHtml = pageRows.length ? pageRows.map(s => {
+      const d = depBoardRowData(s, isArrivals);
+      const noteHtml = d.note ? `<div class="depboard-note-row">${escapeHtml(d.note)}</div>` : '';
+      return `<div class="depboard-row${d.isCancelled ? ' cancelled' : ''}">
+        <span>${escapeHtml(d.time)}</span>
+        <span>${escapeHtml(d.place)}</span>
+        <span>${escapeHtml(d.platform)}</span>
+        <span>${escapeHtml(d.expected)}</span>
+      </div>${noteHtml}`;
+    }).join('') : `<div style="padding:10px 0; opacity:0.7;">No services currently shown</div>`;
+    panel.innerHTML = `
+      <div class="depboard-title">${escapeHtml(stationName)} — ${title}</div>
+      <div class="depboard-header-row">
+        <span>Time</span><span>${isArrivals ? 'From' : 'Destination'}</span><span>Plat</span><span>Expected</span>
+      </div>
+      <div class="depboard-rows-wrap">${rowsHtml}</div>
+      <div class="depboard-footer">
+        <span>Page ${safePage + 1} of ${totalPages}</span>
+        <span>${clock}</span>
+      </div>
+    `;
+  }
+  function renderBoth(){
+    if (!active) return;
+    renderPanel('depboard-dep-panel', 'Departures', depRows, depPage, false);
+    renderPanel('depboard-arr-panel', 'Arrivals', arrRows, arrPage, true);
+  }
+
+  async function fetchData(){
+    if (!stationCrs) return;
+    try{
+      const [dep, arr] = await Promise.all([
+        fetchPureBoard(stationCrs, 'dep', 30),
+        fetchPureBoard(stationCrs, 'arr', 30)
+      ]);
+      if (!active) return;
+      depRows = dep; arrRows = arr;
+      depPage = 0; arrPage = 0;
+      renderBoth();
+    }catch(e){
+      // Fails quietly, same reasoning as the weather feature — a board
+      // that briefly can't refresh should keep showing the last data it
+      // had rather than break the whole view over one bad poll.
+    }
+  }
+
+  function showRefreshButton(){
+    const wrap = document.getElementById('depboard-refresh-wrap');
+    if (!wrap) return;
+    wrap.innerHTML = `<span id="depboard-refresh-btn" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">↻ Refresh</span>`;
+    const btn = document.getElementById('depboard-refresh-btn');
+    if (btn) btn.addEventListener('click', () => { if (active) startSession(); });
+  }
+
+  function startSession(){
+    const wrap = document.getElementById('depboard-refresh-wrap');
+    if (wrap) wrap.innerHTML = ''; // dropped while a session is live — reappears once it ends
+    if (dataTimer){ clearInterval(dataTimer); dataTimer = null; }
+    if (sessionTimeout){ clearTimeout(sessionTimeout); sessionTimeout = null; }
+    fetchData();
+    dataTimer = setInterval(fetchData, REFRESH_INTERVAL_MS);
+    sessionTimeout = setTimeout(() => {
+      if (dataTimer){ clearInterval(dataTimer); dataTimer = null; }
+      sessionTimeout = null;
+      showRefreshButton();
+    }, SESSION_LENGTH_MS);
+  }
+
+  document.getElementById('depboard-show-btn').addEventListener('click', () => {
+    stationCrs = picker.getCode();
+    stationName = picker.getName() || stationCrs;
+    if (!stationCrs) return;
+    document.getElementById('depboard-picker-step').style.display = 'none';
+    const displayStep = document.getElementById('depboard-display-step');
+    displayStep.style.display = 'flex';
+    // Ticks the visible clock every second, and separately advances
+    // which page each panel is showing every few seconds if there's
+    // more than one — independent of the 30-second data refresh, same
+    // as a real board's clock keeps moving between actual data changes.
+    clockTimer = setInterval(renderBoth, 1000);
+    pageCycleTimer = setInterval(() => {
+      const depTotalPages = Math.max(1, Math.ceil(depRows.length / ROWS_PER_PAGE));
+      const arrTotalPages = Math.max(1, Math.ceil(arrRows.length / ROWS_PER_PAGE));
+      depPage = (depPage + 1) % depTotalPages;
+      arrPage = (arrPage + 1) % arrTotalPages;
+    }, PAGE_CYCLE_MS);
+    startSession();
+  });
+}
+
+
 function openDayReturnPriceEditor(){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -2941,6 +3198,25 @@ async function fetchLiveBoards(){
 // than the ones in railTrains — used only by the debug "track any train"
 // tool, so testing tracking/refresh behaviour isn't limited to whichever
 // of the user's own routes happen to have a live service running.
+// Pure departures-only or arrivals-only board (boardType 'dep'/'arr'),
+// for the retro departure-board feature — unlike fetchDebugBoard, which
+// always uses the combined arr+dep method used everywhere else in the
+// app, this asks Darwin for a genuine single-purpose board matching
+// what a real physical board at that station would actually show.
+async function fetchPureBoard(crs, boardType, numRows){
+  const resp = await fetch(DARWIN_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queries: [{ crs, boardType, numRows: numRows || 30 }] })
+  });
+  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
+  const data = await resp.json();
+  const r = (data.results || [])[0];
+  if (!r || !r.ok) throw new Error((r && r.reason) || 'No board data returned');
+  return (r.data && r.data.trainServices) || [];
+}
+
+
 async function fetchDebugBoard(fromCrs, toCrs){
   const query = toCrs ? { crs: fromCrs, filterCrs: toCrs, filterType: 'to' } : { crs: fromCrs };
   const resp = await fetch(DARWIN_WORKER_URL, {
