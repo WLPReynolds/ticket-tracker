@@ -801,7 +801,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-12.08:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-12.09:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2788,9 +2788,19 @@ function openPollingSettingsEditor(){
 // arrivals panels — isArrivals picks which time/place fields matter.
 function depBoardRowData(s, isArrivals){
   const time = isArrivals ? (s.sta || '?') : (s.std || '?');
-  const place = isArrivals
-    ? ((s.origin && s.origin[0] && s.origin[0].locationName) || '?')
-    : ((s.destination && s.destination[0] && s.destination[0].locationName) || '?');
+  // On a departures row, "via" (present on destination[0] whenever a
+  // service's route needs disambiguating — confirmed against real
+  // responses, e.g. "Cardiff Central via Shrewsbury") is exactly what a
+  // real board shows alongside the destination. There's no equivalent
+  // field for an arrival's origin side, so this only ever applies going
+  // one way.
+  let place;
+  if (isArrivals){
+    place = (s.origin && s.origin[0] && s.origin[0].locationName) || '?';
+  } else {
+    const dest = s.destination && s.destination[0];
+    place = dest ? `${dest.locationName || '?'}${dest.via ? ` ${dest.via}` : ''}` : '?';
+  }
   const platform = s.platform || '';
   let expected;
   if (s.isCancelled){
