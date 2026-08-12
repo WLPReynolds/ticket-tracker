@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.23:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-12.07:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3575,7 +3575,7 @@ function openLiveScreen(initialSubTab){
         : '';
       return `<div class="rail-detail-row" data-tracked-row="${t.serviceId}" style="flex-direction:column; align-items:stretch; gap:2px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-weight:600;">${t.label}</span>
+          <span style="font-weight:600;">${t.toLoc ? '<span style="color:var(--amber);">★</span> ' : ''}${t.label}</span>
           <span style="display:flex; align-items:center; gap:28px;">
             ${refreshBtn}
             <span class="tracked-remove-btn" data-remove-service-id="${t.serviceId}" title="Remove" style="display:flex; padding:9px; margin:-9px; color:#ff8b7e; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REMOVE_ICON}</span>
@@ -4589,8 +4589,13 @@ function openTrainProgress(train, service){
   overlay.className = 'modal-overlay modal-overlay-full';
   overlay.innerHTML = `
     <div class="modal">
-      <div class="eyebrow">Live progress</div>
-      <h3 style="margin-top:0;">${displayLabel}</h3>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div>
+          <div class="eyebrow">Live progress</div>
+          <h3 style="margin-top:0;">${displayLabel}</h3>
+        </div>
+        ${train.toLoc ? `<span title="One of your configured trains — this shows your own route, not necessarily the train's full journey" style="color:var(--amber); font-size:22px; line-height:1; margin-top:2px;">★</span>` : ''}
+      </div>
       <div id="train-progress-reverse-pill">${service.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : ''}</div>
       <div class="sub">An estimate based on calling-point times.${debugModeEnabled ? ` <span id="raw-debug-toggle" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Show raw data</span>` : ''}</div>
       <div id="train-progress-refresh-bar-wrap" style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
