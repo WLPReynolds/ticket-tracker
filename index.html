@@ -741,7 +741,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-11.23:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-11.23:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3477,7 +3477,7 @@ function openLiveScreen(initialSubTab){
     <div class="modal">
       <h3>Live trains</h3>
       <div style="display:flex; gap:8px; margin-bottom:14px;">
-        <button class="save-btn" id="live-subtab-yours" style="flex:1; margin:0;">Your trains</button>
+        <button class="save-btn" id="live-subtab-yours" style="flex:1; margin:0;">My trains</button>
         <button class="save-btn" id="live-subtab-tracked" style="flex:1; margin:0;">Tracked</button>
       </div>
       <div id="live-screen-body"></div>
@@ -3498,7 +3498,7 @@ function openLiveScreen(initialSubTab){
     tabTrackedBtn.textContent = trackedTrains.length ? `Tracked (${trackedTrains.length})` : 'Tracked';
   }
 
-  // ---- "Your trains" tab (your configured AM/PM services) ----
+  // ---- "My trains" tab (your configured AM/PM services) ----
   function timeToHHMM(t){ return t.slice(0,2) + ':' + t.slice(2,4); }
 
   function rowForConfigured(train, service){
@@ -3597,7 +3597,7 @@ function openLiveScreen(initialSubTab){
         const service = await fetchServiceDetails(serviceId);
         if (!overlay.isConnected) return;
         overlay.remove();
-        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, serviceId }, service);
+        openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, toLoc: tracked.toLoc || null, serviceId, labelIsFinal: true }, service);
       }catch(e){
         if (!overlay.isConnected) return;
         if (e.transient){
@@ -4527,9 +4527,20 @@ function openTrainProgress(train, service){
   // tracked list alongside entries from elsewhere that already show a
   // full route. Computed once, here, and reused for both — previously
   // this only happened for the tracked-list save, leaving the title
-  // itself showing just the bare time when opened from "Your trains".
+  // itself showing just the bare time when opened from "My trains".
   let displayLabel;
-  if (train.toLoc){
+  if (train.labelIsFinal){
+    // Reopened from the Tracked list — its stored .label was already
+    // fully computed (by one of the two branches below) the first time
+    // this train was opened, whichever type it was. Reused as-is rather
+    // than recomputed: for a configured route specifically, train.label
+    // itself already contains the full enriched text at this point
+    // (unlike a first-ever open, where it's still just the bare
+    // configured time), so re-running that branch would double up into
+    // something like "07:27 Crewe→Wigan North Western Crewe→Wigan
+    // North Western" instead of leaving well alone.
+    displayLabel = train.label;
+  } else if (train.toLoc){
     // Manual override first (covers Crewe/Wigan, this app's actual
     // regular stations), then the full station dataset, then the bare
     // code as a last resort. This is your own configured route boundary
@@ -4559,7 +4570,17 @@ function openTrainProgress(train, service){
     const existing = trackedTrains.find(t => t.serviceId === serviceId);
     const addedAt = existing ? existing.addedAt : Date.now(); // preserve the original tracking time — reopening shouldn't reset how long it's been tracked
     trackedTrains = trackedTrains.filter(t => t.serviceId !== serviceId);
-    trackedTrains.unshift({ serviceId, label: displayLabel, fromLoc: train.fromLoc, addedAt });
+    // toLoc carried through too, not just fromLoc — without it, reopening
+    // one of your own configured trains from the Tracked tab loses the
+    // context that it's a configured route at all, and falls back to
+    // treating it like any other tracked service: titled from the
+    // train's genuine physical journey instead of your own configured
+    // segment. A Crewe→Wigan commute train that happens to be part of a
+    // much longer London Euston→Glasgow Central working would then
+    // retitle itself as that wider journey the moment it's reopened from
+    // Tracked, despite showing correctly the first time round from Your
+    // trains.
+    trackedTrains.unshift({ serviceId, label: displayLabel, fromLoc: train.fromLoc, toLoc: train.toLoc || null, addedAt });
     trackedTrains = trackedTrains.slice(0, TRACKED_TRAIN_MAX); // no need to keep more than a handful
     saveTrackedTrains();
   }
