@@ -801,7 +801,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-12.17:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-12.19:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3316,16 +3316,16 @@ async function fetchPureBoard(crs, boardType, numRows){
   const data = await resp.json();
   const r = (data.results || [])[0];
   if (!r || !r.ok){
-    // The worker's own failure objects carry either .reason (a JS-level
-    // exception, or a missing-param check) or .status/.body (an actual
-    // HTTP-level failure talking to Darwin) — the previous version of
-    // this only ever looked at .reason, silently losing the status code
-    // and response body that would actually explain *why* a call
-    // failed (e.g. a subscription that doesn't cover this specific
-    // Darwin method), and made every failure look like a generic empty
-    // board instead.
+    // The worker deliberately no longer echoes Darwin's raw upstream
+    // error body back to the browser (a security hardening pass) — full
+    // detail is logged server-side in the Worker's own logs instead, so
+    // this can only ever show the status code and a short controlled
+    // reason now. Genuinely useful for spotting *that* something failed
+    // and roughly what kind of failure; checking Cloudflare's Worker
+    // logs is the way to see exactly *why* if this ever needs debugging
+    // again the way the original routing-error diagnosis did.
     const detail = r
-      ? (r.reason || `status ${r.status}${r.body ? ': ' + String(r.body).slice(0, 200) : ''}`)
+      ? `${r.reason || 'request failed'}${r.status ? ` (status ${r.status})` : ''}`
       : 'no response from worker';
     throw new Error(detail);
   }
