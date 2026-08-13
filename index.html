@@ -772,6 +772,79 @@
     padding: 4px 0 2px;
     border-top: 1px solid #333;
   }
+
+  /* Help guide — rendered from Markdown, styled to match the rest of the
+     app's dark theme rather than looking like a foreign document. */
+  .help-content h2{
+    font-size: 17px;
+    color: var(--amber);
+    margin: 22px 0 8px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 6px;
+  }
+  .help-content h2:first-child{ margin-top: 0; }
+  .help-content h3{
+    font-size: 15px;
+    color: var(--ink);
+    margin: 16px 0 6px;
+  }
+  .help-content h4{
+    font-size: 13.5px;
+    color: var(--ink);
+    margin: 12px 0 4px;
+    font-weight: 700;
+  }
+  .help-content p{
+    font-size: 14px;
+    color: var(--ink);
+    line-height: 1.5;
+    margin: 0 0 10px;
+  }
+  .help-content ul, .help-content ol{
+    margin: 0 0 12px;
+    padding-left: 20px;
+  }
+  .help-content li{
+    font-size: 14px;
+    color: var(--ink);
+    line-height: 1.5;
+    margin-bottom: 4px;
+  }
+  .help-content strong{ color: var(--amber); font-weight: 700; }
+  .help-content code{
+    background: var(--tile);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 12.5px;
+    font-family: 'Courier New', monospace;
+  }
+  .help-content a{ color: var(--amber); }
+  .help-content hr{
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 18px 0;
+  }
+  .help-table{
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 14px;
+    font-size: 13px;
+  }
+  .help-table th{
+    text-align: left;
+    color: var(--amber);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .help-table td{
+    color: var(--ink);
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
 </style>
 </head>
 <body>
@@ -801,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-12.19:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-13.10:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2049,6 +2122,7 @@ function render(){
   }
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
+  menuItems.push({ id: 'help-link', label: 'Help', weight: 55 });
   menuItems.push({ id: 'import-history-link', label: 'Bulk import comments', weight: 100 });
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
@@ -2458,6 +2532,9 @@ function render(){
   const importHistoryLink = document.getElementById('import-history-link');
   if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
 
+  const helpLink = document.getElementById('help-link');
+  if (helpLink) helpLink.addEventListener('click', () => { menuOpen = false; render(); openHelpGuide(); });
+
   const settingsLink = document.getElementById('settings-link');
   if (settingsLink) settingsLink.addEventListener('click', () => { menuOpen = false; render(); openSettingsMenu(); });
 
@@ -2712,6 +2789,239 @@ function openDayEditor(key){
   document.getElementById('modal-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+// ---- Help guide ----
+// Content maintained externally (currently drafted/edited via Gemini,
+// based on the app's own code) and pasted in here as Markdown, rather
+// than hand-converted to HTML each time it changes — this parser only
+// covers the specific subset of Markdown this particular guide actually
+// uses (headers, bold, bullet/numbered lists, tables, links, hr), not
+// Markdown in general, so a future revision using something outside
+// that subset may need the parser extended too.
+const HELP_GUIDE_MD = `
+Welcome to your **8-Day Ticket Tracker**. This app tracks your Flexi Season Ticket usage, keeps an eye on live train journeys, checks historical performance for Delay Repay claims, syncs reminders to Google Calendar, and backs up your data automatically to Google Drive.
+
+---
+
+## 1. How Your Ticket Is Tracked
+
+Your Flexi Season Ticket gives you **8 day-passes** to use within a **28-calendar-day window**.
+
+* **Automatic Pass Allowance:** Every weekday (Monday to Thursday) automatically uses 1 pass from your 8-pass allowance unless you tag the day as a non-travel day.
+* **Weekends:** Weekends are automatically skipped and never consume a pass.
+* **The 28-Day Window:** Your 28-day validity period starts on the date you set when logging a new season ticket. The progress bar on the Home tab shows how many days have elapsed out of 28.
+* **Ticket Expiry:** A ticket period finishes as soon as you either **use all 8 passes** OR **reach the 28th calendar day**, whichever happens first. Any unused passes remaining after 28 days expire and cannot be carried over.
+* **Gap Days & Smart Renewal Prompts:** Once a ticket period ends, the app calculates when you next need to commute. It flags the evening before your next actual travel day as your "Buy Ticket" day — skipping non-working days or weekends in between so you never buy a ticket earlier than necessary.
+
+---
+
+## 2. Managing Your Daily Schedule
+
+### Tagging Non-Travel Days
+If you aren't commuting on a scheduled work day:
+1. Tap any weekday on the Home tab or in the upcoming day list.
+2. Choose a preset chip tag (**WFH**, **HOLIDAY**, **DENTIST**, **SICK**) or type a custom reason.
+3. Tap **Save**. The pass allowance for that day is immediately restored, and your predicted renewal date adjusts automatically.
+
+### Working Day Overrides
+If you previously tagged a day as WFH or Holiday but ended up commuting anyway, tick the **"I still used the ticket today"** box on that day's editor. The app keeps your note on record while correctly deducting a pass.
+
+### UK Bank Holidays
+The app checks the official gov.uk bank holiday feed. Any public holiday falling on a weekday is automatically tagged as **BANK HOLIDAY** so you don't accidentally waste a pass on a public holiday.
+
+---
+
+## 3. Live Trains & Station Boards
+
+The app connects directly to National Rail Darwin live feeds via a private proxy Worker.
+
+### Live Trains Tab ("My Trains" & "Tracked")
+Tap the **Live** tab on the bottom navigation bar to switch between two views:
+
+1. **My Trains:** Displays real-time departure boards for your saved usual morning (Crewe to Wigan) and evening (Wigan to Crewe) commute times.
+   * Shows departure times, platforms, delay minutes, and cancellation notices.
+   * Tap any train row to open its full live journey timeline.
+
+2. **Tracked Trains:** Shows up to 5 specific train services you are currently following.
+   * Tap **+ Track a train** to search live departures or arrivals from any UK station by name or 3-letter station code (e.g. \`CRE\`, \`WGN\`, \`EUS\`).
+   * Tap a train from the search results to start watching it. It remains in your Tracked list for up to 6 hours, allowing you to follow its progress long after it leaves your station.
+
+### Real-Time Journey Progress
+When you tap into any live train, the app opens a detailed timeline:
+* **Live Progress Line & Blob:** An animated indicator moves down the station list based on real-time station departure reports.
+* **Station Weather:** Real-time weather icons (sun, moon, clouds, rain, snow) and temperatures are fetched from Open-Meteo for upcoming stops. Clear sky icons switch to a moon at night using astronomical sunrise/sunset calculations.
+* **Delay Explanations:** Real-time delay or cancellation reasons from National Rail are shown inline. The app filters out stale, repeated reasons from earlier stops, but you can tap *Show all reasons* to reveal everything.
+* **Smart Adaptive Polling:** To save battery and data, the progress screen automatically slows its check-ins when departure is still far off, and speeds up polling when approaching the final destination. You can adjust these timing thresholds under **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Live progress polling**.
+
+### Retro Station Board
+For a full-screen, station-style departure and arrival display:
+1. Tap **More** $\\rightarrow$ **Station board**.
+2. Choose any UK station by name or 3-letter code.
+3. The app renders a split-flap style board showing real-time departures and arrivals that automatically cycles through pages and updates every 30 seconds.
+
+### Automatic Location Detection ("Is this your train?")
+When you are within 500 metres of Crewe or Wigan station around your commute time, the app checks live departure boards:
+* **Delayed / Unexpected Train (Mismatch Prompt):** If an earlier or delayed train is leaving right when you arrive, a banner asks: **"Is this your train?"** Tapping **"Yes, that's me"** updates your confirmed train record.
+* **Automatic Silent Confirmation (Within 5 Minutes):** If you are at the station and your usual scheduled train is due to depart or arrive **within 5 minutes**, the app quietly confirms that train for you automatically — no manual tap required. A brief green banner appears at the top of the screen to let you know it has logged the journey. *(Note: If you arrive at the station more than 5 minutes before departure, the app holds off on auto-confirming until that 5-minute window opens, ensuring an early arrival doesn't lock in the wrong train prematurely).*
+
+---
+
+## 4. Delay Repay & Claims
+
+The app automatically cross-references your past travel days against historical performance records via the Historical Service Performance (HSP) proxy Worker.
+
+### Delay Indicators
+* **Orange Dot:** Indicates that at least one of your configured usual trains suffered a delay of **15 minutes or more** on that date.
+* **Red Dot:** Confirms a 15+ minute delay on a train you explicitly confirmed catching.
+
+### Pass Photo Storage (For Delay Claims)
+Avanti West Coast requires a photo of your ticket when submitting a Delay Repay claim.
+1. Go to **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Delay repay pass photo**.
+2. Upload a photo of your Flexi Season Ticket once. It is stored privately in your browser's IndexedDB storage.
+3. Whenever you tap a delayed train to start a claim, the app automatically downloads your saved pass photo to your device's Downloads folder so it's ready to attach on Avanti's website.
+
+### Submitting & Managing Claims
+1. Tap a day with a delay indicator, or open **More** $\\rightarrow$ **Delay repay claims**.
+2. Tap the highlighted red delay row. The app calculates your estimated payout based on standard Flexi 8 delay bands. (Note: Because a Flexi 8 ticket covers 16 individual single journeys, calculations are based on one-way leg values — so 15–29 mins pays 25%, 30–59 mins pays 50%, and 60+ mins pays 100% of a single leg's value).
+3. The app opens Avanti's Delay Repay website in a new tab and downloads your saved pass photo.
+4. After submitting your claim on Avanti's site, check the **Confirmed** box in the app's Delay Repay manager to mark the claim as paid.
+
+---
+
+## 5. Logging Purchases & Ticket Advisor
+
+### Logging Tickets
+Open the **Buy** tab at the bottom of the screen:
+* **Season Ticket:** Sets a new 8-use/28-day tracking cycle starting from your chosen date and records the cost.
+* **Single Ticket:** Logs an individual day-return purchase without resetting or disturbing your main 8-pass cycle.
+
+### Ticket Purchase Advisor
+Before you buy a new season ticket, the advisor checks your upcoming calendar (accounting for WFH, holidays, and bank holidays). If you have fewer than 8 travel days planned in the next 28 days, it calculates whether buying individual day-return tickets would be cheaper than a full season ticket and gives you a clear recommendation.
+
+---
+
+## 6. Calendar Sync & Google Drive Backups
+
+### Google Calendar Reminders
+1. Tap **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Connect Google Calendar**.
+2. The app syncs a single calendar event titled **"Buy train ticket"** set for 8:00 PM on the exact evening you need to buy your next pass.
+3. If your predicted travel schedule shifts, the app automatically updates the event date.
+
+### Automatic Google Drive Backups
+1. Tap **More** $\\rightarrow$ **Backup & Restore**.
+2. Enable **Automatically back up to Google Drive**.
+3. Whenever you switch away from or close the app, it quietly checks if any data has changed. If changes were made and at least 30 minutes have passed since the last backup, it uploads a JSON file to a \`Ticket Tracker Backups\` folder in your Google Drive. It automatically keeps the 2 most recent backups and cleans up older ones.
+4. You can also manually export or restore a backup \`.json\` file at any time.
+
+---
+
+## 7. Budgeting & Payday Planning
+
+Under **Set aside on payday** on the Home tab:
+* The app calculates your monthly pay period (taking the 28th of the month and adjusting backward for weekends or bank holidays).
+* It counts how many season tickets and parking days fall within that pay window, multiplying them by your daily parking cost and ticket price.
+* Use the **$\\langle$** and **$\\rangle$** arrows to preview future pay periods.
+* You can update daily parking costs or day-return prices anytime under **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Costs**.
+
+---
+
+## Quick Reference Summary
+
+| Nav / Menu Item | Primary Function |
+| :--- | :--- |
+| **Home Tab** | Main flip-card counter, 28-day bar, payday planner, and day list. |
+| **Live Tab** | View saved commute trains ("My trains") or track any UK service ("Tracked"). |
+| **Buy Tab** | Log new season or single tickets; view smart cost recommendations. |
+| **Calendar Tab** | Monthly grid displaying logged notes, travel days, and delay indicators. |
+| **Station Board** | Retro full-screen live departure and arrival board for any UK station. |
+| **Delay Repay Claims** | Log, manage, and confirm compensation claims for delayed journeys. |
+| **Settings** | Configure usual train times, costs, polling frequency, pass photo, and Google sync. |
+`;
+
+// Minimal, purpose-built Markdown renderer — covers exactly the subset
+// HELP_GUIDE_MD actually uses (##/### headers, bold, bullet/numbered
+// lists, tables, links, hr, inline code), not Markdown generally. Text
+// content is escaped before any HTML is added, so the source can be
+// trusted content (this app's own help text) without needing to treat
+// it as arbitrary untrusted input.
+function renderHelpMarkdown(md){
+  const cleaned = md
+    .replace(/\$\\rightarrow\$/g, '→')
+    .replace(/\$\\langle\$/g, '‹')
+    .replace(/\$\\rangle\$/g, '›');
+  const lines = cleaned.split('\n');
+  let html = '';
+  let inList = null; // 'ul' | 'ol' | null
+  function closeList(){ if (inList){ html += `</${inList}>`; inList = null; } }
+  function inlineMd(text){
+    let t = escapeHtml(text);
+    t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    t = t.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+    t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return t;
+  }
+  let i = 0;
+  while (i < lines.length){
+    const trimmed = lines[i].trim();
+
+    if (trimmed.startsWith('|') && lines[i+1] && /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(lines[i+1].trim())){
+      closeList();
+      const splitRow = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+      const headerCells = splitRow(trimmed);
+      html += '<table class="help-table"><thead><tr>' + headerCells.map(c => `<th>${inlineMd(c)}</th>`).join('') + '</tr></thead><tbody>';
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith('|')){
+        const rowCells = splitRow(lines[i]);
+        html += '<tr>' + rowCells.map(c => `<td>${inlineMd(c)}</td>`).join('') + '</tr>';
+        i++;
+      }
+      html += '</tbody></table>';
+      continue;
+    }
+
+    if (trimmed === '---'){ closeList(); html += '<hr>'; i++; continue; }
+    if (trimmed === ''){ closeList(); i++; continue; }
+
+    let m;
+    if ((m = trimmed.match(/^####\s+(.*)$/))){ closeList(); html += `<h4>${inlineMd(m[1])}</h4>`; i++; continue; }
+    if ((m = trimmed.match(/^###\s+(.*)$/))){ closeList(); html += `<h4>${inlineMd(m[1])}</h4>`; i++; continue; }
+    if ((m = trimmed.match(/^##\s+(.*)$/))){ closeList(); html += `<h3>${inlineMd(m[1])}</h3>`; i++; continue; }
+    if ((m = trimmed.match(/^#\s+(.*)$/))){ closeList(); html += `<h2>${inlineMd(m[1])}</h2>`; i++; continue; }
+
+    if ((m = trimmed.match(/^[*-]\s+(.*)$/))){
+      if (inList !== 'ul'){ closeList(); html += '<ul>'; inList = 'ul'; }
+      html += `<li>${inlineMd(m[1])}</li>`;
+      i++; continue;
+    }
+    if ((m = trimmed.match(/^\d+\.\s+(.*)$/))){
+      if (inList !== 'ol'){ closeList(); html += '<ol>'; inList = 'ol'; }
+      html += `<li>${inlineMd(m[1])}</li>`;
+      i++; continue;
+    }
+
+    closeList();
+    html += `<p>${inlineMd(trimmed)}</p>`;
+    i++;
+  }
+  closeList();
+  return html;
+}
+
+function openHelpGuide(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay modal-overlay-nav-safe';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Help</h3>
+      <div class="help-content">${renderHelpMarkdown(HELP_GUIDE_MD)}</div>
+      <div class="modal-close" id="help-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('help-close-btn').addEventListener('click', () => { if (overlay.isConnected) document.body.removeChild(overlay); });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
