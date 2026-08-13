@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-13.10:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-13.11:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -971,6 +971,24 @@ let parkingCost = 6.39; // default daily parking estimate
 // that's always caught by the very first fetch regardless of cadence.
 let pollBeforeDepartureMin = 5;
 let pollCheckInIntervalMin = 15;
+// Sanity caps for the two settings above, and a shared clamp used both
+// when saving from the editor and when loading back from localStorage —
+// previously only the editor's own minimum check existed (beforeVal>=0,
+// checkInVal>=1), with no upper bound at all, and nothing revalidated a
+// value already sitting in storage (which could in principle be
+// corrupted, or edited directly via devtools) before trusting it.
+const POLL_BEFORE_DEPARTURE_MIN_MAX = 60; // resuming full polling more than an hour before departure serves no real purpose
+const POLL_CHECK_IN_INTERVAL_MIN_MAX = 120; // beyond this the "safety net" check-in stops meaningfully protecting against a mid-wait cancellation
+function clampPollBeforeDepartureMin(v){
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return 5;
+  return Math.min(POLL_BEFORE_DEPARTURE_MIN_MAX, Math.round(n));
+}
+function clampPollCheckInIntervalMin(v){
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 1) return 15;
+  return Math.min(POLL_CHECK_IN_INTERVAL_MIN_MAX, Math.round(n));
+}
 let dayReturnPrice = 21.00; // used by the ticket purchase advisor to compare against the season ticket
 let dismissedMonths = {}; // monthKey ('YYYY-MM') -> true, for the monthly estimate card
 let menuOpen = false; // whether the hamburger dropdown is currently open
@@ -1217,11 +1235,11 @@ async function loadData(){
   }catch(e){ parkingCost = 6.39; }
   try{
     const pbd = localStorage.getItem('poll-before-departure-min');
-    pollBeforeDepartureMin = pbd ? JSON.parse(pbd) : 5;
+    pollBeforeDepartureMin = clampPollBeforeDepartureMin(pbd ? JSON.parse(pbd) : 5);
   }catch(e){ pollBeforeDepartureMin = 5; }
   try{
     const pci = localStorage.getItem('poll-check-in-interval-min');
-    pollCheckInIntervalMin = pci ? JSON.parse(pci) : 15;
+    pollCheckInIntervalMin = clampPollCheckInIntervalMin(pci ? JSON.parse(pci) : 15);
   }catch(e){ pollCheckInIntervalMin = 15; }
   try{
     const dr = localStorage.getItem('ticket-day-return-price');
@@ -3149,9 +3167,9 @@ function openPollingSettingsEditor(){
       <h3>Live progress polling</h3>
       <div class="sub">A train that's already been cancelled shows up the moment you open the screen either way — this only affects how often it keeps checking in afterward, while it hasn't departed yet.</div>
       <div style="margin-top:14px; font-size:13px; color:var(--ink-dim);">Resume normal checking this many minutes before scheduled departure</div>
-      <input type="number" id="poll-before-departure-input" value="${pollBeforeDepartureMin}" step="1" min="0" style="margin-bottom:12px;" />
+      <input type="number" id="poll-before-departure-input" value="${pollBeforeDepartureMin}" step="1" min="0" max="${POLL_BEFORE_DEPARTURE_MIN_MAX}" style="margin-bottom:12px;" />
       <div style="font-size:13px; color:var(--ink-dim);">Longest gap allowed between checks before that</div>
-      <input type="number" id="poll-check-in-input" value="${pollCheckInIntervalMin}" step="1" min="1" style="margin-bottom:12px;" />
+      <input type="number" id="poll-check-in-input" value="${pollCheckInIntervalMin}" step="1" min="1" max="${POLL_CHECK_IN_INTERVAL_MIN_MAX}" style="margin-bottom:12px;" />
       <button class="save-btn" id="poll-settings-save">Save</button>
       <div class="modal-close" id="poll-settings-close">Cancel</div>
     </div>
@@ -3161,8 +3179,12 @@ function openPollingSettingsEditor(){
     const beforeVal = parseInt(document.getElementById('poll-before-departure-input').value, 10);
     const checkInVal = parseInt(document.getElementById('poll-check-in-input').value, 10);
     if (!isNaN(beforeVal) && beforeVal >= 0 && !isNaN(checkInVal) && checkInVal >= 1){
-      pollBeforeDepartureMin = beforeVal;
-      pollCheckInIntervalMin = checkInVal;
+      // Clamped here too, not just constrained by the input's own max
+      // attribute — that's only a UI hint a browser can choose to
+      // enforce loosely (or not at all), not a real guarantee on the
+      // value actually saved.
+      pollBeforeDepartureMin = clampPollBeforeDepartureMin(beforeVal);
+      pollCheckInIntervalMin = clampPollCheckInIntervalMin(checkInVal);
       await savePollingSettings();
       document.body.removeChild(overlay); render();
     }
@@ -3241,6 +3263,7 @@ function openDepartureBoardView(){
   // Tracked tab's own search does.
   loadStationIndex(false);
   document.getElementById('depboard-picker-close-btn').addEventListener('click', () => {
+    teardown();
     if (overlay.isConnected) document.body.removeChild(overlay);
   });
 
