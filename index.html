@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-13.11:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-13.11:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4800,7 +4800,30 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   }
 
   let lastPassedIdx = -1;
-  pointDates.forEach((t, i) => { if (t && t <= now) lastPassedIdx = i; });
+  // A second set of dates, used only from here on for "has this point
+  // actually been reached" — pointDates above stays exactly as it was,
+  // schedule-only, since that's what correctly handles day inference
+  // and the midnight-crossing fix. This one inherits each point's
+  // already-correctly-inferred calendar day from pointDates (no new day
+  // inference of its own — reusing that logic is exactly the risk this
+  // was deferred twice to avoid), and swaps in each point's live time
+  // of day (confirmed actual, then estimate, then schedule) in place of
+  // the pure schedule time. A badly delayed point's *scheduled* time
+  // can pass long before the train genuinely does — Preston scheduled
+  // 17:18, only estimated for 17:23 with no confirmed departure at all,
+  // is a real case this was checked against directly.
+  const liveDates = points.map((p, i) => {
+    if (!pointDates[i]) return null;
+    const raw = (p.liveTime && p.liveTime.includes(':')) ? p.liveTime : scheduleTime(p);
+    const hhmm = (raw || '').replace(':', '');
+    if (hhmm.length < 4) return pointDates[i];
+    const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
+    if (isNaN(h) || isNaN(m)) return pointDates[i];
+    const d = new Date(pointDates[i]);
+    d.setHours(h, m, 0, 0);
+    return d;
+  });
+  liveDates.forEach((t, i) => { if (t && t <= now) lastPassedIdx = i; });
   // The comparison above has no concept of "cancelled", or of Darwin's
   // explicit "Delayed" flag — genuinely different from having no data at
   // all, since it means the departure/arrival time is actively unknown
@@ -4836,7 +4859,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // to real measurements by positionBlobAndLine().
   let fraction = 0;
   if (lastPassedIdx >= 0 && lastPassedIdx < points.length - 1 && !points[lastPassedIdx + 1].isCancelled){
-    const t1 = pointDates[lastPassedIdx], t2 = pointDates[lastPassedIdx + 1];
+    const t1 = liveDates[lastPassedIdx], t2 = liveDates[lastPassedIdx + 1];
     if (t1 && t2 && t2 > t1){
       fraction = Math.max(0, Math.min(1, (now - t1) / (t2 - t1)));
     }
