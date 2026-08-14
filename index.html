@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-13.11:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-13.11:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4985,8 +4985,18 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // only on the first one, not repeated down the entire list.
   let lastShownReason = primaryReason;
 
+  // Indices for the two visual treatments below — computed once here
+  // rather than re-derived per row. toLocIdx only ever resolves when
+  // train.toLoc is genuinely set (a "My Trains" configured route) —
+  // for anything else (a search-tracked or arrival-only entry), there's
+  // no defined "my journey" segment to highlight at all, so both stay
+  // switched off entirely rather than guessing at one.
+  const hereIdx = points.findIndex(p => p.isYourStation);
+  const toLocIdx = train.toLoc ? points.findIndex(p => p.crs === train.toLoc) : -1;
   const rowsHtml = points.map((p, i) => {
     try{
+      const isToLocRow = toLocIdx !== -1 && i === toLocIdx;
+      const inMyJourney = toLocIdx !== -1 && hereIdx !== -1 && i >= Math.min(hereIdx, toLocIdx) && i <= Math.max(hereIdx, toLocIdx);
       // A separator wherever the journey crosses into a new calendar
       // day — matches National Rail's own presentation. pointDates is
       // already correctly day-aware (built for the midnight-crossing
@@ -4996,7 +5006,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
         ? `<div style="text-align:center; font-size:11.5px; color:var(--amber); padding:8px 0; border-bottom:1px solid var(--line); margin-left:6px;">${pointDates[i].toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'})}</div>`
         : '';
       const status = describePointStatusRemembered(service.serviceID, p.crs || `idx-${i}`, p.schedTime, p.liveTime, p.isCancelled);
-      const nameColor = p.isYourStation ? 'var(--amber)' : 'var(--ink)';
+      const nameColor = (p.isYourStation || isToLocRow) ? 'var(--amber)' : 'var(--ink)';
       // The reason text often stays attached even once a point's own
       // status has recovered to genuinely on time — show it whenever
       // there's real uncertainty or an actual problem, but not once a
@@ -5055,11 +5065,11 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
         : '';
       return `
         ${daySeparator}
-        <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;">
+        <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;${inMyJourney ? ' background:color-mix(in srgb, var(--amber) 8%, transparent);' : ''}">
           <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
           <span style="min-width:56px;">${timeHtml}</span>
           <span style="flex:1; text-align:right;">
-            <span class="wx-badge" data-wx-idx="${i}" style="margin-right:6px; font-size:12.5px; white-space:nowrap;"></span><span style="color:${nameColor}; font-weight:${p.isYourStation?600:400};">${p.locationName || 'Unknown'}</span>
+            <span class="wx-badge" data-wx-idx="${i}" style="margin-right:6px; font-size:12.5px; white-space:nowrap;"></span><span style="color:${nameColor}; font-weight:${(p.isYourStation||isToLocRow)?600:400};">${p.locationName || 'Unknown'}</span>
             <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}${platformText}</div>
             ${reasonHtml}
             ${debugHtml}
