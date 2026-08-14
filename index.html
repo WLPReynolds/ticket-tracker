@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-13.11:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-13.15:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4912,6 +4912,17 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       let overallStatus = status;
       const afterLastStatus = describePointStatus(afterLast.schedTime, afterLast.liveTime, afterLast.isCancelled);
       if (afterLastStatus.minutesLate !== null && afterLastStatus.minutesLate > 0){
+        overallStatus = afterLastStatus;
+      } else if (afterLastStatus.confirmed && afterLastStatus.text === 'Delayed'){
+        // The current point can be genuinely, correctly confirmed "on
+        // time" while the very next point has already been flagged
+        // Delayed — that's new information the current point's own
+        // status has no way to reflect yet, since it happened
+        // afterward. "Delayed" carries no minutes-late number, so the
+        // check above (which only reacts to a positive figure) was
+        // silently ignoring it entirely — confirmed live against a real
+        // Heathrow Express service showing "Running on time" while the
+        // very next point was clearly Delayed.
         overallStatus = afterLastStatus;
       } else if (overallStatus.minutesLate === null || (overallStatus.minutesLate === 0 && !overallStatus.confirmed)){
         // Genuinely confirmed on time (or early) at the current point is
