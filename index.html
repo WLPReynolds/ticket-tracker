@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-13.15:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-13.15:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2141,6 +2141,7 @@ function render(){
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'help-link', label: 'Help', weight: 55 });
+  menuItems.push({ id: 'backlog-link', label: 'Backlog', weight: 56 });
   menuItems.push({ id: 'import-history-link', label: 'Bulk import comments', weight: 100 });
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
@@ -2552,6 +2553,9 @@ function render(){
 
   const helpLink = document.getElementById('help-link');
   if (helpLink) helpLink.addEventListener('click', () => { menuOpen = false; render(); openHelpGuide(); });
+
+  const backlogLink = document.getElementById('backlog-link');
+  if (backlogLink) backlogLink.addEventListener('click', () => { menuOpen = false; render(); openBacklogView(); });
 
   const settingsLink = document.getElementById('settings-link');
   if (settingsLink) settingsLink.addEventListener('click', () => { menuOpen = false; render(); openSettingsMenu(); });
@@ -3028,6 +3032,30 @@ function renderHelpMarkdown(md){
   return html;
 }
 
+// Kept up to date as a habit whenever a release actually changes the
+// backlog — not truly automatic (nothing runs between conversations to
+// trigger this on its own), but a standing part of shipping a release
+// alongside the version bump and syntax checks, the same way those
+// already happen without being asked each time.
+const BACKLOG_MD = `
+*Last updated: v2026-08-13.15:35*
+
+1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app.
+2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
+3. **Christmas bunting variant** for the header.
+4. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
+5. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon.
+6. **Settings UI polish** — icon-based layout, proper in-place Back navigation instead of closing Settings and reopening a separate screen, toggles that flip in place rather than closing Settings on tap, Costs as one combined form instead of a further list of two links.
+7. **Station Board fixes** — page auto-cycling gets reset by the 3-minute polling cycle and only reaches its true maximum after the session ends; the picker step doesn't fill the available screen height, letting the underlying page bleed through the gap; the Close button's styling doesn't match the app's usual convention.
+8. **Boarding/alighting-aware adaptive polling** — two fast-polling windows (approaching boarding, approaching alighting) using \`toLoc\`, instead of one fast window near the physical train's true final stop, which may not even be where you get off.
+9. **\`journeyFinished\` has the same gap as #8** — may currently keep polling, and showing progress, well past your actual destination if the physical service continues further. Likely one piece of work alongside #8, same underlying cause.
+10. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which.
+11. **Arrival-side detection as a fallback for #10** — mirrors the existing boarding-side detection at the destination instead, only firing when that direction isn't already confirmed for the day.
+12. **Delay repay claim helper screen** — a smartcard number field on the pass-photo screen, plus a helper screen (delay date, train, minutes late, payout, smartcard number) with Copy buttons for each, shown when starting a claim.
+
+**Watch item, not a confirmed bug:** the season ticket card displaying alongside "No active season ticket" — still only reproduced in an empty-data preview, never seen on the real phone.
+`;
+
 function openHelpGuide(){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay modal-overlay-nav-safe';
@@ -3040,6 +3068,21 @@ function openHelpGuide(){
   `;
   document.body.appendChild(overlay);
   document.getElementById('help-close-btn').addEventListener('click', () => { if (overlay.isConnected) document.body.removeChild(overlay); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+function openBacklogView(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay modal-overlay-nav-safe';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Backlog</h3>
+      <div class="help-content">${renderHelpMarkdown(BACKLOG_MD)}</div>
+      <div class="modal-close" id="backlog-close-btn" style="margin-top:16px;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('backlog-close-btn').addEventListener('click', () => { if (overlay.isConnected) document.body.removeChild(overlay); });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
