@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-17.12:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-17.13:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1117,6 +1117,24 @@ async function deletePassPhoto(){
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+// A real anchor-tag click, not window.open() — on a PWA running in
+// standalone/installed mode, Android Chrome sometimes treats a
+// JS-triggered window.open() as a transient in-app overlay (closing it
+// destroys it entirely, with no way back), whereas a genuine link click
+// is occasionally handled as a proper external navigation into the
+// actual browser instead — independently switchable, the way opening a
+// link normally works. Not guaranteed either way; this is a real
+// platform behaviour outside what a web app can fully dictate, worth
+// trying rather than promising it'll definitely change anything.
+function openExternalLink(url){
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 // Drops the saved pass photo straight into the downloads folder — named
 // with today's date so repeat downloads stay distinguishable during an
@@ -6054,12 +6072,12 @@ function wireClaimHandlers(overlay, reopen){
         };
       });
       await saveDelayClaims();
-      window.open(AVANTI_CLAIM_URL, '_blank');
-      // After opening the claim site, not before — window.open needs to
-      // stay as close to the original tap as possible to avoid Chrome's
-      // popup blocker treating it as unrelated to a user gesture. The
-      // photo download itself isn't nearly as strict about this, so it's
-      // safe to let the extra IndexedDB read happen afterward.
+      openExternalLink(AVANTI_CLAIM_URL);
+      // After opening the claim site, not before — this needs to stay as
+      // close to the original tap as possible to avoid the popup blocker
+      // treating it as unrelated to a user gesture. The photo download
+      // itself isn't nearly as strict about this, so it's safe to let
+      // the extra IndexedDB read happen afterward.
       triggerPassPhotoDownload();
       reopen();
       // Shown last, on top of whatever reopen() just re-rendered — so
