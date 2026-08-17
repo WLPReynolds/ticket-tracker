@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-17.14:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-17.14:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1183,6 +1183,21 @@ function triggerClaimDetailsDownload(dateKey){
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }catch(e){ /* best-effort — the claim flow continues regardless */ }
+}
+// Runs the pass photo and claim-details downloads one after the other,
+// clearly spaced apart, rather than firing both at once — Chrome tends
+// to silently throttle multiple automatic downloads triggered in quick
+// succession from the same interaction, and firing them close together
+// once caused exactly that: the text file (a fully synchronous trigger)
+// was completing before the photo download's own click ever fired,
+// since that one has to wait on an IndexedDB read first. Photo goes
+// first, since it's the one that actually needs attaching to Avanti's
+// form — the text file is reference material, useful but not essential
+// in the same way.
+async function triggerAllClaimDownloads(dateKey){
+  await triggerPassPhotoDownload();
+  await new Promise(resolve => setTimeout(resolve, 600));
+  triggerClaimDetailsDownload(dateKey);
 }
 // Drops the saved pass photo straight into the downloads folder — named
 // with today's date so repeat downloads stay distinguishable during an
@@ -6111,8 +6126,7 @@ function wireClaimHandlers(overlay, reopen){
       // treating it as unrelated to a user gesture. Everything below
       // isn't nearly as timing-sensitive, so it's safe to let those run
       // right after instead.
-      triggerPassPhotoDownload();
-      triggerClaimDetailsDownload(dateKey);
+      triggerAllClaimDownloads(dateKey);
       copySmartcardToClipboard();
       reopen();
       // Shown last, on top of whatever reopen() just re-rendered — so
