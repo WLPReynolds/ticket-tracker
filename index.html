@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-13.15:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-15.10:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4722,6 +4722,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     reason: cp.delayReason || cp.cancelReason || null,
     platform: cp.platform || null,
     crs: cp.crs || null,
+    hasConfirmedActual: !!cp.at,
     raw: { st: cp.st, at: cp.at, et: cp.et },
   }));
   // Whichever side of this station is actually relevant to the wider
@@ -4754,6 +4755,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     isYourStation: true,
     platform: service.platform || null,
     crs: train.fromLoc || null,
+    hasConfirmedActual: !!(departsHere ? service.atd : service.ata),
     raw: { std: service.std, sta: service.sta, etd: service.etd, eta: service.eta, atd: service.atd, ata: service.ata },
   }];
   const after = pointsFrom(service.subsequentCallingPoints).map(cp => ({
@@ -4768,6 +4770,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     reason: cp.delayReason || cp.cancelReason || null,
     platform: cp.platform || null,
     crs: cp.crs || null,
+    hasConfirmedActual: !!cp.at,
     raw: { st: cp.st, at: cp.at, et: cp.et },
   }));
   const points = [...before, ...here, ...after];
@@ -5114,6 +5117,23 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
         statusColor = status.color;
       }
       const platformText = p.platform ? ` <span style="color:var(--ink-dim);">· Platform ${p.platform}</span>` : '';
+      // A specific delay figure (or the literal "Delayed" flag) is
+      // sometimes shown for a point whose actual departure/arrival
+      // hasn't been confirmed by Darwin at all yet (raw at/atd/ata still
+      // blank) — genuinely still just a live estimate, even once its own
+      // due moment has passed, not a settled fact. Flagged explicitly
+      // rather than left looking as definitive as a confirmed delay.
+      // Deliberately narrow: only once the point's own due moment has
+      // actually passed (liveDates, the same live time basis the blob
+      // itself now uses) — and only when the status isn't plain "On
+      // time", since an unconfirmed-but-on-time point is the ordinary
+      // case for most of a journey and would otherwise show this on
+      // nearly every row, diluting it into noise.
+      const dueMomentPassed = liveDates[i] && now >= liveDates[i];
+      const showNotYetDepartedPill = dueMomentPassed && !p.hasConfirmedActual && !p.isCancelled && status.minutesLate !== 0;
+      const notYetDepartedPill = showNotYetDepartedPill
+        ? ` <span style="background:#ff4d3d; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">NOT YET DEPARTED</span>`
+        : '';
       const debugHtml = (showRawDebug && p.raw)
         ? `<div style="font-family:monospace; font-size:10px; color:#6a7a8a; margin-top:2px;">${Object.entries(p.raw).map(([k,v]) => `${k}=${v === undefined || v === null ? '·' : v}`).join('  ')}</div>`
         : '';
@@ -5124,7 +5144,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
           <span style="min-width:56px;">${timeHtml}</span>
           <span style="flex:1; text-align:right;">
             <span class="wx-badge" data-wx-idx="${i}" style="margin-right:6px; font-size:12.5px; white-space:nowrap;"></span><span style="color:${nameColor}; font-weight:${(p.isYourStation||isToLocRow)?600:400};">${p.locationName || 'Unknown'}</span>
-            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}${platformText}</div>
+            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}${notYetDepartedPill}${platformText}</div>
             ${reasonHtml}
             ${debugHtml}
           </span>
