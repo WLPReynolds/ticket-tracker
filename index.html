@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-17.10:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-17.11:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5056,15 +5056,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       const wouldSuppress = rawReason && !last.isCancelled && !afterLast.isCancelled && inheritedReasons.has(normalizeReason(rawReason));
       if (wouldSuppress) anyReasonSuppressed = true;
       primaryReason = (rawReason && (showAllReasons || !wouldSuppress)) ? rawReason : null;
-      // "Between X and Y" implies real, evidenced progress toward Y —
-      // not accurate when Y itself is only showing an unconfirmed delay
-      // estimate with nothing genuinely confirmed behind it yet. "At X"
-      // is the more honest claim in that case: what's actually known is
-      // that X has genuinely happened, not that the train is partway to Y.
-      const headline = isGenuinelyUnconfirmedDelay(afterLast)
-        ? `Currently at ${last.locationName}`
-        : `Currently between ${last.locationName} and ${afterLast.locationName}`;
-      summaryHtml = `<div>${headline}</div>` +
+      summaryHtml = `<div>Currently between ${last.locationName} and ${afterLast.locationName}</div>` +
         `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${runningText}</div>` +
         (primaryReason ? `<div style="font-size:12px; margin-top:4px; opacity:0.85;">${primaryReason}</div>` : '');
     }
