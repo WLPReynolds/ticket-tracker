@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-17.13:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-17.14:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1135,6 +1135,54 @@ function openExternalLink(url){
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+// Silently puts the smartcard number on the clipboard the instant a
+// claim starts — the actual fix for the window-switching problem, not
+// a workaround for it. The number's ready to paste into Avanti's form
+// the moment its page loads, with no need to ever switch back to this
+// app for that specific step. Never throws: no number saved, or a
+// denied/unavailable clipboard permission, just means the claim flow
+// continues without it, same as every other best-effort step here.
+async function copySmartcardToClipboard(){
+  if (!smartcardNumber) return;
+  try{ await navigator.clipboard.writeText(smartcardNumber); }
+  catch(e){ /* clipboard unavailable or denied — nothing more to do */ }
+}
+// Drops a plain-text summary of today's claim(s) straight into the
+// downloads folder, the same reliable way the pass photo already does
+// — train, delay, ticket price, and payout for whichever of AM/PM
+// applied. This is what actually survives the fact that there's no way
+// back to this app's own claim screen once Avanti's site has taken
+// over the window — a screenshot would need remembering to take one in
+// the moment; this just always happens.
+function triggerClaimDetailsDownload(dateKey){
+  try{
+    const dayClaims = delayClaims[dateKey] || {};
+    const price = getSeasonPriceForDate(dateKey);
+    const lines = [`Delay repay claim — ${dateLabel(parseKey(dateKey))}`, ''];
+    ['AM', 'PM'].forEach(dir => {
+      const claim = dayClaims[dir];
+      if (!claim) return;
+      const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
+      const train = railTrains.find(t => t.key === confirmedKey);
+      const trainLabel = train ? train.label : dir;
+      lines.push(`${dir} — ${trainLabel}`);
+      lines.push(`  Delay: ${claim.minutesLate} minute${claim.minutesLate === 1 ? '' : 's'}`);
+      lines.push(`  Ticket price: £${price.toFixed(2)}`);
+      lines.push(`  Estimated payout: £${claim.amount.toFixed(2)}`);
+      lines.push('');
+    });
+    if (smartcardNumber) lines.push(`Smartcard number: ${smartcardNumber}`);
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `claim-details-${dateKey}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }catch(e){ /* best-effort — the claim flow continues regardless */ }
 }
 // Drops the saved pass photo straight into the downloads folder — named
 // with today's date so repeat downloads stay distinguishable during an
@@ -2935,13 +2983,13 @@ Avanti West Coast requires a photo of your ticket, and asks for your smartcard n
 1. Go to **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Smartcard pass**.
 2. Upload a photo of your Flexi Season Ticket once. It is stored privately in your browser's IndexedDB storage.
 3. Enter your smartcard number once — it's printed on the card itself.
-4. Whenever you tap a delayed train to start a claim, the app automatically downloads your saved pass photo to your device's Downloads folder so it's ready to attach on Avanti's website, and opens a claim details screen with your smartcard number ready to copy.
 
 ### Submitting & Managing Claims
 1. Tap a day with a delay indicator, or open **More** $\\rightarrow$ **Delay repay claims**.
 2. Tap the highlighted red delay row. The app calculates your estimated payout based on standard Flexi 8 delay bands. (Note: Because a Flexi 8 ticket covers 16 individual single journeys, calculations are based on one-way leg values — so 15–29 mins pays 25%, 30–59 mins pays 50%, and 60+ mins pays 100% of a single leg's value).
-3. The app opens Avanti's Delay Repay website in a new tab and downloads your saved pass photo.
-4. After submitting your claim on Avanti's site, check the **Confirmed** box in the app's Delay Repay manager to mark the claim as paid.
+3. Several things happen at once: Avanti's Delay Repay website opens in a new tab, your saved pass photo downloads to your device's Downloads folder, a **claim-details.txt** file also downloads there (train, delay, ticket price, and payout for whichever of your AM/PM journeys applied that day, plus your smartcard number) — and your smartcard number is copied straight to your clipboard, ready to paste into Avanti's form the moment its page loads.
+4. A **Claim details** screen also appears in the app itself, showing the same information at a glance right away.
+5. After submitting your claim on Avanti's site, check the **Confirmed** box in the app's Delay Repay manager to mark the claim as paid.
 
 ---
 
@@ -6018,28 +6066,13 @@ function openClaimHelperScreen(dateKey){
       <h3>Claim details</h3>
       <div class="sub" style="margin-bottom:14px;">${escapeHtml(dateLabel(parseKey(dateKey)))}</div>
       ${sections || '<div class="sub">No claim on record for this date.</div>'}
-      <div class="sub" style="margin-top:6px; margin-bottom:4px;">Smartcard number</div>
-      <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
-        <span style="font-family:monospace; font-size:15px; flex:1; word-break:break-all;">${smartcardNumber ? escapeHtml(smartcardNumber) : 'Not set — add it under Settings → Smartcard pass'}</span>
-        ${smartcardNumber ? `<span id="claim-helper-copy-btn" style="color:var(--amber); font-weight:700; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; white-space:nowrap;">Copy</span>` : ''}
-      </div>
+      <div class="sub" style="margin-top:6px; margin-bottom:4px;">Smartcard number (already copied)</div>
+      <div style="font-family:monospace; font-size:15px; word-break:break-all; margin-bottom:16px;">${smartcardNumber ? escapeHtml(smartcardNumber) : 'Not set — add it under Settings → Smartcard pass'}</div>
+      <div class="sub" style="margin-bottom:16px;">Full details, including this smartcard number, have also been downloaded as a text file for reference once you're on Avanti's site.</div>
       <div class="modal-close" id="claim-helper-close-btn">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
-  if (smartcardNumber){
-    document.getElementById('claim-helper-copy-btn').addEventListener('click', async () => {
-      const btn = document.getElementById('claim-helper-copy-btn');
-      try{
-        await navigator.clipboard.writeText(smartcardNumber);
-        if (btn){ btn.textContent = 'Copied'; setTimeout(() => { if (btn) btn.textContent = 'Copy'; }, 1500); }
-      }catch(e){
-        // Clipboard API unavailable or permission denied — nothing more
-        // useful to do than leave the number visible to copy by hand.
-        if (btn) btn.textContent = 'Copy failed';
-      }
-    });
-  }
   document.getElementById('claim-helper-close-btn').addEventListener('click', () => {
     if (overlay.isConnected) document.body.removeChild(overlay);
   });
@@ -6075,10 +6108,12 @@ function wireClaimHandlers(overlay, reopen){
       openExternalLink(AVANTI_CLAIM_URL);
       // After opening the claim site, not before — this needs to stay as
       // close to the original tap as possible to avoid the popup blocker
-      // treating it as unrelated to a user gesture. The photo download
-      // itself isn't nearly as strict about this, so it's safe to let
-      // the extra IndexedDB read happen afterward.
+      // treating it as unrelated to a user gesture. Everything below
+      // isn't nearly as timing-sensitive, so it's safe to let those run
+      // right after instead.
       triggerPassPhotoDownload();
+      triggerClaimDetailsDownload(dateKey);
+      copySmartcardToClipboard();
       reopen();
       // Shown last, on top of whatever reopen() just re-rendered — so
       // closing this helper naturally reveals that same refreshed
