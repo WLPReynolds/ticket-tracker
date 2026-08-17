@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-17.11:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-17.12:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -961,6 +961,12 @@ let periodStart = DEFAULT_PERIOD_START; // date the current ticket window began
 let purchases = []; // [{date: 'YYYY-MM-DD', cost: number}, ...] — one entry per ticket bought
 let lastKnownPrice = 153.60; // prefilled into the recalibrate cost field
 let parkingCost = 6.39; // default daily parking estimate
+// 18 characters on the actual card artwork — capped at 20 rather than
+// exactly 18, a small bit of headroom in case a future card format
+// (or, if this app is ever published more widely, a different
+// operator's card) runs longer.
+let smartcardNumber = '';
+const SMARTCARD_NUMBER_MAX_LENGTH = 20;
 // Live-progress polling cadence, both configurable from the menu (see
 // openPollingSettingsEditor) — how close to scheduled departure polling
 // resumes at the normal cadence, and the longest it'll ever go between
@@ -1234,6 +1240,10 @@ async function loadData(){
     parkingCost = pc ? JSON.parse(pc) : 6.39;
   }catch(e){ parkingCost = 6.39; }
   try{
+    const sc = localStorage.getItem('smartcard-number');
+    smartcardNumber = sc ? JSON.parse(sc) : '';
+  }catch(e){ smartcardNumber = ''; }
+  try{
     const pbd = localStorage.getItem('poll-before-departure-min');
     pollBeforeDepartureMin = clampPollBeforeDepartureMin(pbd ? JSON.parse(pbd) : 5);
   }catch(e){ pollBeforeDepartureMin = 5; }
@@ -1386,6 +1396,10 @@ async function saveLastKnownPrice(){
 }
 async function saveParkingCost(){
   try{ localStorage.setItem('ticket-parking-cost', JSON.stringify(parkingCost)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveSmartcardNumber(){
+  try{ localStorage.setItem('smartcard-number', JSON.stringify(smartcardNumber)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePollingSettings(){
@@ -2898,11 +2912,12 @@ The app automatically cross-references your past travel days against historical 
 * **Orange Dot:** Indicates that at least one of your configured usual trains suffered a delay of **15 minutes or more** on that date.
 * **Red Dot:** Confirms a 15+ minute delay on a train you explicitly confirmed catching.
 
-### Pass Photo Storage (For Delay Claims)
-Avanti West Coast requires a photo of your ticket when submitting a Delay Repay claim.
-1. Go to **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Delay repay pass photo**.
+### Smartcard Pass (Photo and Number, for Delay Claims)
+Avanti West Coast requires a photo of your ticket, and asks for your smartcard number, when submitting a Delay Repay claim.
+1. Go to **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Smartcard pass**.
 2. Upload a photo of your Flexi Season Ticket once. It is stored privately in your browser's IndexedDB storage.
-3. Whenever you tap a delayed train to start a claim, the app automatically downloads your saved pass photo to your device's Downloads folder so it's ready to attach on Avanti's website.
+3. Enter your smartcard number once — it's printed on the card itself.
+4. Whenever you tap a delayed train to start a claim, the app automatically downloads your saved pass photo to your device's Downloads folder so it's ready to attach on Avanti's website, and opens a claim details screen with your smartcard number ready to copy.
 
 ### Submitting & Managing Claims
 1. Tap a day with a delay indicator, or open **More** $\\rightarrow$ **Delay repay claims**.
@@ -3038,7 +3053,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-13.15:35*
+*Last updated: v2026-08-17.12:10*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -3051,7 +3066,6 @@ const BACKLOG_MD = `
 9. **\`journeyFinished\` has the same gap as #8** — may currently keep polling, and showing progress, well past your actual destination if the physical service continues further. Likely one piece of work alongside #8, same underlying cause.
 10. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which.
 11. **Arrival-side detection as a fallback for #10** — mirrors the existing boarding-side detection at the destination instead, only firing when that direction isn't already confirmed for the day.
-12. **Delay repay claim helper screen** — a smartcard number field on the pass-photo screen, plus a helper screen (delay date, train, minutes late, payout, smartcard number) with Copy buttons for each, shown when starting a claim.
 
 **Watch item, not a confirmed bug:** the season ticket card displaying alongside "No active season ticket" — still only reproduced in an empty-data preview, never seen on the real phone.
 `;
@@ -3097,7 +3111,7 @@ function openSettingsMenu(){
       <div class="settings-link" id="settings-preferred-google-link">${preferredGoogleEmail ? `Preferred Google account: ${escapeHtml(preferredGoogleEmail)}` : 'Set preferred Google account'}</div>
       <div class="settings-link" id="settings-gcal-link">${gcalEnabled ? 'Disconnect Google Calendar' : 'Connect Google Calendar'}</div>
       <div class="settings-link" id="settings-rail-config-link">Configure usual trains</div>
-      <div class="settings-link" id="settings-pass-photo-link">Delay repay pass photo</div>
+      <div class="settings-link" id="settings-pass-photo-link">Smartcard pass</div>
       <div class="settings-link" id="settings-weather-link">Weather on live progress: ${weatherEnabled ? 'On' : 'Off'}</div>
       <div class="settings-link" id="settings-debug-link">Debug mode: ${debugModeEnabled ? 'On' : 'Off'}</div>
       <div class="modal-close" id="settings-close-btn" style="margin-top:16px;">Close</div>
@@ -5953,6 +5967,67 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
   }).join('');
 }
 
+// Everything needed to actually submit a claim, gathered into one
+// screen — shown alongside the existing tap-to-claim flow rather than
+// replacing it. Reads whatever's genuinely on record for that date
+// (delayClaims), not just whichever direction happened to trigger this
+// particular tap — a day with both AM and PM claims shows both, since
+// you'd be dealing with both while on Avanti's site regardless of which
+// one you tapped.
+function openClaimHelperScreen(dateKey){
+  const dayClaims = delayClaims[dateKey] || {};
+  const price = getSeasonPriceForDate(dateKey);
+  const sections = ['AM', 'PM'].map(dir => {
+    const claim = dayClaims[dir];
+    if (!claim) return '';
+    const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
+    const train = railTrains.find(t => t.key === confirmedKey);
+    const trainLabel = train ? train.label : dir;
+    return `
+      <div style="margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid var(--line);">
+        <div style="font-weight:700; color:var(--amber); margin-bottom:4px;">${dir} — ${escapeHtml(trainLabel)}</div>
+        <div class="sub" style="margin:0 0 2px;">Delay: ${claim.minutesLate} minute${claim.minutesLate === 1 ? '' : 's'}</div>
+        <div class="sub" style="margin:0 0 2px;">Ticket price: £${price.toFixed(2)}</div>
+        <div class="sub" style="margin:0;">Estimated payout: £${claim.amount.toFixed(2)}</div>
+      </div>
+    `;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Claim details</h3>
+      <div class="sub" style="margin-bottom:14px;">${escapeHtml(dateLabel(parseKey(dateKey)))}</div>
+      ${sections || '<div class="sub">No claim on record for this date.</div>'}
+      <div class="sub" style="margin-top:6px; margin-bottom:4px;">Smartcard number</div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+        <span style="font-family:monospace; font-size:15px; flex:1; word-break:break-all;">${smartcardNumber ? escapeHtml(smartcardNumber) : 'Not set — add it under Settings → Smartcard pass'}</span>
+        ${smartcardNumber ? `<span id="claim-helper-copy-btn" style="color:var(--amber); font-weight:700; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; white-space:nowrap;">Copy</span>` : ''}
+      </div>
+      <div class="modal-close" id="claim-helper-close-btn">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  if (smartcardNumber){
+    document.getElementById('claim-helper-copy-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('claim-helper-copy-btn');
+      try{
+        await navigator.clipboard.writeText(smartcardNumber);
+        if (btn){ btn.textContent = 'Copied'; setTimeout(() => { if (btn) btn.textContent = 'Copy'; }, 1500); }
+      }catch(e){
+        // Clipboard API unavailable or permission denied — nothing more
+        // useful to do than leave the number visible to copy by hand.
+        if (btn) btn.textContent = 'Copy failed';
+      }
+    });
+  }
+  document.getElementById('claim-helper-close-btn').addEventListener('click', () => {
+    if (overlay.isConnected) document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
 // Wires up the claim pill inside a just-appended detail overlay. reopen()
 // should close this overlay and re-show the same detail view fresh, so a
 // tap is reflected immediately. Only fires for a train with no claim yet
@@ -5987,6 +6062,10 @@ function wireClaimHandlers(overlay, reopen){
       // safe to let the extra IndexedDB read happen afterward.
       triggerPassPhotoDownload();
       reopen();
+      // Shown last, on top of whatever reopen() just re-rendered — so
+      // closing this helper naturally reveals that same refreshed
+      // screen underneath, without needing its own separate return path.
+      openClaimHelperScreen(dateKey);
     });
   });
 }
@@ -6070,14 +6149,17 @@ function openPassPhotoManager(){
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h3>Delay repay pass photo</h3>
-      <div class="sub">Saved here once, then dropped straight into your downloads folder whenever you start a claim — so it's right there instead of buried months back in your photo library.</div>
+      <h3>Smartcard pass</h3>
+      <div class="sub">Photo and smartcard number, kept together — everything needed to start a delay repay claim.</div>
       <div id="pass-photo-preview-wrap" style="margin:14px 0; text-align:center;"></div>
       <input type="file" accept="image/*" id="pass-photo-input" style="display:none;" />
       <button class="save-btn" id="pass-photo-choose-btn">Choose photo</button>
       <div id="pass-photo-remove-wrap" style="text-align:center; margin-top:10px; display:none;">
         <span id="pass-photo-remove-link" style="font-size:12px; color:#ff8b7e; text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Remove saved photo</span>
       </div>
+      <div class="sub" style="margin-top:20px; margin-bottom:4px;">Smartcard number</div>
+      <input type="text" id="smartcard-number-input" value="${escapeHtml(smartcardNumber)}" maxlength="${SMARTCARD_NUMBER_MAX_LENGTH}" placeholder="e.g. 302012345678901234" style="font-family:monospace;" />
+      <button class="save-btn" id="smartcard-number-save-btn" style="margin-top:10px;">Save number</button>
       <div class="modal-close" id="pass-photo-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
@@ -6128,6 +6210,13 @@ function openPassPhotoManager(){
   document.getElementById('pass-photo-remove-link').addEventListener('click', async () => {
     try{ await deletePassPhoto(); }catch(e){ /* nothing meaningful to surface if this fails */ }
     await refreshPreview();
+  });
+  document.getElementById('smartcard-number-save-btn').addEventListener('click', async () => {
+    const val = document.getElementById('smartcard-number-input').value.trim();
+    smartcardNumber = val.slice(0, SMARTCARD_NUMBER_MAX_LENGTH);
+    await saveSmartcardNumber();
+    document.body.removeChild(overlay);
+    render();
   });
 
   document.getElementById('pass-photo-close-btn').addEventListener('click', () => {
