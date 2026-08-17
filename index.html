@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-17.10:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-17.10:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4816,6 +4816,21 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   function scheduleTime(p){
     return p.schedTime || bestTime(p);
   }
+  // A point showing a delay (a specific figure, or the literal "Delayed"
+  // flag) that Darwin hasn't actually confirmed happened yet — no real
+  // at/atd/ata behind it. Shared by the "not yet departed/arrived" pill,
+  // the walkback that keeps the blob from advancing through such a
+  // point, and the summary's "currently at" vs "currently between"
+  // wording — one signal, not three separately-maintained copies of the
+  // same condition drifting apart from each other over time. Deliberately
+  // leaves a plain unconfirmed on-time point alone (liveTime falling
+  // back to schedTime, or the literal "On time") — Darwin very often
+  // never sends a real actual time even for a point that's clearly
+  // already happened, and flagging every such point would be flagging
+  // most of an ordinary journey.
+  function isGenuinelyUnconfirmedDelay(p){
+    return !p.hasConfirmedActual && !p.isCancelled && !!p.liveTime && p.liveTime !== p.schedTime && p.liveTime !== 'On time';
+  }
   const pointDates = points.map(p => liveTimeToDate((scheduleTime(p) || '').replace(':', ''), now));
   // The very first point has no earlier point to roll forward from, so it
   // needs its own inference: a bare clock time could plausibly belong to
@@ -4904,8 +4919,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // clearly already happened, and treating every such point as unsafe
   // would stop the blob advancing through most of an ordinary journey.
   while (lastPassedIdx >= 0 && (
-    points[lastPassedIdx].isCancelled ||
-    (!points[lastPassedIdx].hasConfirmedActual && points[lastPassedIdx].liveTime && points[lastPassedIdx].liveTime !== points[lastPassedIdx].schedTime && points[lastPassedIdx].liveTime !== 'On time')
+    points[lastPassedIdx].isCancelled || isGenuinelyUnconfirmedDelay(points[lastPassedIdx])
   )){
     lastPassedIdx--;
   }
@@ -5042,7 +5056,15 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       const wouldSuppress = rawReason && !last.isCancelled && !afterLast.isCancelled && inheritedReasons.has(normalizeReason(rawReason));
       if (wouldSuppress) anyReasonSuppressed = true;
       primaryReason = (rawReason && (showAllReasons || !wouldSuppress)) ? rawReason : null;
-      summaryHtml = `<div>Currently between ${last.locationName} and ${afterLast.locationName}</div>` +
+      // "Between X and Y" implies real, evidenced progress toward Y —
+      // not accurate when Y itself is only showing an unconfirmed delay
+      // estimate with nothing genuinely confirmed behind it yet. "At X"
+      // is the more honest claim in that case: what's actually known is
+      // that X has genuinely happened, not that the train is partway to Y.
+      const headline = isGenuinelyUnconfirmedDelay(afterLast)
+        ? `Currently at ${last.locationName}`
+        : `Currently between ${last.locationName} and ${afterLast.locationName}`;
+      summaryHtml = `<div>${headline}</div>` +
         `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${runningText}</div>` +
         (primaryReason ? `<div style="font-size:12px; margin-top:4px; opacity:0.85;">${primaryReason}</div>` : '');
     }
@@ -5140,14 +5162,18 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
       // rather than left looking as definitive as a confirmed delay.
       // Deliberately narrow: only once the point's own due moment has
       // actually passed (liveDates, the same live time basis the blob
-      // itself now uses) — and only when the status isn't plain "On
-      // time", since an unconfirmed-but-on-time point is the ordinary
-      // case for most of a journey and would otherwise show this on
-      // nearly every row, diluting it into noise.
+      // itself now uses) — and only when it's a genuinely unconfirmed
+      // delay, not just an ordinary unconfirmed on-time point, which is
+      // most of a journey and would otherwise be flagged almost everywhere.
+      // The very last point in the whole list doesn't "depart" at all —
+      // it's the final destination, so the same signal is worded as
+      // "not yet arrived" there instead, rather than the departure
+      // language that's meaningless for a terminus.
       const dueMomentPassed = liveDates[i] && now >= liveDates[i];
-      const showNotYetDepartedPill = dueMomentPassed && !p.hasConfirmedActual && !p.isCancelled && status.minutesLate !== 0;
-      const notYetDepartedPill = showNotYetDepartedPill
-        ? ` <span style="background:#ff4d3d; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">NOT YET DEPARTED</span>`
+      const isFinalPoint = i === points.length - 1;
+      const showNotYetPill = dueMomentPassed && isGenuinelyUnconfirmedDelay(p);
+      const notYetDepartedPill = showNotYetPill
+        ? ` <span style="background:#ff4d3d; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">NOT YET ${isFinalPoint ? 'ARRIVED' : 'DEPARTED'}</span>`
         : '';
       const debugHtml = (showRawDebug && p.raw)
         ? `<div style="font-family:monospace; font-size:10px; color:#6a7a8a; margin-top:2px;">${Object.entries(p.raw).map(([k,v]) => `${k}=${v === undefined || v === null ? '·' : v}`).join('  ')}</div>`
