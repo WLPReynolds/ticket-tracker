@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-15.10:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-17.10:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4891,7 +4891,22 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // "reached", walk back to the true last point genuinely confirmed —
   // all the way to -1 (giving the correct "Not yet departed" state) if
   // every point up to and including the very first is affected.
-  while (lastPassedIdx >= 0 && (points[lastPassedIdx].isCancelled || points[lastPassedIdx].liveTime === 'Delayed')){
+  // Cancelled, or showing a delay Darwin hasn't actually confirmed yet
+  // (no genuine at/atd/ata — the same signal the "not yet departed" pill
+  // uses) — walked back past either way, since neither is safe to treat
+  // as "this point has genuinely been reached". The old version of this
+  // only caught the literal "Delayed" flag; a specific delayed estimate
+  // like "et=10:17" is a real HH:MM value, not that literal string, so
+  // it slipped through untouched — the point got counted as reached the
+  // moment its *estimate* passed, even with nothing confirmed behind it.
+  // A plain unconfirmed on-time point is deliberately left alone here —
+  // Darwin very often never sends a real "at" even once a point has
+  // clearly already happened, and treating every such point as unsafe
+  // would stop the blob advancing through most of an ordinary journey.
+  while (lastPassedIdx >= 0 && (
+    points[lastPassedIdx].isCancelled ||
+    (!points[lastPassedIdx].hasConfirmedActual && points[lastPassedIdx].liveTime && points[lastPassedIdx].liveTime !== points[lastPassedIdx].schedTime && points[lastPassedIdx].liveTime !== 'On time')
+  )){
     lastPassedIdx--;
   }
 
