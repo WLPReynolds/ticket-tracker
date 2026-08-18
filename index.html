@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-18.10:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-18.19:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1333,6 +1333,7 @@ const LIKELY_TRAIN_CHECK_INTERVAL_MS = 2 * 60 * 1000; // how often to check whil
 // scope at all. Tightened so neighbouring hourly-ish trains no longer
 // overlap under normal circumstances.
 const LIKELY_TRAIN_TIME_WINDOW_MIN = 20; // only bother checking within this many minutes either side of a configured train time
+const LIKELY_ARRIVAL_WINDOW_FORWARD_MIN = 50; // arrival-side check: forward-only from departure time, wide enough for a real journey plus delay margin, narrow enough to stay under this app's own hourly train spacing
 // How close a candidate's own live departure must be to right now before
 // it's confident enough to silently confirm without asking. Separate from
 // (and stricter than) the general 15-minute threshold below that decides
@@ -3197,7 +3198,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-18.10:20*
+*Last updated: v2026-08-18.19:15*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -3209,9 +3210,9 @@ const BACKLOG_MD = `
 8. **Boarding/alighting-aware adaptive polling** — two fast-polling windows (approaching boarding, approaching alighting) using \`toLoc\`, instead of one fast window near the physical train's true final stop, which may not even be where you get off.
 9. **\`journeyFinished\` has the same gap as #8** — may currently keep polling, and showing progress, well past your actual destination if the physical service continues further. Likely one piece of work alongside #8, same underlying cause.
 10. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which.
-11. **Arrival-side detection as a fallback for #10** — mirrors the existing boarding-side detection at the destination instead, only firing when that direction isn't already confirmed for the day.
-12. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
-13. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #12. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #12.
+11. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
+12. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #11. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #11.
+13. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
 
 **Watch item, not a confirmed bug:** the season ticket card displaying alongside "No active season ticket" — still only reproduced in an empty-data preview, never seen on the real phone.
 `;
@@ -4082,10 +4083,134 @@ async function checkLikelyTrain(){
   }
 }
 
+// Arrival-side fallback for checkLikelyTrain above — only ever gets a
+// chance to run at all once departure-side detection has already had
+// its shot and missed for that direction (same "already confirmed?"
+// guard as the departure side, reused directly). Geofences the
+// destination (toLoc) instead of the origin, and uses the arrivals
+// board only to answer "has a train genuinely arrived here around now"
+// — not "which one, specifically". Identity comes from the same
+// schedule-based "nominal" reasoning already trusted on the departure
+// side: with only one plausible configured train per direction inside
+// a 20-minute window, and you genuinely standing at the right station,
+// there's little real ambiguity left to resolve — unlike the departure
+// side, which actively has to watch for a *different* train being
+// caught instead of the expected one. Honest limitation: if another,
+// unrelated service happened to arrive at the same station within the
+// same few minutes, this could plausibly latch onto that instead —
+// low-probability given the geofence and time-window already narrow
+// things down heavily, but worth knowing rather than pretending this
+// is as precisely matched as the departure side's own logic.
+async function checkLikelyArrival(){
+  if (!railTrains || railTrains.length === 0) return;
+  const now = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate(),
+                        new Date().getHours(), new Date().getMinutes());
+  const todayKeyLocal = fmtKey(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  for (const direction of ['AM', 'PM']){
+    const dirTrains = railTrains.filter(t => t.direction === direction).sort((a,b) => a.time.localeCompare(b.time));
+    if (dirTrains.length === 0) continue;
+
+    if (confirmedTrains[todayKeyLocal] && confirmedTrains[todayKeyLocal][direction] !== undefined) continue;
+
+    // Forward-only window from each departure time, not the departure
+    // side's own symmetric ±20 minutes — that check made sense for
+    // "am I roughly near my departure time", but by the time you've
+    // genuinely arrived at the destination, a real journey (Wigan→Crewe
+    // is ~29 minutes) already puts you well outside a 20-minute window
+    // centred on departure. Confirmed this would have made the whole
+    // function silently never fire on a real journey before catching it.
+    // 50 minutes covers a normal journey plus a generous delay margin,
+    // while staying under the ~60-minute gap between this app's own
+    // hourly-spaced trains.
+    const inWindow = dirTrains.some(t => {
+      const tMin = parseInt(t.time.slice(0,2),10)*60 + parseInt(t.time.slice(2,4),10);
+      return nowMinutes >= tMin && nowMinutes <= tMin + LIKELY_ARRIVAL_WINDOW_FORWARD_MIN;
+    });
+    if (!inWindow) continue;
+
+    const toLoc = dirTrains[0].toLoc;
+    const fromLoc = dirTrains[0].fromLoc;
+    const stationCoord = STATION_COORDS[toLoc];
+    if (!stationCoord) continue;
+
+    const pos = await getCurrentPositionOnce();
+    if (!pos) continue;
+    const distM = distanceKm(pos.latitude, pos.longitude, stationCoord.lat, stationCoord.lon) * 1000;
+    if (distM > GEOFENCE_RADIUS_M) continue;
+
+    let arrivals;
+    try{ arrivals = await fetchPureBoard(toLoc, 'arr', 20); }catch(e){ continue; }
+
+    // Identity now comes from genuinely verified data, not a schedule
+    // guess — GetArrBoardWithDetails (what fetchPureBoard already calls
+    // for 'arr') includes each service's previousCallingPoints, so this
+    // checks whether the arriving service actually called at our origin
+    // station at all, and if so, which configured train its real
+    // departure time from there actually matches. Checked via calling
+    // points rather than the service's own top-level origin field,
+    // since many of these services are part of a much longer working
+    // (e.g. continuing from Glasgow through Wigan to Crewe and beyond)
+    // — the true physical origin often isn't Wigan/Crewe at all, even
+    // though it's a real calling point along the way. This is what
+    // actually answers "is this genuinely my train", rather than just
+    // "did something arrive around the right time" — a real, different
+    // train arriving at a similar moment is now correctly ruled out
+    // rather than risked.
+    let closestDiff = Infinity;
+    let matchedTrain = null;
+    arrivals.forEach(s => {
+      const liveTime = liveTimeToDate(
+        (s.eta && s.eta !== 'On time') ? s.eta.replace(':','') : (s.sta || '').replace(':',''),
+        now
+      );
+      if (!liveTime) return;
+      const diffMin = Math.abs((liveTime - now) / 60000);
+      if (diffMin > SILENT_CONFIRM_MAX_DIFF_MIN) return; // not close enough to be worth checking further
+
+      const prevPoints = (s.previousCallingPoints && s.previousCallingPoints[0] && s.previousCallingPoints[0].callingPoint) || [];
+      const calledAtOrigin = prevPoints.find(cp => cp.crs === fromLoc);
+      if (!calledAtOrigin) return; // never called at our origin at all — definitely not this journey
+
+      const rawTime = (calledAtOrigin.at && calledAtOrigin.at !== 'On time') ? calledAtOrigin.at
+        : (calledAtOrigin.et && calledAtOrigin.et !== 'On time') ? calledAtOrigin.et
+        : calledAtOrigin.st;
+      if (!rawTime || !rawTime.includes(':')) return;
+      const originDepMin = parseInt(rawTime.slice(0,2),10)*60 + parseInt(rawTime.slice(3,5),10);
+
+      // Which configured train does the genuine departure time from our
+      // origin actually match? A sanity bound (15 min) stops a spurious
+      // match against a calling-point time that isn't actually close to
+      // any of the configured trains at all.
+      let best = null;
+      dirTrains.forEach(t => {
+        const tMin = parseInt(t.time.slice(0,2),10)*60 + parseInt(t.time.slice(2,4),10);
+        const diff = Math.abs(tMin - originDepMin);
+        if (!best || diff < best.diff) best = { train: t, diff };
+      });
+      if (!best || best.diff > 15) return;
+
+      if (diffMin < closestDiff){ closestDiff = diffMin; matchedTrain = best.train; }
+    });
+
+    if (matchedTrain && closestDiff <= SILENT_CONFIRM_MAX_DIFF_MIN){
+      if (!confirmedTrains[todayKeyLocal]) confirmedTrains[todayKeyLocal] = {};
+      confirmedTrains[todayKeyLocal][direction] = matchedTrain.key;
+      saveConfirmedTrains();
+      silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: matchedTrain.key, label: matchedTrain.label };
+      saveSilentConfirmBanner();
+      renderSilentConfirmBanner();
+      render();
+    }
+  }
+}
+
 function startLikelyTrainChecks(){
   if (likelyTrainCheckTimer) return;
   checkLikelyTrain();
-  likelyTrainCheckTimer = setInterval(checkLikelyTrain, LIKELY_TRAIN_CHECK_INTERVAL_MS);
+  checkLikelyArrival();
+  likelyTrainCheckTimer = setInterval(() => { checkLikelyTrain(); checkLikelyArrival(); }, LIKELY_TRAIN_CHECK_INTERVAL_MS);
 }
 function stopLikelyTrainChecks(){
   if (likelyTrainCheckTimer){ clearInterval(likelyTrainCheckTimer); likelyTrainCheckTimer = null; }
