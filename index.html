@@ -907,7 +907,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-18.20:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-18.21:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3231,7 +3231,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-18.20:20*
+*Last updated: v2026-08-18.21:00*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -3240,13 +3240,11 @@ const BACKLOG_MD = `
 5. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon.
 6. **Costs as one combined form** — currently a further list of two links (parking cost, day return price) rather than a single screen. Last remaining piece of the old Settings UI polish item — icon grid and in-place Back navigation are both done now.
 7. **Station Board flicker, last seen once and not since** — noted here rather than deleted, since a single non-reproducing report isn't confirmed resolved, but it hasn't recurred since first flagged. Worth deleting outright if it stays gone through a few more sessions.
-8. **Boarding/alighting-aware adaptive polling** — two fast-polling windows (approaching boarding, approaching alighting) using \`toLoc\`, instead of one fast window near the physical train's true final stop, which may not even be where you get off.
-9. **\`journeyFinished\` has the same gap as #8** — may currently keep polling, and showing progress, well past your actual destination if the physical service continues further. Likely one piece of work alongside #8, same underlying cause.
-10. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
-11. **Explicit "is this your train?" prompt fired for a late-running 16:31 while genuinely away from the platform** — a dropped-pin location at the time worked out to 403m from the app's verified Wigan coordinates, which is inside the current 500m geofence radius — so this may be the geofence behaving exactly as configured, not a bug, and 500m simply being wide enough to also catch "nearby but not really there" cases. Unconfirmed whether this was the everyday silent-confirm path or the separate ambiguity-prompt path specifically — the person reported this was the first time they'd seen an explicit prompt rather than a silent confirm. Next occurrence, knowing roughly where they actually were (car park, nearby street, genuinely on the platform) would help settle which explanation is right before touching the radius.
-12. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
-13. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #12. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #12.
-14. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
+8. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
+9. **Explicit "is this your train?" prompt fired for a late-running 16:31 while genuinely away from the platform** — a dropped-pin location at the time worked out to 403m from the app's verified Wigan coordinates, which is inside the current 500m geofence radius — so this may be the geofence behaving exactly as configured, not a bug, and 500m simply being wide enough to also catch "nearby but not really there" cases. Unconfirmed whether this was the everyday silent-confirm path or the separate ambiguity-prompt path specifically — the person reported this was the first time they'd seen an explicit prompt rather than a silent confirm. Next occurrence, knowing roughly where they actually were (car park, nearby street, genuinely on the platform) would help settle which explanation is right before touching the radius.
+10. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
+11. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #10. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #10.
+12. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
 
 **Watch item, not a confirmed bug:** the season ticket card displaying alongside "No active season ticket" — still only reproduced in an empty-data preview, never seen on the real phone.
 `;
@@ -5330,6 +5328,16 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     }
   }
 
+  // Hoisted here (rather than computed only where it's used for the
+  // amber highlighting further down) so journeyFinished and the fast
+  // polling trigger can both reason about "my journey" too, not just
+  // the physical train's own true endpoint. Only ever resolves when
+  // train.toLoc is genuinely set (a "My Trains" configured route) — for
+  // anything else (search-tracked or arrival-only), there's no defined
+  // "my journey" segment, so this stays -1 and everything downstream
+  // correctly falls back to the physical-endpoint behaviour instead.
+  const toLocIdx = train.toLoc ? points.findIndex(p => p.crs === train.toLoc) : -1;
+
   let summaryHtml = '';
   let primaryReason = null;
   let knownOverallDelay = 0; // the most reliable delay figure we have, in minutes — used both for the summary headline and to infer real times for passed points Darwin only gave a generic "On time" word for
@@ -5461,14 +5469,10 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // only on the first one, not repeated down the entire list.
   let lastShownReason = primaryReason;
 
-  // Indices for the two visual treatments below — computed once here
-  // rather than re-derived per row. toLocIdx only ever resolves when
-  // train.toLoc is genuinely set (a "My Trains" configured route) —
-  // for anything else (a search-tracked or arrival-only entry), there's
-  // no defined "my journey" segment to highlight at all, so both stay
-  // switched off entirely rather than guessing at one.
+  // hereIdx computed here alongside the row-rendering it's used for —
+  // toLocIdx itself now lives further up, computed once for
+  // journeyFinished and the polling cadence too, not re-derived here.
   const hereIdx = points.findIndex(p => p.isYourStation);
-  const toLocIdx = train.toLoc ? points.findIndex(p => p.crs === train.toLoc) : -1;
   const rowsHtml = points.map((p, i) => {
     try{
       const isToLocRow = toLocIdx !== -1 && i === toLocIdx;
@@ -5598,7 +5602,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // between polls, not just staying alive for the rest of this session.
   saveConfirmedPointStatusCache();
 
-  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints, departsHere, firstPoint: points[0] || null, lastPoint: points[points.length - 1] || null };
+  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints, departsHere, firstPoint: points[0] || null, lastPoint: points[points.length - 1] || null, toLocIdx };
 }
 
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
@@ -6029,7 +6033,18 @@ function openTrainProgress(train, service){
           }
         }
       }
-    } else if (buildResult.pointCount && buildResult.lastPassedIdx === buildResult.pointCount - 2){
+    } else if (buildResult.toLocIdx !== -1 && buildResult.lastPassedIdx === buildResult.toLocIdx - 1){
+      // Fast-polling anchored to your own stop, not the physical
+      // train's true endpoint — a "My Trains" configured route (Crewe
+      // to Wigan, say) that happens to be part of a much longer working
+      // continuing well beyond Wigan would previously never trigger
+      // this at all until the physical train itself was one stop from
+      // its own final destination, long after you'd already got off.
+      return FINAL_LEG_REFRESH_MS;
+    } else if (buildResult.toLocIdx === -1 && buildResult.pointCount && buildResult.lastPassedIdx === buildResult.pointCount - 2){
+      // Falls back to the physical endpoint only when there's no toLoc
+      // to anchor to at all — a search-tracked or arrival-only entry,
+      // where "my journey" isn't a defined concept in the first place.
       return FINAL_LEG_REFRESH_MS;
     }
     return TRAIN_PROGRESS_REFRESH_MS;
