@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-18.19:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-18.20:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4173,23 +4173,33 @@ async function checkLikelyArrival(){
       const calledAtOrigin = prevPoints.find(cp => cp.crs === fromLoc);
       if (!calledAtOrigin) return; // never called at our origin at all — definitely not this journey
 
-      const rawTime = (calledAtOrigin.at && calledAtOrigin.at !== 'On time') ? calledAtOrigin.at
-        : (calledAtOrigin.et && calledAtOrigin.et !== 'On time') ? calledAtOrigin.et
-        : calledAtOrigin.st;
+      // Matched against the SCHEDULED departure from our origin, not the
+      // live one — schedule is the stable, fixed reference that both
+      // this calling point and each configured train's own `time`
+      // ultimately share, while live time is precisely what drifts with
+      // delay. Using live time here was a real bug: a severely delayed
+      // earlier train (e.g. the 16:31 running ~64 minutes late,
+      // genuinely departing Wigan around 17:35) would end up closer in
+      // raw value to the *next* configured train's scheduled slot than
+      // to its own, and get silently misidentified as that later train
+      // instead — confirmed reproducing exactly that before fixing it.
+      const rawTime = calledAtOrigin.st;
       if (!rawTime || !rawTime.includes(':')) return;
       const originDepMin = parseInt(rawTime.slice(0,2),10)*60 + parseInt(rawTime.slice(3,5),10);
 
-      // Which configured train does the genuine departure time from our
-      // origin actually match? A sanity bound (15 min) stops a spurious
-      // match against a calling-point time that isn't actually close to
-      // any of the configured trains at all.
+      // Which configured train does the scheduled departure from our
+      // origin actually match? Tight bound now (schedule-to-schedule
+      // should be an exact or near-exact match for a genuine configured
+      // train) — the old 15-minute allowance made sense for the
+      // delay-sensitive live-time comparison this replaces, not for a
+      // comparison that shouldn't drift at all.
       let best = null;
       dirTrains.forEach(t => {
         const tMin = parseInt(t.time.slice(0,2),10)*60 + parseInt(t.time.slice(2,4),10);
         const diff = Math.abs(tMin - originDepMin);
         if (!best || diff < best.diff) best = { train: t, diff };
       });
-      if (!best || best.diff > 15) return;
+      if (!best || best.diff > 2) return;
 
       if (diffMin < closestDiff){ closestDiff = diffMin; matchedTrain = best.train; }
     });
