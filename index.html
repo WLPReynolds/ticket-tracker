@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-18.10:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-18.10:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1143,31 +1143,23 @@ function openExternalLink(url){
   document.body.removeChild(a);
 }
 // Silently puts the smartcard number on the clipboard the instant a
-// Stages values onto the clipboard one after another (a short pause
-// between each) rather than a single write — Gboard (and similar
-// keyboards) keeps its own history of clipboard changes over time, so
-// several genuine writes in sequence end up sitting side by side in its
-// clipboard ribbon, ready to tap into whichever field actually needs
-// them, without needing to switch back to this app at all. Order is
-// deliberate: the smartcard number goes first, not the price — if
-// anything ever interrupted this partway through, the smartcard number
-// is the one genuinely inconvenient to be without, not the price.
-// No artificial delay between writes — that was in the first version
-// and is the most likely reason the second write (price) was silently
-// failing while the first (smartcard) succeeded. Clipboard writes are
-// only trusted within a brief window tied to the original tap, and an
-// explicit pause was pure extra exposure to that window closing before
-// the second write landed, for no benefit — nothing about capturing
-// distinct entries in Gboard's history actually needs the gap.
-async function stageClaimClipboard(dateKey){
-  const price = getSeasonPriceForDate(dateKey);
-  const values = [];
-  if (smartcardNumber) values.push(smartcardNumber);
-  values.push(price.toFixed(2));
-  for (const val of values){
-    try{ await navigator.clipboard.writeText(val); }
-    catch(e){ /* clipboard unavailable or denied for this value — move on regardless */ }
-  }
+// claim starts — the actual fix for the window-switching problem, not
+// a workaround for it. The number's ready to paste into Avanti's form
+// the moment its page loads, with no need to ever switch back to this
+// app for that specific step. Back to a single write, not a staged
+// sequence — the earlier version also staged the ticket price as a
+// second write, but that one was found to fail consistently in the
+// real claim flow (two separate fix attempts didn't resolve it — see
+// the backlog), while the smartcard number has always copied
+// reliably. The claim notification shows the price now instead, so
+// nothing's lost by dropping the attempt. Never throws: no number
+// saved, or a denied/unavailable clipboard permission, just means the
+// claim flow continues without it, same as every other best-effort
+// step here.
+async function copySmartcardToClipboard(){
+  if (!smartcardNumber) return;
+  try{ await navigator.clipboard.writeText(smartcardNumber); }
+  catch(e){ /* clipboard unavailable or denied — nothing more to do */ }
 }
 // The exact wording Avanti's own claim form uses for its delay bands —
 // reuses the same boundaries as the payout calculation itself, so the
@@ -3205,7 +3197,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-17.12:10*
+*Last updated: v2026-08-18.10:20*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -3218,6 +3210,8 @@ const BACKLOG_MD = `
 9. **\`journeyFinished\` has the same gap as #8** — may currently keep polling, and showing progress, well past your actual destination if the physical service continues further. Likely one piece of work alongside #8, same underlying cause.
 10. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which.
 11. **Arrival-side detection as a fallback for #10** — mirrors the existing boarding-side detection at the destination instead, only firing when that direction isn't already confirmed for the day.
+12. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
+13. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #12. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #12.
 
 **Watch item, not a confirmed bug:** the season ticket card displaying alongside "No active season ticket" — still only reproduced in an empty-data preview, never seen on the real phone.
 `;
@@ -6134,15 +6128,10 @@ function wireClaimHandlers(overlay, reopen){
   overlay.querySelectorAll('.claimable-row').forEach(row => {
     row.addEventListener('click', async () => {
       const dateKey = row.dataset.claimDate;
-      // Clipboard writes are the most gesture-sensitive thing in this
-      // whole flow — kicked off first, immediately, before anything
+      // Clipboard write kicked off first, immediately — before anything
       // else (saveDelayClaims's own await, opening the external link)
-      // gets a chance to erode the trusted-gesture window they need.
-      // Confirmed on a real device that placing this later, with a
-      // delay between writes, let the second write silently fail while
-      // the first succeeded — this ordering plus removing that delay
-      // (see stageClaimClipboard itself) is the fix for that.
-      stageClaimClipboard(dateKey);
+      // gets a chance to erode the trusted-gesture window it needs.
+      copySmartcardToClipboard();
       // One tap covers the whole day — if both AM and PM had a confirmed
       // delay, both get marked 'started' together, since realistically
       // you'll be dealing with both while you're on Avanti's site anyway.
