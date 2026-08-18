@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-17.14:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-18.09:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -967,6 +967,12 @@ let parkingCost = 6.39; // default daily parking estimate
 // operator's card) runs longer.
 let smartcardNumber = '';
 const SMARTCARD_NUMBER_MAX_LENGTH = 20;
+// Whether starting a claim also downloads a permanent claim-details.txt
+// record — separate from the notification (a transient in-the-moment
+// glance) and the clipboard (transient, just for pasting). Default on;
+// toggleable since not everyone wants a growing pile of these in
+// Downloads.
+let produceClaimDetailsFile = true;
 // Live-progress polling cadence, both configurable from the menu (see
 // openPollingSettingsEditor) — how close to scheduled departure polling
 // resumes at the normal cadence, and the longest it'll ever go between
@@ -1137,16 +1143,60 @@ function openExternalLink(url){
   document.body.removeChild(a);
 }
 // Silently puts the smartcard number on the clipboard the instant a
-// claim starts — the actual fix for the window-switching problem, not
-// a workaround for it. The number's ready to paste into Avanti's form
-// the moment its page loads, with no need to ever switch back to this
-// app for that specific step. Never throws: no number saved, or a
-// denied/unavailable clipboard permission, just means the claim flow
-// continues without it, same as every other best-effort step here.
-async function copySmartcardToClipboard(){
-  if (!smartcardNumber) return;
-  try{ await navigator.clipboard.writeText(smartcardNumber); }
-  catch(e){ /* clipboard unavailable or denied — nothing more to do */ }
+// Stages values onto the clipboard one after another (a short pause
+// between each) rather than a single write — Gboard (and similar
+// keyboards) keeps its own history of clipboard changes over time, so
+// several genuine writes in sequence end up sitting side by side in its
+// clipboard ribbon, ready to tap into whichever field actually needs
+// them, without needing to switch back to this app at all. Order is
+// deliberate: the smartcard number goes first, not the price — if
+// anything ever interrupted this partway through, the smartcard number
+// is the one genuinely inconvenient to be without, not the price.
+async function stageClaimClipboard(dateKey){
+  const price = getSeasonPriceForDate(dateKey);
+  const values = [];
+  if (smartcardNumber) values.push(smartcardNumber);
+  values.push(price.toFixed(2));
+  for (const val of values){
+    try{ await navigator.clipboard.writeText(val); }
+    catch(e){ /* clipboard unavailable or denied for this value — move on regardless */ }
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+}
+// The exact wording Avanti's own claim form uses for its delay bands —
+// reuses the same boundaries as the payout calculation itself, so the
+// two can never quietly drift out of sync with each other.
+function delayRepayBandLabel(minutes){
+  if (minutes >= 60) return '60+ min';
+  if (minutes >= 30) return '30-59 min';
+  if (minutes >= 15) return '15-29 min';
+  return `${minutes} min`; // claims are only ever created at/above the 15-min threshold — this is just a safe fallback, not expected in practice
+}
+// A plain, read-only notification — deliberately no action buttons, no
+// attempt to copy anything from within it. Notification bodies aren't
+// reliably text-selectable on Android, and a Service Worker (which is
+// what would handle a tap on an action button) has no access to the
+// clipboard at all — confirmed before building this, not assumed. This
+// exists purely so the delay band(s) — the one thing you have to read
+// and select rather than paste — stay glanceable from the notification
+// shade while Avanti's page has the screen, covering whichever of
+// AM/PM genuinely has a claim that day.
+async function showClaimBandNotification(dateKey){
+  try{
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (!('serviceWorker' in navigator)) return;
+    const dayClaims = delayClaims[dateKey] || {};
+    const lines = ['AM', 'PM']
+      .map(dir => dayClaims[dir] ? `${dir}: ${delayRepayBandLabel(dayClaims[dir].minutesLate)}` : null)
+      .filter(Boolean);
+    if (!lines.length) return;
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification('Delay repay claim', {
+      body: lines.join('\n'),
+      tag: `claim-${dateKey}`, // replaces any earlier notification for the same date rather than stacking duplicates
+      icon: 'icons/icon-192.png',
+    });
+  }catch(e){ /* best-effort — the claim flow continues regardless */ }
 }
 // Drops a plain-text summary of today's claim(s) straight into the
 // downloads folder, the same reliable way the pass photo already does
@@ -1196,8 +1246,10 @@ function triggerClaimDetailsDownload(dateKey){
 // in the same way.
 async function triggerAllClaimDownloads(dateKey){
   await triggerPassPhotoDownload();
-  await new Promise(resolve => setTimeout(resolve, 600));
-  triggerClaimDetailsDownload(dateKey);
+  if (produceClaimDetailsFile){
+    await new Promise(resolve => setTimeout(resolve, 600));
+    triggerClaimDetailsDownload(dateKey);
+  }
 }
 // Drops the saved pass photo straight into the downloads folder — named
 // with today's date so repeat downloads stay distinguishable during an
@@ -1324,6 +1376,10 @@ async function loadData(){
     const sc = localStorage.getItem('smartcard-number');
     smartcardNumber = sc ? JSON.parse(sc) : '';
   }catch(e){ smartcardNumber = ''; }
+  try{
+    const pcdf = localStorage.getItem('produce-claim-details-file');
+    produceClaimDetailsFile = pcdf ? JSON.parse(pcdf) : true;
+  }catch(e){ produceClaimDetailsFile = true; }
   try{
     const pbd = localStorage.getItem('poll-before-departure-min');
     pollBeforeDepartureMin = clampPollBeforeDepartureMin(pbd ? JSON.parse(pbd) : 5);
@@ -1481,6 +1537,10 @@ async function saveParkingCost(){
 }
 async function saveSmartcardNumber(){
   try{ localStorage.setItem('smartcard-number', JSON.stringify(smartcardNumber)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveProduceClaimDetailsFile(){
+  try{ localStorage.setItem('produce-claim-details-file', JSON.stringify(produceClaimDetailsFile)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePollingSettings(){
@@ -3193,6 +3253,7 @@ function openSettingsMenu(){
       <div class="settings-link" id="settings-gcal-link">${gcalEnabled ? 'Disconnect Google Calendar' : 'Connect Google Calendar'}</div>
       <div class="settings-link" id="settings-rail-config-link">Configure usual trains</div>
       <div class="settings-link" id="settings-pass-photo-link">Smartcard pass</div>
+      <div class="settings-link" id="settings-claim-file-link">Claim details file: ${produceClaimDetailsFile ? 'On' : 'Off'}</div>
       <div class="settings-link" id="settings-weather-link">Weather on live progress: ${weatherEnabled ? 'On' : 'Off'}</div>
       <div class="settings-link" id="settings-debug-link">Debug mode: ${debugModeEnabled ? 'On' : 'Off'}</div>
       <div class="modal-close" id="settings-close-btn" style="margin-top:16px;">Close</div>
@@ -3206,6 +3267,12 @@ function openSettingsMenu(){
   document.getElementById('settings-preferred-google-link').addEventListener('click', () => { close(); openPreferredGoogleEditor(); });
   document.getElementById('settings-rail-config-link').addEventListener('click', () => { close(); openRailConfig(); });
   document.getElementById('settings-pass-photo-link').addEventListener('click', () => { close(); openPassPhotoManager(); });
+  document.getElementById('settings-claim-file-link').addEventListener('click', async () => {
+    produceClaimDetailsFile = !produceClaimDetailsFile;
+    await saveProduceClaimDetailsFile();
+    close();
+    render();
+  });
   document.getElementById('settings-weather-link').addEventListener('click', async () => {
     weatherEnabled = !weatherEnabled;
     await saveWeatherEnabled();
@@ -6048,52 +6115,6 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
   }).join('');
 }
 
-// Everything needed to actually submit a claim, gathered into one
-// screen — shown alongside the existing tap-to-claim flow rather than
-// replacing it. Reads whatever's genuinely on record for that date
-// (delayClaims), not just whichever direction happened to trigger this
-// particular tap — a day with both AM and PM claims shows both, since
-// you'd be dealing with both while on Avanti's site regardless of which
-// one you tapped.
-function openClaimHelperScreen(dateKey){
-  const dayClaims = delayClaims[dateKey] || {};
-  const price = getSeasonPriceForDate(dateKey);
-  const sections = ['AM', 'PM'].map(dir => {
-    const claim = dayClaims[dir];
-    if (!claim) return '';
-    const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
-    const train = railTrains.find(t => t.key === confirmedKey);
-    const trainLabel = train ? train.label : dir;
-    return `
-      <div style="margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid var(--line);">
-        <div style="font-weight:700; color:var(--amber); margin-bottom:4px;">${dir} — ${escapeHtml(trainLabel)}</div>
-        <div class="sub" style="margin:0 0 2px;">Delay: ${claim.minutesLate} minute${claim.minutesLate === 1 ? '' : 's'}</div>
-        <div class="sub" style="margin:0 0 2px;">Ticket price: £${price.toFixed(2)}</div>
-        <div class="sub" style="margin:0;">Estimated payout: £${claim.amount.toFixed(2)}</div>
-      </div>
-    `;
-  }).join('');
-
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Claim details</h3>
-      <div class="sub" style="margin-bottom:14px;">${escapeHtml(dateLabel(parseKey(dateKey)))}</div>
-      ${sections || '<div class="sub">No claim on record for this date.</div>'}
-      <div class="sub" style="margin-top:6px; margin-bottom:4px;">Smartcard number (already copied)</div>
-      <div style="font-family:monospace; font-size:15px; word-break:break-all; margin-bottom:16px;">${smartcardNumber ? escapeHtml(smartcardNumber) : 'Not set — add it under Settings → Smartcard pass'}</div>
-      <div class="sub" style="margin-bottom:16px;">Full details, including this smartcard number, have also been downloaded as a text file for reference once you're on Avanti's site.</div>
-      <div class="modal-close" id="claim-helper-close-btn">Close</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.getElementById('claim-helper-close-btn').addEventListener('click', () => {
-    if (overlay.isConnected) document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
-}
-
 // Wires up the claim pill inside a just-appended detail overlay. reopen()
 // should close this overlay and re-show the same detail view fresh, so a
 // tap is reflected immediately. Only fires for a train with no claim yet
@@ -6127,12 +6148,9 @@ function wireClaimHandlers(overlay, reopen){
       // isn't nearly as timing-sensitive, so it's safe to let those run
       // right after instead.
       triggerAllClaimDownloads(dateKey);
-      copySmartcardToClipboard();
+      stageClaimClipboard(dateKey);
+      showClaimBandNotification(dateKey);
       reopen();
-      // Shown last, on top of whatever reopen() just re-rendered — so
-      // closing this helper naturally reveals that same refreshed
-      // screen underneath, without needing its own separate return path.
-      openClaimHelperScreen(dateKey);
     });
   });
 }
