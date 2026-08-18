@@ -874,7 +874,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-18.09:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-18.10:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1152,6 +1152,13 @@ function openExternalLink(url){
 // deliberate: the smartcard number goes first, not the price — if
 // anything ever interrupted this partway through, the smartcard number
 // is the one genuinely inconvenient to be without, not the price.
+// No artificial delay between writes — that was in the first version
+// and is the most likely reason the second write (price) was silently
+// failing while the first (smartcard) succeeded. Clipboard writes are
+// only trusted within a brief window tied to the original tap, and an
+// explicit pause was pure extra exposure to that window closing before
+// the second write landed, for no benefit — nothing about capturing
+// distinct entries in Gboard's history actually needs the gap.
 async function stageClaimClipboard(dateKey){
   const price = getSeasonPriceForDate(dateKey);
   const values = [];
@@ -1160,7 +1167,6 @@ async function stageClaimClipboard(dateKey){
   for (const val of values){
     try{ await navigator.clipboard.writeText(val); }
     catch(e){ /* clipboard unavailable or denied for this value — move on regardless */ }
-    await new Promise(resolve => setTimeout(resolve, 150));
   }
 }
 // The exact wording Avanti's own claim form uses for its delay bands —
@@ -1190,6 +1196,11 @@ async function showClaimBandNotification(dateKey){
       .map(dir => dayClaims[dir] ? `${dir}: ${delayRepayBandLabel(dayClaims[dir].minutesLate)}` : null)
       .filter(Boolean);
     if (!lines.length) return;
+    // Ticket price added alongside the band(s) — genuinely redundant
+    // with the clipboard copy most of the time, but a visible backup is
+    // worth having given the clipboard write for exactly this value was
+    // found to fail silently in one real case.
+    lines.push(`Ticket: £${getSeasonPriceForDate(dateKey).toFixed(2)}`);
     const registration = await navigator.serviceWorker.ready;
     await registration.showNotification('Delay repay claim', {
       body: lines.join('\n'),
@@ -6123,6 +6134,15 @@ function wireClaimHandlers(overlay, reopen){
   overlay.querySelectorAll('.claimable-row').forEach(row => {
     row.addEventListener('click', async () => {
       const dateKey = row.dataset.claimDate;
+      // Clipboard writes are the most gesture-sensitive thing in this
+      // whole flow — kicked off first, immediately, before anything
+      // else (saveDelayClaims's own await, opening the external link)
+      // gets a chance to erode the trusted-gesture window they need.
+      // Confirmed on a real device that placing this later, with a
+      // delay between writes, let the second write silently fail while
+      // the first succeeded — this ordering plus removing that delay
+      // (see stageClaimClipboard itself) is the fix for that.
+      stageClaimClipboard(dateKey);
       // One tap covers the whole day — if both AM and PM had a confirmed
       // delay, both get marked 'started' together, since realistically
       // you'll be dealing with both while you're on Avanti's site anyway.
@@ -6148,7 +6168,6 @@ function wireClaimHandlers(overlay, reopen){
       // isn't nearly as timing-sensitive, so it's safe to let those run
       // right after instead.
       triggerAllClaimDownloads(dateKey);
-      stageClaimClipboard(dateKey);
       showClaimBandNotification(dateKey);
       reopen();
     });
