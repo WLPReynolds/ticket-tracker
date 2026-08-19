@@ -907,7 +907,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-19.08:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-19.08:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1014,6 +1014,13 @@ let produceClaimDetailsFile = true;
 // bought, a day re-tagged) — the whole point of a payday budget is that
 // it doesn't retroactively move once you've actually set the money aside.
 let paydayEstimateSnapshots = {};
+// { "YYYY-MM-DD": actualCostThatDay } — presence means "I parked this
+// day"; absence (the default) means "I didn't". Default flipped this
+// way deliberately: day-to-day, not parking is the normal case, so the
+// tap-to-mark-the-exception model matches how every other per-day flag
+// in this app already works, rather than asking for a daily
+// confirmation on the common case.
+let parkedDays = {};
 // Live-progress polling cadence, both configurable from the menu (see
 // openPollingSettingsEditor) — how close to scheduled departure polling
 // resumes at the normal cadence, and the longest it'll ever go between
@@ -1430,6 +1437,10 @@ async function loadData(){
     paydayEstimateSnapshots = pes ? JSON.parse(pes) : {};
   }catch(e){ paydayEstimateSnapshots = {}; }
   try{
+    const pd = localStorage.getItem('parked-days');
+    parkedDays = pd ? JSON.parse(pd) : {};
+  }catch(e){ parkedDays = {}; }
+  try{
     const pbd = localStorage.getItem('poll-before-departure-min');
     pollBeforeDepartureMin = clampPollBeforeDepartureMin(pbd ? JSON.parse(pbd) : 5);
   }catch(e){ pollBeforeDepartureMin = 5; }
@@ -1594,6 +1605,10 @@ async function saveProduceClaimDetailsFile(){
 }
 async function savePaydayEstimateSnapshots(){
   try{ localStorage.setItem('payday-estimate-snapshots', JSON.stringify(paydayEstimateSnapshots)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveParkedDays(){
+  try{ localStorage.setItem('parked-days', JSON.stringify(parkedDays)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePollingSettings(){
@@ -1883,6 +1898,30 @@ function getPayPeriodByOffset(baseDate, offset){
     currentPayDate = getPayDate(pm < 0 ? py - 1 : py, pm < 0 ? 11 : pm);
   }
   return { start: currentPayDate, end: addDays(nextPayDate, -1) };
+}
+
+// Generic "money saved versus a per-day budgeted expense, for days that
+// have already happened" — built once, parameterized by which tracked
+// days map and default cost to use, rather than written specifically
+// for parking. A possible future second daily expense (bus fares,
+// whatever) could reuse this directly with its own tracked-days map and
+// default cost, rather than needing its own copy of the same logic.
+// Deliberately only sums days up to and including today, not the whole
+// period — a day that hasn't happened yet has no real outcome either
+// way, so this stays a running total of what's actually occurred, never
+// needing the same kind of "lock it in" fix the payday estimate needed.
+function computeExpenseSavingsForPeriod(periodStart, periodEnd, todayDate, trackedDays, defaultCost){
+  let total = 0;
+  const cutoff = todayDate < periodEnd ? todayDate : periodEnd;
+  for (let d = new Date(periodStart); d <= cutoff; d = addDays(d, 1)){
+    const key = fmtKey(d);
+    if (isWeekend(d)) continue;
+    const comment = (comments[key] || '').trim();
+    const isTravel = comment === '' || travelOverrides[key];
+    if (!isTravel) continue; // this expense doesn't apply on a non-travel day
+    total += (trackedDays[key] !== undefined) ? (defaultCost - trackedDays[key]) : defaultCost;
+  }
+  return total;
 }
 
 // Finds the next date flagged as a ticket-buy day, searching well beyond
@@ -2563,6 +2602,13 @@ function render(){
   const payWindowLabel = `${dateLabelShort(estWindowStart)} – ${dateLabelShort(estWindowEnd)}`;
   const monthEstimateDismissed = !!dismissedMonths[estMonthKey];
   const showEstimateCard = !monthEstimateDismissed;
+
+  // Always the REAL current period, independent of whatever the
+  // estimate card above might be previewing via its own nav arrows —
+  // this is about what's actually happened so far, not a projection.
+  const realCurrentPeriod = getPayPeriodByOffset(today, 0);
+  const parkingSavedThisPeriod = computeExpenseSavingsForPeriod(realCurrentPeriod.start, realCurrentPeriod.end, today, parkedDays, parkingCost);
+
   const rows = days.map(d => {
     const key = fmtKey(d);
     const s = states[key];
@@ -2696,6 +2742,16 @@ function render(){
         <div class="holiday-label" style="margin-top:2px;">${estTicketCount} ticket${estTicketCount===1?'':'s'} (£${estTicketCost.toFixed(2)}) + ${estParkingDays} parking day${estParkingDays===1?'':'s'} (£${estParkingCost.toFixed(2)})</div>
       </div>
     </div>`}
+
+    ${!beforePeriod ? `
+    <div class="holiday-card" id="parking-savings-card">
+      <div class="holiday-info" style="width:100%;">
+        <div class="holiday-label">Parking savings this period</div>
+        <div class="holiday-date" style="font-size:22px; font-weight:600; color:${parkingSavedThisPeriod >= 0 ? 'var(--good)' : '#ff8b7e'}; margin-top:8px;">${parkingSavedThisPeriod >= 0 ? '£' + parkingSavedThisPeriod.toFixed(2) + ' saved' : '£' + Math.abs(parkingSavedThisPeriod).toFixed(2) + ' over budget'}</div>
+        <div class="holiday-label" style="margin-top:2px;">Budgeted £${parkingCost.toFixed(2)}/day parking — tap a day to mark when you actually parked</div>
+      </div>
+    </div>` : ''}
+
 
     <div class="holiday-card" id="spending-card" style="cursor:pointer;">
       <div class="holiday-info" style="width:100%;">
@@ -3050,6 +3106,7 @@ function openDayEditor(key){
   const d = parseKey(key);
   const weekend = isWeekend(d);
   const current = comments[key] || '';
+  const isTravelDay = !weekend && (current === '' || travelOverrides[key]);
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -3066,6 +3123,15 @@ function openDayEditor(key){
         <input type="checkbox" id="modal-override-checkbox" ${travelOverrides[key] ? 'checked' : ''} style="width:16px; height:16px;" />
         I still used the ticket this day
       </label>` : ''}
+      ${isTravelDay ? `
+      <label style="display:flex; align-items:center; gap:8px; margin:12px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
+        <input type="checkbox" id="modal-parked-checkbox" ${parkedDays[key] !== undefined ? 'checked' : ''} style="width:16px; height:16px;" />
+        I parked today
+      </label>
+      <div id="modal-parked-cost-wrap" style="display:${parkedDays[key] !== undefined ? 'flex' : 'none'}; align-items:center; gap:8px; margin-bottom:8px;">
+        <span style="font-size:13px; color:var(--ink-dim);">Cost (£)</span>
+        <input type="number" id="modal-parked-cost-input" value="${(parkedDays[key] !== undefined ? parkedDays[key] : parkingCost).toFixed(2)}" step="0.01" min="0" style="width:100px;" />
+      </div>` : ''}
       <button class="save-btn" id="modal-save-btn">Save</button>
       <div class="modal-close" id="modal-close-btn">Cancel</div>
     </div>
@@ -3087,6 +3153,38 @@ function openDayEditor(key){
     });
   }
 
+  const modalParkedCb = document.getElementById('modal-parked-checkbox');
+  const modalParkedCostWrap = document.getElementById('modal-parked-cost-wrap');
+  const modalParkedCostInput = document.getElementById('modal-parked-cost-input');
+  if (modalParkedCb){
+    modalParkedCb.addEventListener('change', async () => {
+      if (modalParkedCb.checked){
+        modalParkedCostWrap.style.display = 'flex';
+        const val = parseFloat(modalParkedCostInput.value);
+        parkedDays[key] = isNaN(val) ? parkingCost : val;
+      } else {
+        modalParkedCostWrap.style.display = 'none';
+        delete parkedDays[key];
+      }
+      await saveParkedDays();
+      render();
+    });
+  }
+  if (modalParkedCostInput){
+    // Editable per instance, not just at the moment of first marking —
+    // the actual cost genuinely varies (a different car park, a
+    // different rate), and this needs to be correctable any time the
+    // day's revisited, not fixed at whatever was entered first.
+    modalParkedCostInput.addEventListener('change', async () => {
+      const val = parseFloat(modalParkedCostInput.value);
+      if (!isNaN(val) && val >= 0 && parkedDays[key] !== undefined){
+        parkedDays[key] = val;
+        await saveParkedDays();
+        render();
+      }
+    });
+  }
+
   overlay.querySelectorAll('#modal-chip-row .chip').forEach(chip => {
     chip.addEventListener('click', async () => {
       const tag = chip.dataset.tag;
@@ -3098,8 +3196,14 @@ function openDayEditor(key){
         document.getElementById('modal-custom-comment').value = '';
         if (getOverrideChecked()) travelOverrides[key] = true; else delete travelOverrides[key];
       }
+      // If this day genuinely stopped being a travel day, any parking
+      // record for it no longer makes sense — cleared alongside the tag
+      // change rather than left as a stale, inconsistent leftover.
+      const stillTravelDay = !weekend && (comments[key] === '' || travelOverrides[key]);
+      if (!stillTravelDay) delete parkedDays[key];
       await saveComments();
       await saveTravelOverrides();
+      await saveParkedDays();
       document.body.removeChild(overlay); render();
     });
   });
@@ -3108,8 +3212,11 @@ function openDayEditor(key){
     if (val !== ''){
       comments[key] = val;
       if (getOverrideChecked()) travelOverrides[key] = true; else delete travelOverrides[key];
+      const stillTravelDay = !weekend && (comments[key] === '' || travelOverrides[key]);
+      if (!stillTravelDay) delete parkedDays[key];
       await saveComments();
       await saveTravelOverrides();
+      await saveParkedDays();
       document.body.removeChild(overlay); render();
     } else {
       document.body.removeChild(overlay);
