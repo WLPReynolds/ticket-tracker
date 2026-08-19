@@ -907,7 +907,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-19.08:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-19.10:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2340,6 +2340,62 @@ function computeStates(targetDate){
   return map;
 }
 
+// Recovers what a day's state WOULD have shown, for a date that falls
+// before the current global periodStart — a genuine gap in the normal
+// computeStates(), which only ever looks forward from periodStart.
+// Without this, buying a new ticket instantly blanks every earlier day
+// in the list down to a bare "Before this ticket" placeholder, even
+// though those days genuinely belonged to a real previous ticket with
+// real detail (confirmed trains, delay claims) worth still being able
+// to see.
+//
+// Deliberately NOT just calling computeStates() with an earlier
+// periodStart — that function auto-advances into a fresh 8-use cycle
+// the moment one segment ends, which is exactly right for forward
+// projections (the payday estimate assumes tickets keep getting bought
+// on schedule) but wrong here: caught this producing "day 1 of 8" for
+// a day that was actually sitting in a genuine unbought gap, simply
+// because the calendar's next plausible travel day happened to land
+// there — regardless of whether a ticket was ever really purchased for
+// it. So this only ever walks the ONE real ticket's own segment plus
+// its immediate gap afterward, and stops — never speculating about a
+// second, unconfirmed cycle the way computeStates itself would.
+function findHistoricalStateForDate(key){
+  const seasonPurchases = purchases.filter(p => (p.type || undefined) !== 'single').sort((a, b) => a.date.localeCompare(b.date));
+  const historicalPurchase = seasonPurchases.filter(p => p.date <= key).slice(-1)[0];
+  if (!historicalPurchase) return null;
+
+  let cursor = parseKey(historicalPurchase.date);
+  let usedCount = 0, daysElapsed = 0, periodEndDate = null;
+  while (true){
+    const cKey = fmtKey(cursor);
+    daysElapsed += 1;
+    const weekend = isWeekend(cursor);
+    const comment = (comments[cKey] || '').trim();
+    const isTravel = comment === '' || travelOverrides[cKey];
+    if (!weekend && isTravel) usedCount += 1;
+    const hitUses = usedCount >= USES_PER_PERIOD;
+    const hitDays = daysElapsed >= PERIOD_LENGTH;
+    if (cKey === key){
+      return { usedCount, daysElapsed, periodEnded: hitUses || hitDays, lostDays: hitDays && !hitUses, unusedRemaining: USES_PER_PERIOD - usedCount, inGap: false, buyFlag: false };
+    }
+    if (hitUses || hitDays){ periodEndDate = new Date(cursor); break; }
+    cursor = addDays(cursor, 1);
+  }
+  // Reached the real ticket's own end without finding key yet — it's
+  // somewhere in the gap that followed. No "buy ticket" flag applied
+  // here even on what would have been that day — this is a look back
+  // at a settled day, not a live reminder about the future.
+  let gcursor = addDays(periodEndDate, 1);
+  while (fmtKey(gcursor) <= key){
+    if (fmtKey(gcursor) === key){
+      return { usedCount: 0, daysElapsed: 0, periodEnded: false, lostDays: false, unusedRemaining: 0, inGap: true, buyFlag: false };
+    }
+    gcursor = addDays(gcursor, 1);
+  }
+  return null; // shouldn't happen given the !s guard already bounds key before periodStart
+}
+
 function getRange(centerDate, before, after){
   const days = [];
   for (let i=-before; i<=after; i++){
@@ -2611,10 +2667,21 @@ function render(){
 
   const rows = days.map(d => {
     const key = fmtKey(d);
-    const s = states[key];
+    let s = states[key];
     const weekend = isWeekend(d);
     const comment = (comments[key] || '').trim();
     const isToday = key === todayKey;
+    let isHistorical = false;
+    if (!s){
+      // Not this ticket's own range — but a real, earlier ticket may
+      // still have genuinely covered this day. Recovered here rather
+      // than shown as a bare placeholder, so the day keeps its actual
+      // detail (badge, confirmed trains, delay claim status) exactly as
+      // it looked before a new ticket got bought, not just "Before this
+      // ticket" with nothing else.
+      s = findHistoricalStateForDate(key);
+      isHistorical = !!s;
+    }
     if (!s){
       return `
         <div class="day-row" data-key="${key}">
@@ -3453,20 +3520,22 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-19.07:15*
+*Last updated: v2026-08-19.10:40*
 
-1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app.
+1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app. A live test call confirmed both endpoints return accurate, current data (the season ticket price matched the real Flexi 8 price to the penny; the day return price matched the manually-configured figure exactly). Worth deciding: should this replace the manually-entered prices outright, or sit alongside them as a live cross-check the person can choose to accept? A network call on the Buy screen also means it's no longer instant — worth a proper discussion on the trade-off before building.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 3. **Christmas bunting variant** for the header.
 4. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
 5. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon.
 6. **Costs as one combined form** — currently a further list of two links (parking cost, day return price) rather than a single screen. Last remaining piece of the old Settings UI polish item — icon grid and in-place Back navigation are both done now.
-7. **Station Board flicker, last seen once and not since** — noted here rather than deleted, since a single non-reproducing report isn't confirmed resolved, but it hasn't recurred since first flagged. Worth deleting outright if it stays gone through a few more sessions.
-8. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
-9. **Explicit "is this your train?" prompt fired for a late-running 16:31 while genuinely away from the platform** — a dropped-pin location at the time worked out to 403m from the app's verified Wigan coordinates, which is inside the current 500m geofence radius — so this may be the geofence behaving exactly as configured, not a bug, and 500m simply being wide enough to also catch "nearby but not really there" cases. Unconfirmed whether this was the everyday silent-confirm path or the separate ambiguity-prompt path specifically — the person reported this was the first time they'd seen an explicit prompt rather than a silent confirm. Next occurrence, knowing roughly where they actually were (car park, nearby street, genuinely on the platform) would help settle which explanation is right before touching the radius.
-10. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
-11. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #10. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #10.
-12. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
+7. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
+8. **500m geofence radius likely too wide for the boarding-side silent detection/prompt** — now two real data points, both false positives. The first (403m) was a dropped pin near the station. The second, more telling one: a genuine office on the person's own walk route to the station, measured at 185m — comfortably inside even a much tighter radius than 500m. Genuine trade-off, not a simple number change: shrinking the radius reduces false positives like these, but risks reintroducing missed detections on the platform itself, since GPS accuracy in a station environment (tall buildings, sometimes indoor/underground platforms) can itself be poor. Needs a decision on how much to tighten, or whether a different signal entirely (e.g. dwell time / position stability, not just a single distance check) would serve better — worth a proper discussion rather than picking a number blind.
+9. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
+10. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #9. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #9.
+11. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
+12. **Trim the wording on the "Parking savings this period" card** — drop "tap a day to mark when you actually parked", keep it simpler.
+13. **"Parking savings this period" card should be dismissible and restorable via Settings** — same pattern as the existing "Set aside on payday" card (an × to dismiss, a link back in Settings to bring it back).
+14. **"Spent on tickets this year" card should get the same dismiss/restore treatment** — currently permanent with no way to hide it at all.
 `;
 
 function openHelpGuide(){
