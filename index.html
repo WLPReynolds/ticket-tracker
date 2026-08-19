@@ -907,7 +907,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-18.21:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-19.07:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2100,6 +2100,40 @@ async function syncGoogleCalendarEvent(dateKey){
   }
 }
 
+// Removes the tracked reminder entirely, rather than patching it
+// forward to a hypothetical next buy date — used when there's currently
+// no active ticket at all (a genuine gap). Patching forward in that
+// state was the actual bug: the "next buy date" is still a reasonable
+// projection to display, but automatically rolling a calendar reminder
+// onto it while nothing's actually been bought yet doesn't reflect
+// anything concrete. Once a new ticket is logged, normal syncing
+// resumes and a fresh reminder gets created for whatever that ticket's
+// own next buy date turns out to be.
+async function deleteGoogleCalendarEvent(){
+  if (!gcalEventId) return { ok: true, method: 'none' }; // nothing tracked — nothing to do
+  const token = await getGoogleAccessToken();
+  if (!token) return { ok: false, reason: 'no-token' };
+  try{
+    const resp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${gcalEventId}`, {
+      method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` }
+    });
+    // 404/410 means it's already gone (e.g. deleted manually elsewhere)
+    // — a successful outcome from here regardless, not a failure.
+    if (!resp.ok && resp.status !== 404 && resp.status !== 410){
+      return { ok: false, reason: `delete-failed-${resp.status}` };
+    }
+    const deletedId = gcalEventId;
+    gcalEventId = null;
+    await saveGcalEventId();
+    gcalPendingSync = false;
+    gcalLastSyncFailed = false;
+    await saveGcalPendingSync();
+    return { ok: true, method: 'deleted', eventId: deletedId };
+  }catch(e){
+    return { ok: false, reason: `exception: ${e.message}` };
+  }
+}
+
 // Fires 10 seconds after the buy date last changed, not 10 seconds after
 // it was first noticed — each further change resets the clock (see the
 // scheduling logic in render()). Re-derives the buy date fresh at fire
@@ -2115,7 +2149,15 @@ async function fireBuyDateChangeActions(){
     }
     if (gcalEnabled){
       gcalPendingSync = true; saveGcalPendingSync();
-      syncGoogleCalendarEvent(freshNext).then((result) => { if (result.ok) render(); });
+      // No active ticket right now — delete the tracked reminder rather
+      // than patch it forward to this hypothetical date. See
+      // deleteGoogleCalendarEvent's own comment for the full reasoning;
+      // this is the actual trigger point the original bug came from.
+      if (isCurrentlyInTicketGap(freshToday, freshTodayKey)){
+        deleteGoogleCalendarEvent().then((result) => { if (result.ok) render(); });
+      } else {
+        syncGoogleCalendarEvent(freshNext).then((result) => { if (result.ok) render(); });
+      }
     }
     lastNotifiedBuyKey = freshNext;
     saveLastNotifiedBuyKey();
@@ -2146,6 +2188,19 @@ function getRealPeriodEnd(){
     }
     cursor = addDays(cursor, 1);
   }
+}
+
+// Shared, single source of truth for "is today in a genuine gap" — no
+// active season ticket (the real 28-day/8-use window has ended) and
+// nothing bought to replace it yet. Used both by render() for what the
+// card displays and by the Google Calendar sync logic below, so the two
+// can't quietly drift apart the way they did before this existed —
+// render() checked this inline, syncing didn't check it at all.
+function isCurrentlyInTicketGap(dateObj, dateKeyParam){
+  const dayStates = computeStates(dateObj);
+  if (!dayStates[dateKeyParam]) return false; // hasn't started counting at all yet — that's "before period", not a gap
+  const realPeriodEnd = getRealPeriodEnd();
+  return dateKeyParam > fmtKey(realPeriodEnd.endDate);
 }
 
 // Returns the single-ticket purchase record for an exact date, if any.
@@ -2358,6 +2413,10 @@ function render(){
   const yearToDateTotal = yearToDatePurchases.reduce((sum, p) => sum + p.cost, 0);
 
   const realPeriodEnd = beforePeriod ? null : getRealPeriodEnd();
+  // Same underlying check as isCurrentlyInTicketGap (shared helper, used
+  // by the calendar sync logic too) — kept as a direct computation here
+  // rather than calling that helper again, since realPeriodEnd is
+  // already available and needed separately just below for isPastPhantom.
   const isPhantomToday = !beforePeriod && fmtKey(today) > fmtKey(realPeriodEnd.endDate);
 
   let statusHtml = '';
@@ -2545,6 +2604,7 @@ function render(){
     </header>
 
     <div class="board-card">
+      ${!isPhantomToday ? `
       <div class="flip-row">
         <div class="flip-tile">${todayCountDisplay}</div>
         <div class="flip-of8">
@@ -2556,6 +2616,7 @@ function render(){
       </div>
       <div class="day-progress-label">Day ${beforePeriod ? 0 : todayState.daysElapsed} of 28</div>
       <div class="day-progress-track"><div class="day-progress-fill" style="width:${dayProgressPct}%"></div></div>
+      ` : ''}
       ${statusHtml}
       ${nextBuyHtml}
       ${calendarPromptHtml}
@@ -2860,12 +2921,19 @@ function render(){
 
   if (calendarSyncPrompt){
     calendarSyncPrompt.addEventListener('click', async () => {
-      const nb = findNextBuyDateKey(today, todayKey);
-      let result = { ok: false, reason: 'no-buy-date-found' };
-      if (nb) result = await syncGoogleCalendarEvent(nb);
+      let result;
+      if (isCurrentlyInTicketGap(today, todayKey)){
+        // Same reasoning as the automatic path — no active ticket right
+        // now, so remove the tracked reminder rather than patch it
+        // forward to a date nothing's actually confirmed yet.
+        result = await deleteGoogleCalendarEvent();
+      } else {
+        const nb = findNextBuyDateKey(today, todayKey);
+        result = nb ? await syncGoogleCalendarEvent(nb) : { ok: false, reason: 'no-buy-date-found' };
+      }
       gcalLastSyncFailed = !result.ok;
       if (result.ok){
-        alert(`Calendar ${result.method} for ${result.dateKey}\nEvent ID: ${result.eventId}`);
+        alert(result.method === 'deleted' ? 'Calendar reminder removed — no active ticket to remind about.' : `Calendar ${result.method} for ${result.dateKey}\nEvent ID: ${result.eventId}`);
       } else {
         alert(`Calendar update failed: ${result.reason}${result.eventId ? `\nEvent ID used: ${result.eventId}` : ''}`);
       }
@@ -3231,7 +3299,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-18.21:00*
+*Last updated: v2026-08-19.07:15*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -3245,8 +3313,6 @@ const BACKLOG_MD = `
 10. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
 11. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #10. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #10.
 12. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
-
-**Watch item, not a confirmed bug:** the season ticket card displaying alongside "No active season ticket" — still only reproduced in an empty-data preview, never seen on the real phone.
 `;
 
 function openHelpGuide(){
