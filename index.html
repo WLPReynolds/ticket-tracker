@@ -907,7 +907,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-19.10:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-19.11:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3062,6 +3062,7 @@ function render(){
       menuOpen = false;
       gcalEnabled = false;
       await saveGcalEnabled();
+      await deleteGoogleCalendarEvent(); // otherwise the tracked reminder just sits on the real calendar forever, untouched by anything from this point on
       render();
     });
   }
@@ -3520,7 +3521,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-19.10:40*
+*Last updated: v2026-08-19.11:30*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app. A live test call confirmed both endpoints return accurate, current data (the season ticket price matched the real Flexi 8 price to the penny; the day return price matched the manually-configured figure exactly). Worth deciding: should this replace the manually-entered prices outright, or sit alongside them as a live cross-check the person can choose to accept? A network call on the Buy screen also means it's no longer instant — worth a proper discussion on the trade-off before building.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -3536,6 +3537,9 @@ const BACKLOG_MD = `
 12. **Trim the wording on the "Parking savings this period" card** — drop "tap a day to mark when you actually parked", keep it simpler.
 13. **"Parking savings this period" card should be dismissible and restorable via Settings** — same pattern as the existing "Set aside on payday" card (an × to dismiss, a link back in Settings to bring it back).
 14. **"Spent on tickets this year" card should get the same dismiss/restore treatment** — currently permanent with no way to hide it at all.
+15. **"NOT YET DEPARTED" pill fires hours too early when a live estimate has crossed midnight relative to its scheduled time** — confirmed precisely, not just suspected. \`liveDates\` takes the scheduled date (correctly midnight-aware) and simply overwrites its hours/minutes with the live estimate, without checking whether that live time has itself rolled into the next calendar day. A point scheduled 23:54, running late enough that its live estimate is 00:09, resolves to 00:09 *that same day* (hours in the past) instead of the following day (still hours away) — reproduced live on a real service. Same general bug class as the midnight-crossing issue \`closestDateForTime\` was built to fix elsewhere in this file; whatever fixes this should very likely reuse that same logic rather than a second approach.
+16. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all, same general issue as #15. Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
+17. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
 `;
 
 function openHelpGuide(){
@@ -3630,6 +3634,7 @@ function openSettingsMenu(){
     if (gcalEnabled){
       gcalEnabled = false;
       await saveGcalEnabled();
+      await deleteGoogleCalendarEvent(); // same reasoning as the other disconnect path — nothing else will ever clean this up once disconnected
       close();
       render();
       return;
@@ -4014,14 +4019,24 @@ function openDayReturnPriceEditor(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
+// Deliberately excludes: confirmed-point-status-cache, silent-confirm-banner
+// (transient UI/derived state, not something a restore needs), and
+// drive-backup-dirty/drive-backup-last-time (the backup mechanism's own
+// internal bookkeeping, not app data). Also excludes the smartcard pass
+// photo entirely — that lives in IndexedDB, not localStorage, and isn't
+// covered by this mechanism at all. If that ever needs to change, the
+// messaging around what a backup contains needs updating alongside it,
+// not just this list.
 const BACKUP_KEYS = [
   'bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
   'drive-backup-enabled','drive-backup-folder-id','gcal-enabled','gcal-event-id',
-  'gcal-pending-sync','preferred-google-email','rail-perf-cache','rail-trains',
+  'gcal-pending-sync','parked-days','payday-estimate-snapshots','poll-before-departure-min',
+  'poll-check-in-interval-min','preferred-google-email','produce-claim-details-file',
+  'rail-perf-cache','rail-trains','smartcard-number',
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
   'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
   'ticket-period-start','ticket-purchases','ticket-seed-imported','ticket-travel-overrides',
-  'tracked-trains'
+  'tracked-trains','weather-enabled'
 ];
 
 function exportBackup(){
@@ -4587,11 +4602,30 @@ async function checkLikelyArrival(){
   }
 }
 
+// Runs the two checks sequentially, not concurrently — checkLikelyArrival
+// is meant to be a fallback that only gets a real turn once departure-side
+// detection has already had its own shot (and, via each function's own
+// "already confirmed?" guard, correctly does nothing further once the
+// other has succeeded). Firing both at once undermined that: no
+// guarantee departure detection had actually completed before arrival
+// detection also started, and no guard against a slow cycle overlapping
+// with the next timer tick. The in-flight guard below stops that too —
+// a cycle still running when the next 2-minute tick fires is skipped
+// rather than allowed to overlap with it.
+let likelyTrainCycleRunning = false;
+async function runLikelyTrainCycle(){
+  if (likelyTrainCycleRunning) return;
+  likelyTrainCycleRunning = true;
+  try{
+    await checkLikelyTrain();
+    await checkLikelyArrival();
+  }catch(e){ /* each check already handles its own failures internally — this is just a final safety net so a cycle failure can't leave the guard stuck on */ }
+  finally{ likelyTrainCycleRunning = false; }
+}
 function startLikelyTrainChecks(){
   if (likelyTrainCheckTimer) return;
-  checkLikelyTrain();
-  checkLikelyArrival();
-  likelyTrainCheckTimer = setInterval(() => { checkLikelyTrain(); checkLikelyArrival(); }, LIKELY_TRAIN_CHECK_INTERVAL_MS);
+  runLikelyTrainCycle();
+  likelyTrainCheckTimer = setInterval(runLikelyTrainCycle, LIKELY_TRAIN_CHECK_INTERVAL_MS);
 }
 function stopLikelyTrainChecks(){
   if (likelyTrainCheckTimer){ clearInterval(likelyTrainCheckTimer); likelyTrainCheckTimer = null; }
@@ -5041,6 +5075,12 @@ function openLiveScreen(initialSubTab){
       try{
         const service = await fetchServiceDetails(serviceId);
         if (!overlay.isConnected) return;
+        // Re-check after the await, not just before it — if this train
+        // was removed while the request was in flight, trackedTrains no
+        // longer has it, and opening it now would silently re-add it via
+        // openTrainProgress's own "remember this journey" logic, undoing
+        // the removal the person deliberately just made.
+        if (!trackedTrains.some(t => t.serviceId === serviceId)) return;
         overlay.remove();
         openTrainProgress({ label: tracked.label, fromLoc: tracked.fromLoc, toLoc: tracked.toLoc || null, serviceId, labelIsFinal: true }, service);
       }catch(e){
