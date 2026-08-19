@@ -907,7 +907,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-19.11:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-19.23:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3521,7 +3521,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-19.11:30*
+*Last updated: v2026-08-19.23:20*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app. A live test call confirmed both endpoints return accurate, current data (the season ticket price matched the real Flexi 8 price to the penny; the day return price matched the manually-configured figure exactly). Worth deciding: should this replace the manually-entered prices outright, or sit alongside them as a live cross-check the person can choose to accept? A network call on the Buy screen also means it's no longer instant — worth a proper discussion on the trade-off before building.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -3537,9 +3537,8 @@ const BACKLOG_MD = `
 12. **Trim the wording on the "Parking savings this period" card** — drop "tap a day to mark when you actually parked", keep it simpler.
 13. **"Parking savings this period" card should be dismissible and restorable via Settings** — same pattern as the existing "Set aside on payday" card (an × to dismiss, a link back in Settings to bring it back).
 14. **"Spent on tickets this year" card should get the same dismiss/restore treatment** — currently permanent with no way to hide it at all.
-15. **"NOT YET DEPARTED" pill fires hours too early when a live estimate has crossed midnight relative to its scheduled time** — confirmed precisely, not just suspected. \`liveDates\` takes the scheduled date (correctly midnight-aware) and simply overwrites its hours/minutes with the live estimate, without checking whether that live time has itself rolled into the next calendar day. A point scheduled 23:54, running late enough that its live estimate is 00:09, resolves to 00:09 *that same day* (hours in the past) instead of the following day (still hours away) — reproduced live on a real service. Same general bug class as the midnight-crossing issue \`closestDateForTime\` was built to fix elsewhere in this file; whatever fixes this should very likely reuse that same logic rather than a second approach.
-16. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all, same general issue as #15. Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
-17. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
+15. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
+16. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
 `;
 
 function openHelpGuide(){
@@ -5590,6 +5589,12 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   // can pass long before the train genuinely does — Preston scheduled
   // 17:18, only estimated for 17:23 with no confirmed departure at all,
   // is a real case this was checked against directly.
+  // 6 hours — comfortably beyond any real early-running margin (a train
+  // running early is real, but only ever by a few minutes), comfortably
+  // inside any real midnight-crossing gap. Distinguishes "genuinely
+  // running early" from "the live time has actually rolled into the
+  // next calendar day" below.
+  const MIDNIGHT_ROLLOVER_THRESHOLD_MS = 6 * 60 * 60 * 1000;
   const liveDates = points.map((p, i) => {
     if (!pointDates[i]) return null;
     const raw = (p.liveTime && p.liveTime.includes(':')) ? p.liveTime : scheduleTime(p);
@@ -5599,6 +5604,22 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     if (isNaN(h) || isNaN(m)) return pointDates[i];
     const d = new Date(pointDates[i]);
     d.setHours(h, m, 0, 0);
+    // pointDates[i] (the schedule) is already correctly midnight-aware
+    // via the day-inference used to build it — this just naively
+    // applies the live time's hours/minutes to that same calendar day,
+    // which breaks the moment the live estimate has itself crossed
+    // midnight relative to the schedule (e.g. scheduled 23:54, running
+    // late enough that the live estimate is 00:09 — naively landing on
+    // the same day as 23:54 puts it hours in the PAST rather than hours
+    // in the future). A genuine delay only ever pushes the actual time
+    // later than scheduled, never dramatically earlier, so an
+    // implausibly large apparent "earliness" here means a day boundary
+    // was actually crossed, not that the train is running early.
+    // Reproduced live on two separate points (a "not yet departed" and
+    // a "not yet arrived" pill both firing hours too soon) before fixing
+    // this — both share this exact computation, so the one fix covers
+    // both symptoms.
+    if (pointDates[i] - d > MIDNIGHT_ROLLOVER_THRESHOLD_MS) d.setDate(d.getDate() + 1);
     return d;
   });
   liveDates.forEach((t, i) => { if (t && t <= now) lastPassedIdx = i; });
