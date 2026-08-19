@@ -907,7 +907,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-19.07:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-19.08:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1006,6 +1006,14 @@ const SMARTCARD_NUMBER_MAX_LENGTH = 20;
 // toggleable since not everyone wants a growing pile of these in
 // Downloads.
 let produceClaimDetailsFile = true;
+// Locked in the first time each pay period's own start date is genuinely
+// reached — { "YYYY-MM-DD" (period start): { ticketCount, ticketCost,
+// parkingDays, parkingCost, total } }. Once set for a given period, that
+// period's "Set aside on payday" figure stays exactly what it was on
+// payday, regardless of anything that happens afterward (a ticket
+// bought, a day re-tagged) — the whole point of a payday budget is that
+// it doesn't retroactively move once you've actually set the money aside.
+let paydayEstimateSnapshots = {};
 // Live-progress polling cadence, both configurable from the menu (see
 // openPollingSettingsEditor) — how close to scheduled departure polling
 // resumes at the normal cadence, and the longest it'll ever go between
@@ -1418,6 +1426,10 @@ async function loadData(){
     produceClaimDetailsFile = pcdf ? JSON.parse(pcdf) : true;
   }catch(e){ produceClaimDetailsFile = true; }
   try{
+    const pes = localStorage.getItem('payday-estimate-snapshots');
+    paydayEstimateSnapshots = pes ? JSON.parse(pes) : {};
+  }catch(e){ paydayEstimateSnapshots = {}; }
+  try{
     const pbd = localStorage.getItem('poll-before-departure-min');
     pollBeforeDepartureMin = clampPollBeforeDepartureMin(pbd ? JSON.parse(pbd) : 5);
   }catch(e){ pollBeforeDepartureMin = 5; }
@@ -1578,6 +1590,10 @@ async function saveSmartcardNumber(){
 }
 async function saveProduceClaimDetailsFile(){
   try{ localStorage.setItem('produce-claim-details-file', JSON.stringify(produceClaimDetailsFile)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function savePaydayEstimateSnapshots(){
+  try{ localStorage.setItem('payday-estimate-snapshots', JSON.stringify(paydayEstimateSnapshots)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePollingSettings(){
@@ -2499,20 +2515,51 @@ function render(){
   const estWindowStart = estPeriod.start;
   const estWindowEnd = estPeriod.end;
   const estMonthKey = fmtKey(getPayPeriodByOffset(today, 0).start); // dismiss/reset key always tracks the CURRENT period, regardless of what's being previewed
-  const estMonthStates = computeStates(estWindowEnd);
-  let estTicketCount = 0;
-  let estParkingDays = 0;
-  for (let d = new Date(estWindowStart); d <= estWindowEnd; d = addDays(d, 1)){
-    const key = fmtKey(d);
-    if (estMonthStates[key] && estMonthStates[key].buyFlag) estTicketCount++;
-    const weekend = isWeekend(d);
-    const comment = (comments[key] || '').trim();
-    const isTravel = comment === '' || travelOverrides[key];
-    if (!weekend && isTravel) estParkingDays++;
+  const estPeriodStartKey = fmtKey(estWindowStart);
+
+  let estTicketCount, estParkingDays, estTicketCost, estParkingCost, estTotal;
+  if (paydayEstimateSnapshots[estPeriodStartKey]){
+    // Already locked in for this period — use exactly what was budgeted
+    // on payday, not a fresh recalculation. A ticket purchase logged
+    // partway through the period, or a day re-tagged since, would
+    // otherwise change a projected figure into a different number — the
+    // actual bug this was built to fix, since the whole point of a
+    // payday budget is that it doesn't retroactively move once the
+    // money's already been mentally (or actually) set aside.
+    const snap = paydayEstimateSnapshots[estPeriodStartKey];
+    estTicketCount = snap.ticketCount;
+    estParkingDays = snap.parkingDays;
+    estTicketCost = snap.ticketCost;
+    estParkingCost = snap.parkingCost;
+    estTotal = snap.total;
+  } else {
+    const estMonthStates = computeStates(estWindowEnd);
+    estTicketCount = 0;
+    estParkingDays = 0;
+    for (let d = new Date(estWindowStart); d <= estWindowEnd; d = addDays(d, 1)){
+      const key = fmtKey(d);
+      if (estMonthStates[key] && estMonthStates[key].buyFlag) estTicketCount++;
+      const weekend = isWeekend(d);
+      const comment = (comments[key] || '').trim();
+      const isTravel = comment === '' || travelOverrides[key];
+      if (!weekend && isTravel) estParkingDays++;
+    }
+    estTicketCost = estTicketCount * lastKnownPrice;
+    estParkingCost = estParkingDays * parkingCost;
+    estTotal = estTicketCost + estParkingCost;
+
+    // Locked the moment this period's own start date has genuinely been
+    // reached — not before. A future period still being previewed via
+    // the nav arrows hasn't had its own "payday" yet, so it correctly
+    // stays a live, evolving projection until it actually arrives.
+    if (fmtKey(today) >= estPeriodStartKey){
+      paydayEstimateSnapshots[estPeriodStartKey] = {
+        ticketCount: estTicketCount, parkingDays: estParkingDays,
+        ticketCost: estTicketCost, parkingCost: estParkingCost, total: estTotal
+      };
+      savePaydayEstimateSnapshots();
+    }
   }
-  const estTicketCost = estTicketCount * lastKnownPrice;
-  const estParkingCost = estParkingDays * parkingCost;
-  const estTotal = estTicketCost + estParkingCost;
   const payWindowLabel = `${dateLabelShort(estWindowStart)} – ${dateLabelShort(estWindowEnd)}`;
   const monthEstimateDismissed = !!dismissedMonths[estMonthKey];
   const showEstimateCard = !monthEstimateDismissed;
