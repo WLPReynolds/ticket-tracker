@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-20.10:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-20.12:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1392,7 +1392,7 @@ async function saveDelayClaims(){
 // first spotted it from, and even across closing/reopening the app.
 let trackedTrains = []; // [{ serviceId, label, fromLoc, addedAt }]
 const TRACKED_TRAIN_MAX_AGE_MS = 6 * 60 * 60 * 1000; // stop tracking after 6 hours regardless — a journey this long has almost certainly finished
-const TRACKED_TRAIN_MAX = 5; // matches the cap enforced when a train is opened (see openTrainProgress) — kept in one place so the "+ Track a train" flow can check it before adding, rather than only finding out after something's already been silently dropped
+const TRACKED_TRAIN_MAX = 5; // matches the cap enforced when a train is opened (see openTrainProgress) — kept in one place so the "Track a train" flow can check it before adding, rather than only finding out after something's already been silently dropped
 
 // "I think you're on this train" detection
 const GEOFENCE_RADIUS_M = 500; // informed by real field-test readings — Crewe/Wigan both fall well inside this
@@ -3402,7 +3402,7 @@ Tap the **Live** tab on the bottom navigation bar to switch between two views:
    * Tap any train row to open its full live journey timeline.
 
 2. **Tracked Trains:** Shows up to 5 specific train services you are currently following.
-   * Tap **+ Track a train** to search live departures or arrivals from any UK station by name or 3-letter station code (e.g. \`CRE\`, \`WGN\`, \`EUS\`).
+   * Tap **Track a train** to search live departures or arrivals from any UK station by name or 3-letter station code (e.g. \`CRE\`, \`WGN\`, \`EUS\`).
    * Tap a train from the search results to start watching it. It remains in your Tracked list for up to 6 hours, allowing you to follow its progress long after it leaves your station.
 
 ### Real-Time Journey Progress
@@ -3574,7 +3574,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-20.09:20*
+*Last updated: v2026-08-20.12:25*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app. A live test call confirmed both endpoints return accurate, current data (the season ticket price matched the real Flexi 8 price to the penny; the day return price matched the manually-configured figure exactly). Worth deciding: should this replace the manually-entered prices outright, or sit alongside them as a live cross-check the person can choose to accept? A network call on the Buy screen also means it's no longer instant — worth a proper discussion on the trade-off before building.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -5133,7 +5133,7 @@ function openLiveScreen(initialSubTab){
   // ---- "Tracked" tab (everything tracked, plus adding a new one) ----
   function buildTrackedListHtml(){
     if (trackedTrains.length === 0){
-      return `<div class="sub">Nothing being tracked right now. Use "+ Track a train" above, or tap one of your usual trains — it'll keep working here even after it leaves the station.</div>`;
+      return `<div class="sub">Nothing being tracked right now. Use "Track a train" above, or tap one of your usual trains — it'll keep working here even after it leaves the station.</div>`;
     }
     return trackedTrains.map(t => {
       const ageMin = Math.round((Date.now() - t.addedAt) / 60000);
@@ -5254,12 +5254,12 @@ function openLiveScreen(initialSubTab){
 
   function renderTrackedTab(){
     bodyEl.innerHTML = `
-      ${showAddForm ? '' : `<div id="tracked-add-toggle" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">+ Track a train</div>`}
+      ${showAddForm ? '' : `<div id="tracked-add-toggle" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">Track a train</div>`}
       <div id="tracked-add-form" style="display:${showAddForm ? 'block' : 'none'}; margin-bottom:16px;">
         <div id="tracked-picker-row" style="display:flex; gap:8px; margin-bottom:10px;"></div>
-        <div id="tracked-add-cancel" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:10px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">Cancel</div>
         <div id="tracked-station-list-status" style="font-size:11.5px; color:var(--ink-dim); margin-bottom:10px;">Loading station list…</div>
-        <button class="save-btn" id="tracked-search-btn">Search</button>
+	<button class="save-btn" id="tracked-search-btn">Search</button>
+        <div id="tracked-add-cancel" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:10px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">Cancel</div>
         <div id="tracked-search-results" style="margin-top:14px;"></div>
       </div>
       <div id="tracked-list">${buildTrackedListHtml()}</div>
