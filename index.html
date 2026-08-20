@@ -907,7 +907,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-19.23:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-20.09:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1021,6 +1021,17 @@ let paydayEstimateSnapshots = {};
 // in this app already works, rather than asking for a daily
 // confirmation on the common case.
 let parkedDays = {};
+// periodStartKey -> true, mirroring dismissedMonths exactly — the
+// parking savings card is just as period-scoped as the payday estimate
+// card, so dismissing it for one period and having it naturally
+// reappear next period makes the same sense there too.
+let dismissedParkingSavingsPeriods = {};
+// A simple global flag, not period-scoped like the two above — "spent
+// this year" has no natural per-period reset point the way a payday or
+// parking figure does, so there's nothing sensible to key a dismissal
+// against other than "on" or "off".
+let ticketsSpentCardDismissed = false;
+
 // Live-progress polling cadence, both configurable from the menu (see
 // openPollingSettingsEditor) — how close to scheduled departure polling
 // resumes at the normal cadence, and the longest it'll ever go between
@@ -1441,6 +1452,14 @@ async function loadData(){
     parkedDays = pd ? JSON.parse(pd) : {};
   }catch(e){ parkedDays = {}; }
   try{
+    const dps = localStorage.getItem('dismissed-parking-savings-periods');
+    dismissedParkingSavingsPeriods = dps ? JSON.parse(dps) : {};
+  }catch(e){ dismissedParkingSavingsPeriods = {}; }
+  try{
+    const tscd = localStorage.getItem('tickets-spent-card-dismissed');
+    ticketsSpentCardDismissed = tscd ? JSON.parse(tscd) : false;
+  }catch(e){ ticketsSpentCardDismissed = false; }
+  try{
     const pbd = localStorage.getItem('poll-before-departure-min');
     pollBeforeDepartureMin = clampPollBeforeDepartureMin(pbd ? JSON.parse(pbd) : 5);
   }catch(e){ pollBeforeDepartureMin = 5; }
@@ -1609,6 +1628,14 @@ async function savePaydayEstimateSnapshots(){
 }
 async function saveParkedDays(){
   try{ localStorage.setItem('parked-days', JSON.stringify(parkedDays)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveDismissedParkingSavingsPeriods(){
+  try{ localStorage.setItem('dismissed-parking-savings-periods', JSON.stringify(dismissedParkingSavingsPeriods)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveTicketsSpentCardDismissed(){
+  try{ localStorage.setItem('tickets-spent-card-dismissed', JSON.stringify(ticketsSpentCardDismissed)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function savePollingSettings(){
@@ -2486,6 +2513,7 @@ function render(){
   // given a high weight (like Bulk import comments) always sorts to
   // the bottom, however many other items get added later.
   const earlyDismissedCheck = !!dismissedMonths[fmtKey(getPayPeriodByOffset(today, 0).start)];
+  const currentPeriodStartKeyForDismissChecks = fmtKey(getPayPeriodByOffset(today, 0).start);
   const menuItems = [
     { id: 'settings-link', label: 'Settings', weight: 0 },
     { id: 'depboard-link', label: 'Station board', weight: 0 },
@@ -2497,6 +2525,8 @@ function render(){
     menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
   }
   if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
+  if (!beforePeriod && dismissedParkingSavingsPeriods[currentPeriodStartKeyForDismissChecks]) menuItems.push({ id: 'restore-parking-savings-link', label: 'Show parking savings again', weight: 0 });
+  if (ticketsSpentCardDismissed) menuItems.push({ id: 'restore-spending-card-link', label: 'Show tickets spent this year again', weight: 0 });
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'help-link', label: 'Help', weight: 55 });
   menuItems.push({ id: 'backlog-link', label: 'Backlog', weight: 56 });
@@ -2810,23 +2840,29 @@ function render(){
       </div>
     </div>`}
 
-    ${!beforePeriod ? `
+    ${(!beforePeriod && !dismissedParkingSavingsPeriods[fmtKey(realCurrentPeriod.start)]) ? `
     <div class="holiday-card" id="parking-savings-card">
       <div class="holiday-info" style="width:100%;">
-        <div class="holiday-label">Parking savings this period</div>
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div class="holiday-label">Parking savings this period</div>
+          <span id="parking-savings-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
+        </div>
         <div class="holiday-date" style="font-size:22px; font-weight:600; color:${parkingSavedThisPeriod >= 0 ? 'var(--good)' : '#ff8b7e'}; margin-top:8px;">${parkingSavedThisPeriod >= 0 ? '£' + parkingSavedThisPeriod.toFixed(2) + ' saved' : '£' + Math.abs(parkingSavedThisPeriod).toFixed(2) + ' over budget'}</div>
-        <div class="holiday-label" style="margin-top:2px;">Budgeted £${parkingCost.toFixed(2)}/day parking — tap a day to mark when you actually parked</div>
       </div>
     </div>` : ''}
 
 
+    ${!ticketsSpentCardDismissed ? `
     <div class="holiday-card" id="spending-card" style="cursor:pointer;">
       <div class="holiday-info" style="width:100%;">
-        <div class="holiday-label">Spent on tickets this year</div>
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div class="holiday-label">Spent on tickets this year</div>
+          <span id="spending-card-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
+        </div>
         <div class="holiday-date" style="font-size:22px; font-weight:600; color:var(--amber);">£${yearToDateTotal.toFixed(2)}</div>
         <div class="holiday-label" style="margin-top:2px;">${yearToDatePurchases.length} ticket${yearToDatePurchases.length===1?'':'s'} logged this year · tap to manage</div>
       </div>
-    </div>
+    </div>` : ''}
 
     ${holidayHtml}
 
@@ -3145,7 +3181,46 @@ function render(){
       render();
     });
   }
-  document.getElementById('spending-card').addEventListener('click', openManagePurchases);
+  const restoreParkingSavingsLink = document.getElementById('restore-parking-savings-link');
+  if (restoreParkingSavingsLink){
+    restoreParkingSavingsLink.addEventListener('click', async () => {
+      menuOpen = false;
+      delete dismissedParkingSavingsPeriods[fmtKey(realCurrentPeriod.start)];
+      await saveDismissedParkingSavingsPeriods();
+      render();
+    });
+  }
+  const restoreSpendingCardLink = document.getElementById('restore-spending-card-link');
+  if (restoreSpendingCardLink){
+    restoreSpendingCardLink.addEventListener('click', async () => {
+      menuOpen = false;
+      ticketsSpentCardDismissed = false;
+      await saveTicketsSpentCardDismissed();
+      render();
+    });
+  }
+  const spendingCard = document.getElementById('spending-card');
+  if (spendingCard){
+    spendingCard.addEventListener('click', openManagePurchases);
+  }
+  const spendingCardDismiss = document.getElementById('spending-card-dismiss');
+  if (spendingCardDismiss){
+    spendingCardDismiss.addEventListener('click', async (e) => {
+      e.stopPropagation(); // otherwise this bubbles up to the whole card's own click handler and opens Manage Purchases too
+      ticketsSpentCardDismissed = true;
+      await saveTicketsSpentCardDismissed();
+      render();
+    });
+  }
+  const parkingSavingsDismiss = document.getElementById('parking-savings-dismiss');
+  if (parkingSavingsDismiss){
+    parkingSavingsDismiss.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      dismissedParkingSavingsPeriods[fmtKey(realCurrentPeriod.start)] = true;
+      await saveDismissedParkingSavingsPeriods();
+      render();
+    });
+  }
 
   const showMoreBtn = document.getElementById('show-more-link');
   if (showMoreBtn){
@@ -3521,7 +3596,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-19.23:20*
+*Last updated: v2026-08-20.09:20*
 
 1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app. A live test call confirmed both endpoints return accurate, current data (the season ticket price matched the real Flexi 8 price to the penny; the day return price matched the manually-configured figure exactly). Worth deciding: should this replace the manually-entered prices outright, or sit alongside them as a live cross-check the person can choose to accept? A network call on the Buy screen also means it's no longer instant — worth a proper discussion on the trade-off before building.
 2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
@@ -3534,11 +3609,8 @@ const BACKLOG_MD = `
 9. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
 10. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #9. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #9.
 11. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
-12. **Trim the wording on the "Parking savings this period" card** — drop "tap a day to mark when you actually parked", keep it simpler.
-13. **"Parking savings this period" card should be dismissible and restorable via Settings** — same pattern as the existing "Set aside on payday" card (an × to dismiss, a link back in Settings to bring it back).
-14. **"Spent on tickets this year" card should get the same dismiss/restore treatment** — currently permanent with no way to hide it at all.
-15. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
-16. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
+12. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
+13. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
 `;
 
 function openHelpGuide(){
@@ -4028,14 +4100,14 @@ function openDayReturnPriceEditor(){
 // not just this list.
 const BACKUP_KEYS = [
   'bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
-  'drive-backup-enabled','drive-backup-folder-id','gcal-enabled','gcal-event-id',
-  'gcal-pending-sync','parked-days','payday-estimate-snapshots','poll-before-departure-min',
-  'poll-check-in-interval-min','preferred-google-email','produce-claim-details-file',
-  'rail-perf-cache','rail-trains','smartcard-number',
+  'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id',
+  'gcal-enabled','gcal-event-id','gcal-pending-sync','parked-days','payday-estimate-snapshots',
+  'poll-before-departure-min','poll-check-in-interval-min','preferred-google-email',
+  'produce-claim-details-file','rail-perf-cache','rail-trains','smartcard-number',
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
   'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
   'ticket-period-start','ticket-purchases','ticket-seed-imported','ticket-travel-overrides',
-  'tracked-trains','weather-enabled'
+  'tickets-spent-card-dismissed','tracked-trains','weather-enabled'
 ];
 
 function exportBackup(){
