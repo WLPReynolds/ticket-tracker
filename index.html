@@ -631,11 +631,22 @@
   .settings-grid-item.active svg{
     color:var(--amber);
   }
-  .settings-grid-item span{
+  .settings-grid-item span.cat-label{
     font-size:11px;
     color:var(--ink-dim);
     text-align:center;
     line-height:1.2;
+  }
+  .settings-grid-item span.status-label{
+    font-size:9px;
+    color:var(--ink-dim);
+    opacity:0.7;
+    text-align:center;
+    line-height:1.2;
+  }
+  .settings-grid-item.active span.status-label{
+    color:var(--amber);
+    opacity:1;
   }
 
   .day-nav-btn{
@@ -907,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-20.09:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-20.10:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2512,8 +2523,6 @@ function render(){
   // this template — new items default to the main group, and anything
   // given a high weight (like Bulk import comments) always sorts to
   // the bottom, however many other items get added later.
-  const earlyDismissedCheck = !!dismissedMonths[fmtKey(getPayPeriodByOffset(today, 0).start)];
-  const currentPeriodStartKeyForDismissChecks = fmtKey(getPayPeriodByOffset(today, 0).start);
   const menuItems = [
     { id: 'settings-link', label: 'Settings', weight: 0 },
     { id: 'depboard-link', label: 'Station board', weight: 0 },
@@ -2524,9 +2533,6 @@ function render(){
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
     menuItems.push({ id: 'enable-notifications-link', label: 'Enable notifications', weight: 0 });
   }
-  if (earlyDismissedCheck) menuItems.push({ id: 'restore-estimate-link', label: 'Show cost estimates again', weight: 0 });
-  if (!beforePeriod && dismissedParkingSavingsPeriods[currentPeriodStartKeyForDismissChecks]) menuItems.push({ id: 'restore-parking-savings-link', label: 'Show parking savings again', weight: 0 });
-  if (ticketsSpentCardDismissed) menuItems.push({ id: 'restore-spending-card-link', label: 'Show tickets spent this year again', weight: 0 });
   menuItems.push({ id: 'backup-restore-link', label: 'Backup & restore', weight: 50 });
   menuItems.push({ id: 'help-link', label: 'Help', weight: 55 });
   menuItems.push({ id: 'backlog-link', label: 'Backlog', weight: 56 });
@@ -3171,34 +3177,6 @@ function render(){
       render();
     });
   }
-  const restoreLink = document.getElementById('restore-estimate-link');
-  if (restoreLink){
-    restoreLink.addEventListener('click', async () => {
-      menuOpen = false;
-      estimateOffset = 0;
-      delete dismissedMonths[estMonthKey];
-      await saveDismissedMonths();
-      render();
-    });
-  }
-  const restoreParkingSavingsLink = document.getElementById('restore-parking-savings-link');
-  if (restoreParkingSavingsLink){
-    restoreParkingSavingsLink.addEventListener('click', async () => {
-      menuOpen = false;
-      delete dismissedParkingSavingsPeriods[fmtKey(realCurrentPeriod.start)];
-      await saveDismissedParkingSavingsPeriods();
-      render();
-    });
-  }
-  const restoreSpendingCardLink = document.getElementById('restore-spending-card-link');
-  if (restoreSpendingCardLink){
-    restoreSpendingCardLink.addEventListener('click', async () => {
-      menuOpen = false;
-      ticketsSpentCardDismissed = false;
-      await saveTicketsSpentCardDismissed();
-      render();
-    });
-  }
   const spendingCard = document.getElementById('spending-card');
   if (spendingCard){
     spendingCard.addEventListener('click', openManagePurchases);
@@ -3656,30 +3634,51 @@ const SETTINGS_ICONS = {
   file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M14 2v5h5"/><path d="M8 13h8M8 17h5"/></svg>',
   cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .3-8 6 6 0 0 0-11.6 1.6A4 4 0 0 0 7 18z"/></svg>',
   bug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="10" rx="4"/><path d="M12 8V5M8 11H4M20 11h-4M9 6 7.5 4.5M15 6l1.5-1.5M8 18l-2 2M16 18l2 2M9 13h6"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
 };
 
 function openSettingsMenu(){
+  // Recomputed locally, the same way the other Settings sub-screens
+  // already do, rather than relying on render()'s own closure — this
+  // function is opened independently of any specific render() call.
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const currentPeriodStartKey = fmtKey(getPayPeriodByOffset(today, 0).start);
+  const paydayVisible = !dismissedMonths[currentPeriodStartKey];
+  const parkingSavingsVisible = !dismissedParkingSavingsPeriods[currentPeriodStartKey];
+  const spendingVisible = !ticketsSpentCardDismissed;
+
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
       <h3>Settings</h3>
       <div class="settings-grid">
-        <div class="settings-grid-item" id="settings-costs-link">${SETTINGS_ICONS.costs}<span>Costs</span></div>
-        <div class="settings-grid-item" id="settings-polling-link">${SETTINGS_ICONS.polling}<span>Polling</span></div>
-        <div class="settings-grid-item${preferredGoogleEmail ? ' active' : ''}" id="settings-preferred-google-link">${SETTINGS_ICONS.account}<span>Account</span></div>
-        <div class="settings-grid-item${gcalEnabled ? ' active' : ''}" id="settings-gcal-link">${SETTINGS_ICONS.calendar}<span>Calendar</span></div>
-        <div class="settings-grid-item" id="settings-rail-config-link">${SETTINGS_ICONS.train}<span>Trains</span></div>
-        <div class="settings-grid-item" id="settings-pass-photo-link">${SETTINGS_ICONS.card}<span>Smartcard</span></div>
-        <div class="settings-grid-item${produceClaimDetailsFile ? ' active' : ''}" id="settings-claim-file-link">${SETTINGS_ICONS.file}<span>Claim file</span></div>
-        <div class="settings-grid-item${weatherEnabled ? ' active' : ''}" id="settings-weather-link">${SETTINGS_ICONS.cloud}<span>Weather</span></div>
-        <div class="settings-grid-item${debugModeEnabled ? ' active' : ''}" id="settings-debug-link">${SETTINGS_ICONS.bug}<span>Debug</span></div>
+        <div class="settings-grid-item" id="settings-costs-link">${SETTINGS_ICONS.costs}<span class="cat-label">Costs</span></div>
+        <div class="settings-grid-item" id="settings-polling-link">${SETTINGS_ICONS.polling}<span class="cat-label">Polling</span></div>
+        <div class="settings-grid-item${preferredGoogleEmail ? ' active' : ''}" id="settings-preferred-google-link">${SETTINGS_ICONS.account}<span class="cat-label">Account</span><span class="status-label">${preferredGoogleEmail ? 'Connected' : 'Not connected'}</span></div>
+        <div class="settings-grid-item${gcalEnabled ? ' active' : ''}" id="settings-gcal-link">${SETTINGS_ICONS.calendar}<span class="cat-label">Calendar</span><span class="status-label">${gcalEnabled ? 'Connected' : 'Not connected'}</span></div>
+        <div class="settings-grid-item" id="settings-rail-config-link">${SETTINGS_ICONS.train}<span class="cat-label">Trains</span></div>
+        <div class="settings-grid-item" id="settings-pass-photo-link">${SETTINGS_ICONS.card}<span class="cat-label">Smartcard</span></div>
+        <div class="settings-grid-item${produceClaimDetailsFile ? ' active' : ''}" id="settings-claim-file-link">${SETTINGS_ICONS.file}<span class="cat-label">Claim file</span><span class="status-label">${produceClaimDetailsFile ? 'On' : 'Off'}</span></div>
+        <div class="settings-grid-item${weatherEnabled ? ' active' : ''}" id="settings-weather-link">${SETTINGS_ICONS.cloud}<span class="cat-label">Weather</span><span class="status-label">${weatherEnabled ? 'On' : 'Off'}</span></div>
+        <div class="settings-grid-item${debugModeEnabled ? ' active' : ''}" id="settings-debug-link">${SETTINGS_ICONS.bug}<span class="cat-label">Debug</span><span class="status-label">${debugModeEnabled ? 'On' : 'Off'}</span></div>
+        <div class="settings-grid-item${paydayVisible ? ' active' : ''}" id="settings-payday-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Payday card</span><span class="status-label">${paydayVisible ? 'Visible' : 'Hidden'}</span></div>
+        <div class="settings-grid-item${parkingSavingsVisible ? ' active' : ''}" id="settings-parking-savings-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Savings card</span><span class="status-label">${parkingSavingsVisible ? 'Visible' : 'Hidden'}</span></div>
+        <div class="settings-grid-item${spendingVisible ? ' active' : ''}" id="settings-spending-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Spending card</span><span class="status-label">${spendingVisible ? 'Visible' : 'Hidden'}</span></div>
       </div>
       <div class="modal-close" id="settings-close-btn" style="margin-top:20px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
   function close(){ if (overlay.isConnected) document.body.removeChild(overlay); }
+
+  function toggleStatus(id, isActive, text){
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('active', isActive);
+    const statusEl = el.querySelector('.status-label');
+    if (statusEl) statusEl.textContent = text;
+  }
 
   document.getElementById('settings-costs-link').addEventListener('click', () => { close(); openCostsMenu(true); });
   document.getElementById('settings-polling-link').addEventListener('click', () => { close(); openPollingSettingsEditor(true); });
@@ -3689,17 +3688,42 @@ function openSettingsMenu(){
   document.getElementById('settings-claim-file-link').addEventListener('click', async () => {
     produceClaimDetailsFile = !produceClaimDetailsFile;
     await saveProduceClaimDetailsFile();
-    document.getElementById('settings-claim-file-link').classList.toggle('active', produceClaimDetailsFile);
+    toggleStatus('settings-claim-file-link', produceClaimDetailsFile, produceClaimDetailsFile ? 'On' : 'Off');
   });
   document.getElementById('settings-weather-link').addEventListener('click', async () => {
     weatherEnabled = !weatherEnabled;
     await saveWeatherEnabled();
-    document.getElementById('settings-weather-link').classList.toggle('active', weatherEnabled);
+    toggleStatus('settings-weather-link', weatherEnabled, weatherEnabled ? 'On' : 'Off');
   });
   document.getElementById('settings-debug-link').addEventListener('click', async () => {
     debugModeEnabled = !debugModeEnabled;
     await saveDebugMode();
-    document.getElementById('settings-debug-link').classList.toggle('active', debugModeEnabled);
+    toggleStatus('settings-debug-link', debugModeEnabled, debugModeEnabled ? 'On' : 'Off');
+  });
+  // These three are genuine bidirectional toggles now, not one-way
+  // "restore" actions — tapping hides the card if it's showing, or
+  // brings it back if it's hidden, matching every other toggle in this
+  // grid rather than only ever appearing once something's already been
+  // dismissed elsewhere.
+  document.getElementById('settings-payday-visibility-link').addEventListener('click', async () => {
+    if (dismissedMonths[currentPeriodStartKey]) delete dismissedMonths[currentPeriodStartKey];
+    else dismissedMonths[currentPeriodStartKey] = true;
+    await saveDismissedMonths();
+    const nowVisible = !dismissedMonths[currentPeriodStartKey];
+    toggleStatus('settings-payday-visibility-link', nowVisible, nowVisible ? 'Visible' : 'Hidden');
+  });
+  document.getElementById('settings-parking-savings-visibility-link').addEventListener('click', async () => {
+    if (dismissedParkingSavingsPeriods[currentPeriodStartKey]) delete dismissedParkingSavingsPeriods[currentPeriodStartKey];
+    else dismissedParkingSavingsPeriods[currentPeriodStartKey] = true;
+    await saveDismissedParkingSavingsPeriods();
+    const nowVisible = !dismissedParkingSavingsPeriods[currentPeriodStartKey];
+    toggleStatus('settings-parking-savings-visibility-link', nowVisible, nowVisible ? 'Visible' : 'Hidden');
+  });
+  document.getElementById('settings-spending-visibility-link').addEventListener('click', async () => {
+    ticketsSpentCardDismissed = !ticketsSpentCardDismissed;
+    await saveTicketsSpentCardDismissed();
+    const nowVisible = !ticketsSpentCardDismissed;
+    toggleStatus('settings-spending-visibility-link', nowVisible, nowVisible ? 'Visible' : 'Hidden');
   });
   document.getElementById('settings-gcal-link').addEventListener('click', async () => {
     if (gcalEnabled){
@@ -3723,9 +3747,7 @@ function openSettingsMenu(){
       // today/todayKey aren't available here the way they are inside
       // render() itself (where this logic used to live) — recomputed
       // the same way render() does, rather than assuming a global.
-      const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
-      const todayKey = fmtKey(today);
-      const nb = findNextBuyDateKey(today, todayKey);
+      const nb = findNextBuyDateKey(today, fmtKey(today));
       if (nb){ gcalPendingSync = true; await syncGoogleCalendarEvent(nb); }
       render();
     }
