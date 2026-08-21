@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.17:31'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.17:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3696,7 +3696,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-21.17:31*
+*Last updated: v2026-08-21.17:58*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -3710,6 +3710,7 @@ const BACKLOG_MD = `
 10. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
 11. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
 12. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
+13. **Destination picker for search-tracked (non-configured) trains** — the tracked-to-station platform/atd-ata accuracy check (built for Crewe) only ever fires for one of the five hardcoded \`railTrains\` routes, because it's keyed entirely off \`train.toLoc\`, and that's only ever set for those. A train tracked from a station search (e.g. Stockport → wherever) opens with just \`{ label, fromLoc, serviceId }\` — no destination captured anywhere, so every calling point past the origin misses out, not just the physical end of the journey. Fix: when tracking a searched train, let the user pick which calling point is their actual destination (defaulting to none), store it as \`toLoc\` on the tracked-train entry the same way a configured route already has one — the existing platform/notification logic should then apply with no further changes. Raised heading into the Christmas period, when off-usual-route journeys (e.g. into Manchester for shopping) are more likely than normal.
 `;
 
 function openHelpGuide(){
