@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.16:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.16:47'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3696,7 +3696,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-21.16:41*
+*Last updated: v2026-08-21.16:47*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -6413,15 +6413,26 @@ function openTrainProgress(train, service){
   let showRawDebug = false; // off by default — a temporary diagnostic toggle, not for normal use
   let showAllReasons = false; // manual override for the staleness-suppression heuristic, in case it's wrong on a given service
   let lastKnownService = service; // lets the debug toggle rebuild instantly without a fresh network call
-  // Latest stationBoardForService results (the pure dep/arr board lookups
-  // used for platform-change/departed-arrived notifications — one for
-  // the tracked-from station, one for the tracked-to station), kept here
-  // purely so toggling raw-debug on shows the most recent values
-  // straight away rather than waiting for the next poll cycle.
-  let lastBoardDebugFrom = null; // { crs, boardType, data }
-  let lastBoardDebugTo = null;   // { crs, boardType, data }
+  // Latest stationBoardForService outcome for each lookup (the pure
+  // dep/arr board checks used for platform-change/departed-arrived
+  // notifications — one for the tracked-from station, one for the
+  // tracked-to station), kept here purely so toggling raw-debug on
+  // shows the most recent values straight away rather than waiting for
+  // the next poll cycle. Each entry is one of three genuinely different
+  // outcomes — matched (data present), explicitly not on that board
+  // right now (data: null, not an error — see fetchStationBoardForService's
+  // own docblock), or an actual fetch/validation failure (error set) —
+  // and the debug line needs to say which, rather than only ever
+  // showing the matched case and silently vanishing for the other two.
+  // That silent collapse is exactly what made this hard to diagnose:
+  // a normal "dropped off this board's rolling window" and a genuine
+  // "the Worker rejected the request" looked identical from here.
+  let lastBoardDebugFrom = null; // { crs, boardType, data, error }
+  let lastBoardDebugTo = null;   // { crs, boardType, data, error }
   function formatBoardDebugLine(entry){
-    if (!entry || !entry.data) return null;
+    if (!entry) return null;
+    if (entry.error) return `${entry.crs}/${entry.boardType}  ERROR: ${entry.error}`;
+    if (!entry.data) return `${entry.crs}/${entry.boardType}  not currently on this board`;
     const d = entry.data;
     return [
       `${entry.crs}/${entry.boardType}`, `std=${d.std ?? '·'}`, `etd=${d.etd ?? '·'}`,
@@ -6811,19 +6822,23 @@ function openTrainProgress(train, service){
         // call above only reads whatever calling-point data it happened
         // to return, which is exactly the staleness problem this whole
         // feature was built to work around, just left unfixed for every
-        // point except the origin. Both fire-and-forget: a failure in
-        // either should never affect the progress screen itself, which
-        // already has its own error handling above and keeps working
-        // regardless.
+        // point except the origin. Both fire-and-forget as far as the
+        // main progress screen goes — a failure here should never break
+        // it, that error handling above stands on its own — but a
+        // failure IS recorded into the debug state below, so raw-debug
+        // mode can actually show what went wrong rather than nothing.
         if (serviceId && train.fromLoc){
           const boardTypeForHere = fresh.departsHere ? 'dep' : 'arr';
           fetchStationBoardForService(train.fromLoc, boardTypeForHere, serviceId)
             .then(boardData => {
-              lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, data: boardData };
+              lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, data: boardData, error: null };
               updateBoardDebugPanel();
               diffAndNotifyJourneyState(`${serviceId}:${train.fromLoc}`, displayLabel, boardTypeForHere, boardData);
             })
-            .catch(() => { /* silent — this is a supplementary check, not the main refresh */ });
+            .catch(err => {
+              lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, data: null, error: err.message };
+              updateBoardDebugPanel();
+            });
         }
         if (serviceId && train.toLoc && train.toLoc !== train.fromLoc){
           // Always 'arr' — the tracked-to station is by definition where
@@ -6832,11 +6847,14 @@ function openTrainProgress(train, service){
           // the physical train carries on further afterward.
           fetchStationBoardForService(train.toLoc, 'arr', serviceId)
             .then(boardData => {
-              lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', data: boardData };
+              lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', data: boardData, error: null };
               updateBoardDebugPanel();
               diffAndNotifyJourneyState(`${serviceId}:${train.toLoc}`, `${displayLabel} (arrival)`, 'arr', boardData);
             })
-            .catch(() => { /* silent — this is a supplementary check, not the main refresh */ });
+            .catch(err => {
+              lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', data: null, error: err.message };
+              updateBoardDebugPanel();
+            });
         }
         if (fresh.journeyFinished){
           // Arrived, or terminated early with nothing left ahead that
