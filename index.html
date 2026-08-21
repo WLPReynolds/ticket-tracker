@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.08:28'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.13:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1059,6 +1059,18 @@ let parkedDays = {};
 // card, so dismissing it for one period and having it naturally
 // reappear next period makes the same sense there too.
 let dismissedParkingSavingsPeriods = {};
+// periodStartKey -> saved/over-budget total (a plain number, can be
+// negative), locked in the first time a period is seen to have already
+// ended — mirrors paydayEstimateSnapshots' "lock it in and never
+// recalculate" approach, so a comment edited or a parked-day re-tagged
+// after the fact doesn't retroactively change what a past period showed.
+let parkingSavingsSnapshots = {};
+// 0 = the real current period; negative = that many periods back. Never
+// positive — unlike the payday estimate's preview-ahead nav, there's no
+// "future" parking savings to show, only periods that have actually
+// happened, so forward browsing is capped at the current period. Not
+// persisted, same as estimateOffset — always starts back at 0 on reload.
+let parkingSavingsOffset = 0;
 // A simple global flag, not period-scoped like the two above — "spent
 // this year" has no natural per-period reset point the way a payday or
 // parking figure does, so there's nothing sensible to key a dismissal
@@ -1501,6 +1513,10 @@ async function loadData(){
     dismissedParkingSavingsPeriods = dps ? JSON.parse(dps) : {};
   }catch(e){ dismissedParkingSavingsPeriods = {}; }
   try{
+    const pss = localStorage.getItem('parking-savings-snapshots');
+    parkingSavingsSnapshots = pss ? JSON.parse(pss) : {};
+  }catch(e){ parkingSavingsSnapshots = {}; }
+  try{
     const tscd = localStorage.getItem('tickets-spent-card-dismissed');
     ticketsSpentCardDismissed = tscd ? JSON.parse(tscd) : false;
   }catch(e){ ticketsSpentCardDismissed = false; }
@@ -1681,6 +1697,10 @@ async function saveParkedDays(){
 }
 async function saveDismissedParkingSavingsPeriods(){
   try{ localStorage.setItem('dismissed-parking-savings-periods', JSON.stringify(dismissedParkingSavingsPeriods)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveParkingSavingsSnapshots(){
+  try{ localStorage.setItem('parking-savings-snapshots', JSON.stringify(parkingSavingsSnapshots)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveTicketsSpentCardDismissed(){
@@ -2743,6 +2763,40 @@ function render(){
   const realCurrentPeriod = getPayPeriodByOffset(today, 0);
   const parkingSavedThisPeriod = computeExpenseSavingsForPeriod(realCurrentPeriod.start, realCurrentPeriod.end, today, parkedDays, parkingCost);
 
+  // Lock in the immediately preceding period's figure the first time
+  // it's seen after ticking over, same reasoning as the payday
+  // snapshot — once a period is done, its "saved" total shouldn't keep
+  // drifting if a comment or parked-day gets edited afterwards. This
+  // only catches the period right before the current one on each
+  // render; older, skipped-over periods still get locked in (with the
+  // same live-computed value they'd have had at rollover, since past
+  // days don't change) the first time they're actually viewed below.
+  const prevParkingPeriod = getPayPeriodByOffset(today, -1);
+  const prevParkingPeriodStartKey = fmtKey(prevParkingPeriod.start);
+  if (parkingSavingsSnapshots[prevParkingPeriodStartKey] === undefined){
+    parkingSavingsSnapshots[prevParkingPeriodStartKey] = computeExpenseSavingsForPeriod(prevParkingPeriod.start, prevParkingPeriod.end, today, parkedDays, parkingCost);
+    saveParkingSavingsSnapshots();
+  }
+
+  // The period actually being displayed on the card, per its own nav
+  // arrows — offset 0 is always the real current period (live, never
+  // snapshotted, since it's still evolving); anything further back
+  // reads from the locked-in snapshot, computing and locking it on the
+  // spot if this is the first time it's being viewed.
+  const psPeriod = parkingSavingsOffset === 0 ? realCurrentPeriod : getPayPeriodByOffset(today, parkingSavingsOffset);
+  const psPeriodStartKey = fmtKey(psPeriod.start);
+  let parkingSavingsCardValue;
+  if (parkingSavingsOffset === 0){
+    parkingSavingsCardValue = parkingSavedThisPeriod;
+  } else if (parkingSavingsSnapshots[psPeriodStartKey] !== undefined){
+    parkingSavingsCardValue = parkingSavingsSnapshots[psPeriodStartKey];
+  } else {
+    parkingSavingsCardValue = computeExpenseSavingsForPeriod(psPeriod.start, psPeriod.end, today, parkedDays, parkingCost);
+    parkingSavingsSnapshots[psPeriodStartKey] = parkingSavingsCardValue;
+    saveParkingSavingsSnapshots();
+  }
+  const parkingSavingsWindowLabel = `${dateLabelShort(psPeriod.start)} – ${dateLabelShort(psPeriod.end)}`;
+
   const rows = days.map(d => {
     const key = fmtKey(d);
     let s = states[key];
@@ -2892,10 +2946,15 @@ function render(){
     <div class="holiday-card" id="parking-savings-card">
       <div class="holiday-info" style="width:100%;">
         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-          <div class="holiday-label">Parking savings this period</div>
+          <div class="holiday-label">Parking savings${parkingSavingsOffset === 0 ? ' this period' : ''}</div>
           <span id="parking-savings-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
         </div>
-        <div class="holiday-date" style="font-size:22px; font-weight:600; color:${parkingSavedThisPeriod >= 0 ? 'var(--good)' : '#ff8b7e'}; margin-top:8px;">${parkingSavedThisPeriod >= 0 ? '£' + parkingSavedThisPeriod.toFixed(2) + ' saved' : '£' + Math.abs(parkingSavedThisPeriod).toFixed(2) + ' over budget'}</div>
+        <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+          <span class="cal-nav-btn" id="parking-savings-prev" style="width:24px; height:24px; font-size:13px;">&#8249;</span>
+          <div class="holiday-label" style="margin:0; font-weight:600; color:var(--ink);">${parkingSavingsWindowLabel}</div>
+          <span class="cal-nav-btn ${parkingSavingsOffset === 0 ? 'disabled' : ''}" id="parking-savings-next" style="width:24px; height:24px; font-size:13px; ${parkingSavingsOffset === 0 ? 'opacity:0.35; pointer-events:none;' : ''}">&#8250;</span>
+        </div>
+        <div class="holiday-date" style="font-size:22px; font-weight:600; color:${parkingSavingsCardValue >= 0 ? 'var(--good)' : '#ff8b7e'}; margin-top:8px;">${parkingSavingsCardValue >= 0 ? '£' + parkingSavingsCardValue.toFixed(2) + ' saved' : '£' + Math.abs(parkingSavingsCardValue).toFixed(2) + ' over budget'}</div>
       </div>
     </div>` : ''}
 
@@ -3238,6 +3297,20 @@ function render(){
       e.stopPropagation();
       dismissedParkingSavingsPeriods[fmtKey(realCurrentPeriod.start)] = true;
       await saveDismissedParkingSavingsPeriods();
+      render();
+    });
+  }
+  const parkingSavingsPrevBtn = document.getElementById('parking-savings-prev');
+  if (parkingSavingsPrevBtn){
+    parkingSavingsPrevBtn.addEventListener('click', () => {
+      parkingSavingsOffset -= 1;
+      render();
+    });
+  }
+  const parkingSavingsNextBtn = document.getElementById('parking-savings-next');
+  if (parkingSavingsNextBtn){
+    parkingSavingsNextBtn.addEventListener('click', () => {
+      parkingSavingsOffset = Math.min(0, parkingSavingsOffset + 1); // never past the current period
       render();
     });
   }
@@ -4164,8 +4237,8 @@ function openDayReturnPriceEditor(){
 const BACKUP_KEYS = [
   'bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
   'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id',
-  'gcal-enabled','gcal-event-id','gcal-pending-sync','parked-days','payday-estimate-snapshots',
-  'poll-before-departure-min','poll-check-in-interval-min','preferred-google-email',
+  'gcal-enabled','gcal-event-id','gcal-pending-sync','parked-days','parking-savings-snapshots',
+  'payday-estimate-snapshots','poll-before-departure-min','poll-check-in-interval-min','preferred-google-email',
   'produce-claim-details-file','rail-perf-cache','rail-trains','smartcard-number',
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
   'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
