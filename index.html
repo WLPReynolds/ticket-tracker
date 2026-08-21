@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.16:47'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.17:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3696,7 +3696,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-21.16:47*
+*Last updated: v2026-08-21.17:00*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -5646,19 +5646,26 @@ async function saveLastSeenJourneyState(){
 
 // Queries the pure departures-only or arrivals-only board (never the
 // combined one — that's the whole reason this query type exists) for
-// one specific service, matched server-side in the Worker by serviceID
-// so this function doesn't need to know Darwin's raw board shape at
-// all. Returns null — not a thrown error — when the service simply
-// isn't on that board right now (too far out, or already dropped off
-// it); that's an expected, ordinary outcome, not a failure. This is the
-// exact same Worker query a future Wear OS client would call too, so
-// the RID/serviceID matching logic only ever needs to exist once, in
-// the Worker, rather than being duplicated here and there.
-async function fetchStationBoardForService(crs, boardType, serviceId){
+// one specific service, matched server-side in the Worker by scheduled
+// time (std for a departure query, sta for an arrival one) rather than
+// by serviceID — confirmed via live Cloudflare logs that each pure
+// board product mints its own serviceID scoped to that board/station,
+// not a portable one shared across Darwin products, so the same
+// physical service can carry a completely different serviceID on, say,
+// Wigan's departure board than on Crewe's arrival board. serviceId is
+// still passed through, purely so the Worker's diagnostic log (if this
+// ever needs revisiting) can show both board-scoped IDs side by side.
+// Returns null — not a thrown error — when the service simply isn't on
+// that board right now (too far out, or already dropped off it); that's
+// an expected, ordinary outcome, not a failure. This is the exact same
+// Worker query a future Wear OS client would call too, so the matching
+// logic only ever needs to exist once, in the Worker, rather than being
+// duplicated here and there.
+async function fetchStationBoardForService(crs, boardType, schedTime, serviceId){
   const resp = await fetch(DARWIN_WORKER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ queries: [{ type: 'stationBoardForService', crs, boardType, serviceId }] })
+    body: JSON.stringify({ queries: [{ type: 'stationBoardForService', crs, boardType, schedTime, serviceId }] })
   });
   if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
   const data = await resp.json();
@@ -5707,6 +5714,24 @@ function diffAndNotifyJourneyState(stateKey, label, boardType, freshData){
   saveLastSeenJourneyState();
 }
 
+// Finds one calling point's own scheduled time (st) by CRS, searching
+// both previousCallingPoints and subsequentCallingPoints — used to get
+// a schedTime for stationBoardForService at a station that isn't the
+// "here" station buildTrainProgress already reads service.std/sta for
+// directly (e.g. a configured train.toLoc partway or further down the
+// same physical service's calling points). Returns null if that CRS
+// isn't a calling point on this service at all, or has no scheduled
+// time recorded — either way, nothing to match a board lookup against.
+function findCallingPointSchedTime(service, crs){
+  if (!service || !crs) return null;
+  const lists = [service.previousCallingPoints, service.subsequentCallingPoints];
+  for (const list of lists){
+    const points = (list && list[0] && list[0].callingPoint) ? list[0].callingPoint : [];
+    const found = points.find(cp => cp.crs === crs);
+    if (found && found.st) return found.st;
+  }
+  return null;
+}
 
 function describePointStatusRemembered(serviceId, pointKey, schedTime, liveTime, isCancelled){
   const status = describePointStatus(schedTime, liveTime, isCancelled);
@@ -6427,15 +6452,16 @@ function openTrainProgress(train, service){
   // That silent collapse is exactly what made this hard to diagnose:
   // a normal "dropped off this board's rolling window" and a genuine
   // "the Worker rejected the request" looked identical from here.
-  let lastBoardDebugFrom = null; // { crs, boardType, data, error }
-  let lastBoardDebugTo = null;   // { crs, boardType, data, error }
+  let lastBoardDebugFrom = null; // { crs, boardType, schedTime, data, error }
+  let lastBoardDebugTo = null;   // { crs, boardType, schedTime, data, error }
   function formatBoardDebugLine(entry){
     if (!entry) return null;
-    if (entry.error) return `${entry.crs}/${entry.boardType}  ERROR: ${entry.error}`;
-    if (!entry.data) return `${entry.crs}/${entry.boardType}  not currently on this board`;
+    const tag = `${entry.crs}/${entry.boardType}[${entry.schedTime ?? '?'}]`;
+    if (entry.error) return `${tag}  ERROR: ${entry.error}`;
+    if (!entry.data) return `${tag}  not currently on this board`;
     const d = entry.data;
     return [
-      `${entry.crs}/${entry.boardType}`, `std=${d.std ?? '·'}`, `etd=${d.etd ?? '·'}`,
+      tag, `std=${d.std ?? '·'}`, `etd=${d.etd ?? '·'}`,
       `atd=${d.atd ?? '·'}`, `sta=${d.sta ?? '·'}`, `eta=${d.eta ?? '·'}`,
       `ata=${d.ata ?? '·'}`, `platform=${d.platform ?? '·'}`,
     ].join('  ');
@@ -6827,34 +6853,51 @@ function openTrainProgress(train, service){
         // it, that error handling above stands on its own — but a
         // failure IS recorded into the debug state below, so raw-debug
         // mode can actually show what went wrong rather than nothing.
+        // Matched by scheduled time now, not serviceID — confirmed via
+        // live Cloudflare logs (2026-08-21) that each pure board product
+        // mints its own serviceID scoped to that board/station, so the
+        // ID this app already holds for the service isn't portable to a
+        // different station's board. See fetchStationBoardForService's
+        // own docblock for the full story.
         if (serviceId && train.fromLoc){
           const boardTypeForHere = fresh.departsHere ? 'dep' : 'arr';
-          fetchStationBoardForService(train.fromLoc, boardTypeForHere, serviceId)
-            .then(boardData => {
-              lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, data: boardData, error: null };
-              updateBoardDebugPanel();
-              diffAndNotifyJourneyState(`${serviceId}:${train.fromLoc}`, displayLabel, boardTypeForHere, boardData);
-            })
-            .catch(err => {
-              lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, data: null, error: err.message };
-              updateBoardDebugPanel();
-            });
+          const hereSchedTime = boardTypeForHere === 'dep' ? freshService.std : freshService.sta;
+          if (hereSchedTime){
+            fetchStationBoardForService(train.fromLoc, boardTypeForHere, hereSchedTime, serviceId)
+              .then(boardData => {
+                lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, data: boardData, error: null };
+                updateBoardDebugPanel();
+                diffAndNotifyJourneyState(`${serviceId}:${train.fromLoc}`, displayLabel, boardTypeForHere, boardData);
+              })
+              .catch(err => {
+                lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, data: null, error: err.message };
+                updateBoardDebugPanel();
+              });
+          }
         }
         if (serviceId && train.toLoc && train.toLoc !== train.fromLoc){
           // Always 'arr' — the tracked-to station is by definition where
           // this configured route ends, so there's nothing to depart from
           // there as far as this app's own segment is concerned, even if
-          // the physical train carries on further afterward.
-          fetchStationBoardForService(train.toLoc, 'arr', serviceId)
-            .then(boardData => {
-              lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', data: boardData, error: null };
-              updateBoardDebugPanel();
-              diffAndNotifyJourneyState(`${serviceId}:${train.toLoc}`, `${displayLabel} (arrival)`, 'arr', boardData);
-            })
-            .catch(err => {
-              lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', data: null, error: err.message };
-              updateBoardDebugPanel();
-            });
+          // the physical train carries on further afterward. Its own
+          // scheduled time has to come from the calling-points list
+          // (findCallingPointSchedTime) rather than the service's
+          // top-level std/sta, since — unlike fromLoc — toLoc isn't
+          // necessarily the "here" station buildTrainProgress reads
+          // those top-level fields for.
+          const toSchedTime = findCallingPointSchedTime(freshService, train.toLoc);
+          if (toSchedTime){
+            fetchStationBoardForService(train.toLoc, 'arr', toSchedTime, serviceId)
+              .then(boardData => {
+                lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, data: boardData, error: null };
+                updateBoardDebugPanel();
+                diffAndNotifyJourneyState(`${serviceId}:${train.toLoc}`, `${displayLabel} (arrival)`, 'arr', boardData);
+              })
+              .catch(err => {
+                lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, data: null, error: err.message };
+                updateBoardDebugPanel();
+              });
+          }
         }
         if (fresh.journeyFinished){
           // Arrived, or terminated early with nothing left ahead that
