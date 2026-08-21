@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.15:51'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.16:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3696,7 +3696,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-21.15:51*
+*Last updated: v2026-08-21.16:41*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -3706,11 +3706,10 @@ const BACKLOG_MD = `
 6. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
 7. **500m geofence radius likely too wide for the boarding-side silent detection/prompt** — now two real data points, both false positives. The first (403m) was a dropped pin near the station. The second, more telling one: a genuine office on the person's own walk route to the station, measured at 185m — comfortably inside even a much tighter radius than 500m. Genuine trade-off, not a simple number change: shrinking the radius reduces false positives like these, but risks reintroducing missed detections on the platform itself, since GPS accuracy in a station environment (tall buildings, sometimes indoor/underground platforms) can itself be poor. Needs a decision on how much to tighten, or whether a different signal entirely (e.g. dwell time / position stability, not just a single distance check) would serve better — worth a proper discussion rather than picking a number blind.
 8. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
-9. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #8. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #8.
-10. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
-11. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
-12. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
-13. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
+9. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
+10. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
+11. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
+12. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
 `;
 
 function openHelpGuide(){
@@ -5618,20 +5617,26 @@ async function saveConfirmedPointStatusCache(){
 // deliberately just one point per journey (unlike confirmedPointStatusCache
 // above, which is per calling-point), since it exists purely to answer
 // "has platform or actual-departure/arrival status changed since we last
-// checked", which is only ever asked about the one station this app is
-// actually tracking someone from. Same persistence and lifecycle pattern
-// as confirmedPointStatusCache: saved to localStorage, pruned whenever
+// checked", which is asked about independently for the tracked-from
+// station and (see below) the tracked-to station of a journey, not just
+// one point per journey. Same persistence and lifecycle pattern as
+// confirmedPointStatusCache: saved to localStorage, pruned whenever
 // trackedTrains shrinks, tied to that list's own lifetime rather than
 // the calendar day.
-let lastSeenJourneyState = new Map(); // serviceId -> { platform, hasConfirmed, boardType }
+let lastSeenJourneyState = new Map(); // `${serviceId}:${crs}` -> { platform, hasConfirmed, boardType }
 
 // Same mirroring rule as pruneConfirmedPointStatusCache — this never
 // adds its own expiry, it only ever tracks whatever trackedTrains
-// currently contains.
+// currently contains. Keys are `${serviceId}:${crs}` now (one journey
+// can hold both a from-station and a to-station entry), so the
+// serviceId is recovered by splitting on the first colon — serviceId
+// itself never contains one (SERVICE_ID_PATTERN in the Worker only
+// allows letters/digits/underscore).
 function pruneLastSeenJourneyState(){
   const liveServiceIds = new Set(trackedTrains.map(t => t.serviceId));
-  for (const serviceId of Array.from(lastSeenJourneyState.keys())){
-    if (!liveServiceIds.has(serviceId)) lastSeenJourneyState.delete(serviceId);
+  for (const stateKey of Array.from(lastSeenJourneyState.keys())){
+    const serviceId = stateKey.slice(0, stateKey.indexOf(':'));
+    if (!liveServiceIds.has(serviceId)) lastSeenJourneyState.delete(stateKey);
   }
 }
 async function saveLastSeenJourneyState(){
@@ -5678,14 +5683,14 @@ async function fetchStationBoardForService(crs, boardType, serviceId){
 // someone for. Written with no DOM access at all, so it's reusable
 // as-is by a future Wear OS client polling the same Worker endpoint —
 // only the notification mechanism at the end would ever need to differ.
-function diffAndNotifyJourneyState(serviceId, label, boardType, freshData){
-  if (!serviceId || !freshData) return;
+function diffAndNotifyJourneyState(stateKey, label, boardType, freshData){
+  if (!stateKey || !freshData) return;
 
   const isDeparture = boardType === 'dep';
   const platform = freshData.platform || null;
   const hasConfirmed = !!(isDeparture ? freshData.atd : freshData.ata);
 
-  const prev = lastSeenJourneyState.get(serviceId);
+  const prev = lastSeenJourneyState.get(stateKey);
   if (prev){
     if (prev.platform && platform && prev.platform !== platform){
       showLocalNotification('Platform changed', `${label}: now platform ${platform} (was ${prev.platform})`);
@@ -5698,7 +5703,7 @@ function diffAndNotifyJourneyState(serviceId, label, boardType, freshData){
     }
   }
 
-  lastSeenJourneyState.set(serviceId, { platform, hasConfirmed, boardType });
+  lastSeenJourneyState.set(stateKey, { platform, hasConfirmed, boardType });
   saveLastSeenJourneyState();
 }
 
@@ -6408,23 +6413,29 @@ function openTrainProgress(train, service){
   let showRawDebug = false; // off by default — a temporary diagnostic toggle, not for normal use
   let showAllReasons = false; // manual override for the staleness-suppression heuristic, in case it's wrong on a given service
   let lastKnownService = service; // lets the debug toggle rebuild instantly without a fresh network call
-  // Latest stationBoardForService result (the pure dep/arr board lookup
-  // used for platform-change/departed-arrived notifications), kept here
-  // purely so toggling raw-debug on shows the most recent value straight
-  // away rather than waiting for the next poll cycle.
-  let lastBoardDebugType = null;
-  let lastBoardDebugData = null;
-  function updateBoardDebugPanel(){
-    const el = overlay.querySelector('#train-progress-board-debug');
-    if (!el) return;
-    if (!showRawDebug || !lastBoardDebugData){ el.style.display = 'none'; return; }
-    const d = lastBoardDebugData;
-    const fields = [
-      `board=${lastBoardDebugType}`, `std=${d.std ?? '·'}`, `etd=${d.etd ?? '·'}`,
+  // Latest stationBoardForService results (the pure dep/arr board lookups
+  // used for platform-change/departed-arrived notifications — one for
+  // the tracked-from station, one for the tracked-to station), kept here
+  // purely so toggling raw-debug on shows the most recent values
+  // straight away rather than waiting for the next poll cycle.
+  let lastBoardDebugFrom = null; // { crs, boardType, data }
+  let lastBoardDebugTo = null;   // { crs, boardType, data }
+  function formatBoardDebugLine(entry){
+    if (!entry || !entry.data) return null;
+    const d = entry.data;
+    return [
+      `${entry.crs}/${entry.boardType}`, `std=${d.std ?? '·'}`, `etd=${d.etd ?? '·'}`,
       `atd=${d.atd ?? '·'}`, `sta=${d.sta ?? '·'}`, `eta=${d.eta ?? '·'}`,
       `ata=${d.ata ?? '·'}`, `platform=${d.platform ?? '·'}`,
     ].join('  ');
-    el.textContent = fields;
+  }
+  function updateBoardDebugPanel(){
+    const el = overlay.querySelector('#train-progress-board-debug');
+    if (!el) return;
+    if (!showRawDebug){ el.style.display = 'none'; return; }
+    const lines = [formatBoardDebugLine(lastBoardDebugFrom), formatBoardDebugLine(lastBoardDebugTo)].filter(Boolean);
+    if (lines.length === 0){ el.style.display = 'none'; return; }
+    el.innerHTML = lines.join('<br>');
     el.style.display = '';
   }
   // Cleanup (below) clears the interval, but that alone can't cancel an
@@ -6787,21 +6798,43 @@ function openTrainProgress(train, service){
         // Connection's back — drop out of the offline/estimated state.
         if (offlineBanner) offlineBanner.style.display = 'none';
         if (blobEl) blobEl.classList.remove('blob-pulsing');
-        // Platform-change / departed-arrived notifications — a separate
-        // lookup against the pure dep/arr board (not the combined
+        // Platform-change / departed-arrived notifications — separate
+        // lookups against the pure dep/arr board (not the combined
         // GetServiceDetails call above), since that's the only place
-        // Darwin gives a real atd/ata. Deliberately fire-and-forget: a
-        // failure here (rate limit, service temporarily off that board)
-        // should never affect the progress screen itself, which already
-        // has its own error handling above and keeps working regardless.
+        // Darwin gives a real atd/ata or a reliably up-to-date platform.
+        // Two independent checks: the tracked-from station (fromLoc —
+        // "have I actually left"), and, when this is one of your own
+        // configured routes with a real endpoint, the tracked-to station
+        // too (toLoc — "has my platform there been confirmed/changed").
+        // Without the second one, a configured destination like Crewe
+        // would never get checked at all — the combined GetServiceDetails
+        // call above only reads whatever calling-point data it happened
+        // to return, which is exactly the staleness problem this whole
+        // feature was built to work around, just left unfixed for every
+        // point except the origin. Both fire-and-forget: a failure in
+        // either should never affect the progress screen itself, which
+        // already has its own error handling above and keeps working
+        // regardless.
         if (serviceId && train.fromLoc){
           const boardTypeForHere = fresh.departsHere ? 'dep' : 'arr';
           fetchStationBoardForService(train.fromLoc, boardTypeForHere, serviceId)
             .then(boardData => {
-              lastBoardDebugType = boardTypeForHere;
-              lastBoardDebugData = boardData;
+              lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, data: boardData };
               updateBoardDebugPanel();
-              diffAndNotifyJourneyState(serviceId, displayLabel, boardTypeForHere, boardData);
+              diffAndNotifyJourneyState(`${serviceId}:${train.fromLoc}`, displayLabel, boardTypeForHere, boardData);
+            })
+            .catch(() => { /* silent — this is a supplementary check, not the main refresh */ });
+        }
+        if (serviceId && train.toLoc && train.toLoc !== train.fromLoc){
+          // Always 'arr' — the tracked-to station is by definition where
+          // this configured route ends, so there's nothing to depart from
+          // there as far as this app's own segment is concerned, even if
+          // the physical train carries on further afterward.
+          fetchStationBoardForService(train.toLoc, 'arr', serviceId)
+            .then(boardData => {
+              lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', data: boardData };
+              updateBoardDebugPanel();
+              diffAndNotifyJourneyState(`${serviceId}:${train.toLoc}`, `${displayLabel} (arrival)`, 'arr', boardData);
             })
             .catch(() => { /* silent — this is a supplementary check, not the main refresh */ });
         }
