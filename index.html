@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.17:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.17:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3696,7 +3696,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-21.17:00*
+*Last updated: v2026-08-21.17:25*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -5759,13 +5759,40 @@ function addMinutesToTime(hhmm, mins){
 
 const TRAIN_PROGRESS_ROW_HEIGHT = 54; // px — a sensible minimum row height; actual positioning now measures real rendered rows, not this value
 
-function buildTrainProgress(train, service, showRawDebug, showAllReasons){
+function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides){
   const now = new Date();
+  boardOverrides = boardOverrides || {};
+
+  // Applied to any point (before/here/after) whose crs has a fresher
+  // result from a stationBoardForService lookup — that's the whole
+  // reason that lookup exists (the combined board used for `service`
+  // here can sit on a stale/blank platform or estimate-only time long
+  // after the pure dep/arr board already has the confirmed one), but
+  // until this merge existed, that fetched data only ever reached the
+  // debug panel and the notification check, never the row someone's
+  // actually looking at. Only overrides fields the override actually
+  // has an answer for — never blanks out perfectly good combined-board
+  // data with an absence.
+  function mergeBoardOverride(point){
+    const ov = point.crs && boardOverrides[point.crs];
+    if (!ov || !ov.data) return point;
+    const d = ov.data;
+    const isDeparture = ov.boardType === 'dep';
+    const confirmedTime = isDeparture ? d.atd : d.ata;
+    return {
+      ...point,
+      platform: d.platform || point.platform,
+      liveTime: confirmedTime || point.liveTime,
+      hasConfirmedActual: point.hasConfirmedActual || !!confirmedTime,
+      isCancelled: point.isCancelled || !!d.isCancelled,
+      reason: point.reason || d.delayReason || d.cancelReason || null,
+    };
+  }
 
   function pointsFrom(arr){
     return (arr && arr[0] && arr[0].callingPoint) ? arr[0].callingPoint : [];
   }
-  const before = pointsFrom(service.previousCallingPoints).map(cp => ({
+  const before = pointsFrom(service.previousCallingPoints).map(cp => mergeBoardOverride({
     locationName: cp.locationName,
     schedTime: cp.st,
     liveTime: cp.at || cp.et || cp.st,
@@ -5797,7 +5824,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
   const departsHere = !!(service.std || service.etd || service.atd);
   const hereSchedTime = departsHere ? service.std : service.sta;
   const hereLiveTime = departsHere ? (service.atd || service.etd || service.std) : (service.ata || service.eta || service.sta);
-  const here = [{
+  const here = [mergeBoardOverride({
     locationName: (STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc,
     schedTime: hereSchedTime,
     liveTime: hereLiveTime,
@@ -5808,8 +5835,8 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons){
     crs: train.fromLoc || null,
     hasConfirmedActual: !!(departsHere ? service.atd : service.ata),
     raw: { std: service.std, sta: service.sta, etd: service.etd, eta: service.eta, atd: service.atd, ata: service.ata },
-  }];
-  const after = pointsFrom(service.subsequentCallingPoints).map(cp => ({
+  })];
+  const after = pointsFrom(service.subsequentCallingPoints).map(cp => mergeBoardOverride({
     locationName: cp.locationName,
     schedTime: cp.st,
     // Darwin's before/after split is fixed relative to the station you
@@ -6454,6 +6481,14 @@ function openTrainProgress(train, service){
   // "the Worker rejected the request" looked identical from here.
   let lastBoardDebugFrom = null; // { crs, boardType, schedTime, data, error }
   let lastBoardDebugTo = null;   // { crs, boardType, schedTime, data, error }
+  // Feeds buildTrainProgress's mergeBoardOverride — the same fetched
+  // pure-board data that drives the debug panel and notifications above,
+  // now also applied to the actual rendered row for that station. Keyed
+  // by crs (not by from/to role) since buildTrainProgress just needs to
+  // look a point's own crs up directly. { data, boardType } per entry —
+  // same shape as one debug entry, minus the debug-only crs/schedTime
+  // fields.
+  let boardOverrides = {};
   function formatBoardDebugLine(entry){
     if (!entry) return null;
     const tag = `${entry.crs}/${entry.boardType}[${entry.schedTime ?? '?'}]`;
@@ -6501,7 +6536,7 @@ function openTrainProgress(train, service){
   // overlay markup) because the label below now needs to know whether
   // this station genuinely has its own departure, or whether the
   // tracked/searched station turned out to be an arrival-only point.
-  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons);
+  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides);
   // A configured train's own .label is just its departure time (e.g.
   // "17:31") — fine for the compact board row it came from, but not
   // enough detail once it's the title of this screen, or sitting in the
@@ -6676,7 +6711,7 @@ function openTrainProgress(train, service){
   applyWeather(initial.weatherPoints, initial.lastPassedIdx, initial.fraction, renderGeneration);
 
   function rebuildDisplay(){
-    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
+    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides);
     const rowsEl = overlay.querySelector('#train-progress-rows');
     const summaryEl = overlay.querySelector('#train-progress-summary');
     if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
@@ -6815,7 +6850,7 @@ function openTrainProgress(train, service){
       if (!instanceActive) return;
       if (freshService){
         lastKnownService = freshService;
-        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons);
+        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons, boardOverrides);
         const rowsEl = overlay.querySelector('#train-progress-rows');
         const summaryEl = overlay.querySelector('#train-progress-summary');
         const pillEl = overlay.querySelector('#train-progress-reverse-pill');
@@ -6868,6 +6903,15 @@ function openTrainProgress(train, service){
                 lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, data: boardData, error: null };
                 updateBoardDebugPanel();
                 diffAndNotifyJourneyState(`${serviceId}:${train.fromLoc}`, displayLabel, boardTypeForHere, boardData);
+                // Actually reflect it in the row someone's looking at, not
+                // just the debug panel and the notification check —
+                // rebuildDisplay() re-runs buildTrainProgress against the
+                // last-known combined data, but now with this fresher
+                // per-station data merged in on top of it.
+                if (boardData){
+                  boardOverrides = { ...boardOverrides, [train.fromLoc]: { data: boardData, boardType: boardTypeForHere } };
+                  rebuildDisplay();
+                }
               })
               .catch(err => {
                 lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, data: null, error: err.message };
@@ -6892,6 +6936,10 @@ function openTrainProgress(train, service){
                 lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, data: boardData, error: null };
                 updateBoardDebugPanel();
                 diffAndNotifyJourneyState(`${serviceId}:${train.toLoc}`, `${displayLabel} (arrival)`, 'arr', boardData);
+                if (boardData){
+                  boardOverrides = { ...boardOverrides, [train.toLoc]: { data: boardData, boardType: 'arr' } };
+                  rebuildDisplay();
+                }
               })
               .catch(err => {
                 lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, data: null, error: err.message };
@@ -6930,7 +6978,7 @@ function openTrainProgress(train, service){
       // point times compared against the real current clock — re-run it
       // against the last data we did get, so the blob keeps creeping
       // forward on a reasonable assumption rather than sitting frozen.
-      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons);
+      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides);
       const rowsEl = overlay.querySelector('#train-progress-rows');
       const summaryEl = overlay.querySelector('#train-progress-summary');
       const offlineBanner = overlay.querySelector('#train-progress-offline-banner');
