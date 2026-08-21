@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.13:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.15:51'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1633,6 +1633,11 @@ async function loadData(){
     pruneConfirmedPointStatusCache(); // trackedTrains is already fully loaded/filtered by this point above
   }catch(e){ confirmedPointStatusCache = new Map(); }
   try{
+    const lsjs = localStorage.getItem('last-seen-journey-state');
+    lastSeenJourneyState = lsjs ? new Map(JSON.parse(lsjs)) : new Map();
+    pruneLastSeenJourneyState(); // trackedTrains is already fully loaded/filtered by this point above
+  }catch(e){ lastSeenJourneyState = new Map(); }
+  try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
   }catch(e){ periodStart = DEFAULT_PERIOD_START; }
@@ -1786,6 +1791,8 @@ async function saveTrackedTrains(){
   // belongs to, however that train's entry came to be removed.
   pruneConfirmedPointStatusCache();
   saveConfirmedPointStatusCache();
+  pruneLastSeenJourneyState();
+  saveLastSeenJourneyState();
 }
 async function savePeriodStart(){
   try{ localStorage.setItem('ticket-period-start', JSON.stringify(periodStart)); }
@@ -3689,7 +3696,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-21.08:28*
+*Last updated: v2026-08-21.15:51*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -5606,6 +5613,95 @@ async function saveConfirmedPointStatusCache(){
   catch(e){ /* save failed silently; will retry next change */ }
 }
 
+// Last confirmed { platform, hasConfirmed, boardType } seen at the
+// *tracked-from* station for a journey, keyed by serviceId — this is
+// deliberately just one point per journey (unlike confirmedPointStatusCache
+// above, which is per calling-point), since it exists purely to answer
+// "has platform or actual-departure/arrival status changed since we last
+// checked", which is only ever asked about the one station this app is
+// actually tracking someone from. Same persistence and lifecycle pattern
+// as confirmedPointStatusCache: saved to localStorage, pruned whenever
+// trackedTrains shrinks, tied to that list's own lifetime rather than
+// the calendar day.
+let lastSeenJourneyState = new Map(); // serviceId -> { platform, hasConfirmed, boardType }
+
+// Same mirroring rule as pruneConfirmedPointStatusCache — this never
+// adds its own expiry, it only ever tracks whatever trackedTrains
+// currently contains.
+function pruneLastSeenJourneyState(){
+  const liveServiceIds = new Set(trackedTrains.map(t => t.serviceId));
+  for (const serviceId of Array.from(lastSeenJourneyState.keys())){
+    if (!liveServiceIds.has(serviceId)) lastSeenJourneyState.delete(serviceId);
+  }
+}
+async function saveLastSeenJourneyState(){
+  try{ localStorage.setItem('last-seen-journey-state', JSON.stringify(Array.from(lastSeenJourneyState.entries()))); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+
+// Queries the pure departures-only or arrivals-only board (never the
+// combined one — that's the whole reason this query type exists) for
+// one specific service, matched server-side in the Worker by serviceID
+// so this function doesn't need to know Darwin's raw board shape at
+// all. Returns null — not a thrown error — when the service simply
+// isn't on that board right now (too far out, or already dropped off
+// it); that's an expected, ordinary outcome, not a failure. This is the
+// exact same Worker query a future Wear OS client would call too, so
+// the RID/serviceID matching logic only ever needs to exist once, in
+// the Worker, rather than being duplicated here and there.
+async function fetchStationBoardForService(crs, boardType, serviceId){
+  const resp = await fetch(DARWIN_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queries: [{ type: 'stationBoardForService', crs, boardType, serviceId }] })
+  });
+  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
+  const data = await resp.json();
+  const r = (data.results || [])[0];
+  if (!r || !r.ok){
+    const detail = r
+      ? `${r.reason || 'request failed'}${r.status ? ` (status ${r.status})` : ''}`
+      : 'no response from worker';
+    throw new Error(detail);
+  }
+  return r.data || null; // null here means "not currently on this board" — see docblock above, not a failure
+}
+
+// Compares a fresh stationBoardForService result against what was last
+// seen for this journey and fires exactly two kinds of notification:
+// the platform changing (including being confirmed for the first time),
+// and the point going from "not yet actual" to "actual" (departed, or
+// arrived, depending on which board this came from). Everything else —
+// an estimate shifting by a few minutes, delay-reason wording changing —
+// is deliberately left alone; the progress screen itself already shows
+// that visually, and it's not the kind of thing worth interrupting
+// someone for. Written with no DOM access at all, so it's reusable
+// as-is by a future Wear OS client polling the same Worker endpoint —
+// only the notification mechanism at the end would ever need to differ.
+function diffAndNotifyJourneyState(serviceId, label, boardType, freshData){
+  if (!serviceId || !freshData) return;
+
+  const isDeparture = boardType === 'dep';
+  const platform = freshData.platform || null;
+  const hasConfirmed = !!(isDeparture ? freshData.atd : freshData.ata);
+
+  const prev = lastSeenJourneyState.get(serviceId);
+  if (prev){
+    if (prev.platform && platform && prev.platform !== platform){
+      showLocalNotification('Platform changed', `${label}: now platform ${platform} (was ${prev.platform})`);
+    } else if (!prev.platform && platform){
+      showLocalNotification('Platform confirmed', `${label}: platform ${platform}`);
+    }
+    if (!prev.hasConfirmed && hasConfirmed){
+      const verb = isDeparture ? 'departed' : 'arrived';
+      showLocalNotification(isDeparture ? 'Train departed' : 'Train arrived', `${label} has ${verb}${platform ? ` — platform ${platform}` : ''}`);
+    }
+  }
+
+  lastSeenJourneyState.set(serviceId, { platform, hasConfirmed, boardType });
+  saveLastSeenJourneyState();
+}
+
 
 function describePointStatusRemembered(serviceId, pointKey, schedTime, liveTime, isCancelled){
   const status = describePointStatus(schedTime, liveTime, isCancelled);
@@ -6312,6 +6408,25 @@ function openTrainProgress(train, service){
   let showRawDebug = false; // off by default — a temporary diagnostic toggle, not for normal use
   let showAllReasons = false; // manual override for the staleness-suppression heuristic, in case it's wrong on a given service
   let lastKnownService = service; // lets the debug toggle rebuild instantly without a fresh network call
+  // Latest stationBoardForService result (the pure dep/arr board lookup
+  // used for platform-change/departed-arrived notifications), kept here
+  // purely so toggling raw-debug on shows the most recent value straight
+  // away rather than waiting for the next poll cycle.
+  let lastBoardDebugType = null;
+  let lastBoardDebugData = null;
+  function updateBoardDebugPanel(){
+    const el = overlay.querySelector('#train-progress-board-debug');
+    if (!el) return;
+    if (!showRawDebug || !lastBoardDebugData){ el.style.display = 'none'; return; }
+    const d = lastBoardDebugData;
+    const fields = [
+      `board=${lastBoardDebugType}`, `std=${d.std ?? '·'}`, `etd=${d.etd ?? '·'}`,
+      `atd=${d.atd ?? '·'}`, `sta=${d.sta ?? '·'}`, `eta=${d.eta ?? '·'}`,
+      `ata=${d.ata ?? '·'}`, `platform=${d.platform ?? '·'}`,
+    ].join('  ');
+    el.textContent = fields;
+    el.style.display = '';
+  }
   // Cleanup (below) clears the interval, but that alone can't cancel an
   // already-in-flight doRefresh() that's mid-await — without this flag,
   // that stale call could still resolve afterward and write into
@@ -6420,6 +6535,7 @@ function openTrainProgress(train, service){
         <div id="train-progress-refresh-fill" style="height:100%; width:0%; background:var(--amber);"></div>
       </div>
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
+      <div id="train-progress-board-debug" style="display:none; font-family:monospace; font-size:10px; color:#6a7a8a; text-align:right; margin-top:-6px; margin-bottom:10px;"></div>
       <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
       <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:10px;">${initial.summaryHtml}</div>
       <div id="train-progress-reason-toggle-wrap" style="margin-bottom:10px; ${initial.anyReasonSuppressed ? '' : 'display:none;'}">
@@ -6533,6 +6649,7 @@ function openTrainProgress(train, service){
       showRawDebug = !showRawDebug;
       rawDebugToggle.textContent = showRawDebug ? 'Hide raw data' : 'Show raw data';
       rebuildDisplay();
+      updateBoardDebugPanel();
     });
   }
 
@@ -6670,6 +6787,24 @@ function openTrainProgress(train, service){
         // Connection's back — drop out of the offline/estimated state.
         if (offlineBanner) offlineBanner.style.display = 'none';
         if (blobEl) blobEl.classList.remove('blob-pulsing');
+        // Platform-change / departed-arrived notifications — a separate
+        // lookup against the pure dep/arr board (not the combined
+        // GetServiceDetails call above), since that's the only place
+        // Darwin gives a real atd/ata. Deliberately fire-and-forget: a
+        // failure here (rate limit, service temporarily off that board)
+        // should never affect the progress screen itself, which already
+        // has its own error handling above and keeps working regardless.
+        if (serviceId && train.fromLoc){
+          const boardTypeForHere = fresh.departsHere ? 'dep' : 'arr';
+          fetchStationBoardForService(train.fromLoc, boardTypeForHere, serviceId)
+            .then(boardData => {
+              lastBoardDebugType = boardTypeForHere;
+              lastBoardDebugData = boardData;
+              updateBoardDebugPanel();
+              diffAndNotifyJourneyState(serviceId, displayLabel, boardTypeForHere, boardData);
+            })
+            .catch(() => { /* silent — this is a supplementary check, not the main refresh */ });
+        }
         if (fresh.journeyFinished){
           // Arrived, or terminated early with nothing left ahead that
           // could ever change — polling further would just be repeatedly
