@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-20.12:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.08:28'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -984,6 +984,28 @@ function addDays(d, n){
   const nd = new Date(d);
   nd.setDate(nd.getDate()+n);
   return nd;
+}
+// UK regulated fares changes have long landed on the first Sunday of
+// March, but the exact date does occasionally shift and there's
+// sometimes a gap between the January announcement and the March
+// implementation — so this computes it fresh for whatever year is
+// actually current rather than hard-coding a specific date.
+function getFirstSundayOfMarch(year){
+  const d = new Date(year, 2, 1); // 1 March
+  const offsetToSunday = (7 - d.getDay()) % 7; // 0 if 1 March is itself a Sunday
+  d.setDate(1 + offsetToSunday);
+  return d;
+}
+// True only on/after this year's fare change AND only if this year
+// hasn't already been checked — stays instant every other time the Buy
+// screen opens, which is the whole point (see backlog discussion: the
+// one-a-year network delay only matters right when it's worth paying
+// for it).
+function shouldFetchFreshFares(today){
+  const year = today.getFullYear();
+  const changeDate = getFirstSundayOfMarch(year);
+  if (today < changeDate) return false;
+  return fareCheckedYear !== year;
 }
 function dayNameShort(d){
   return d.toLocaleDateString('en-GB', { weekday: 'short' });
@@ -1072,12 +1094,24 @@ function clampPollCheckInIntervalMin(v){
   return Math.min(POLL_CHECK_IN_INTERVAL_MIN_MAX, Math.round(n));
 }
 let dayReturnPrice = 21.00; // used by the ticket purchase advisor to compare against the season ticket
+// Year (number) whose regulated fares change (first Sunday of March) has
+// already been checked against the live Fares API — null if never
+// checked. Compared against the current calendar year, not a date, so a
+// gap of several buy-free months doesn't cause repeat checks once one
+// has already succeeded for the year. See shouldFetchFreshFares().
+let fareCheckedYear = null;
 let dismissedMonths = {}; // monthKey ('YYYY-MM') -> true, for the monthly estimate card
 let menuOpen = false; // whether the hamburger dropdown is currently open
 
 // Rail performance / delay repay feature
 const RAIL_WORKER_URL = 'https://rail-performance-proxy.wayne-lee-paul-reynolds.workers.dev';
 const DARWIN_WORKER_URL = 'https://darwin-live-proxy.wayne-lee-paul-reynolds.workers.dev';
+
+// Fares API (season ticket + day return price check) — see FARE_CHECK_ORIG/DEST
+// below and openBuyScreen()'s once-a-year fresh-price check.
+const FARES_WORKER_URL = 'https://fares-proxy.wayne-lee-paul-reynolds.workers.dev';
+const FARE_CHECK_ORIG = 'CRE';
+const FARE_CHECK_DEST = 'WGN';
 const DELAY_REPAY_THRESHOLD_MINUTES = 15;
 let railDaysBack = 3; // how far back the day list currently scrolls; grows via "Show earlier days"
 const RAIL_DAYS_BACK_STEP = 7;
@@ -1483,6 +1517,10 @@ async function loadData(){
     dayReturnPrice = dr ? JSON.parse(dr) : 21.00;
   }catch(e){ dayReturnPrice = 21.00; }
   try{
+    const fcy = localStorage.getItem('ticket-fare-checked-year');
+    fareCheckedYear = fcy ? JSON.parse(fcy) : null;
+  }catch(e){ fareCheckedYear = null; }
+  try{
     const dm = localStorage.getItem('ticket-dismissed-months');
     dismissedMonths = dm ? JSON.parse(dm) : {};
   }catch(e){ dismissedMonths = {}; }
@@ -1657,6 +1695,10 @@ async function savePollingSettings(){
 }
 async function saveDayReturnPrice(){
   try{ localStorage.setItem('ticket-day-return-price', JSON.stringify(dayReturnPrice)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveFareCheckedYear(){
+  try{ localStorage.setItem('ticket-fare-checked-year', JSON.stringify(fareCheckedYear)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveDismissedMonths(){
@@ -3574,21 +3616,20 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-20.12:25*
+*Last updated: v2026-08-21.08:28*
 
-1. **Fares API** — 2 consumer keys ready (Easy Fares + Season Ticket Price), not yet wired into the app. A live test call confirmed both endpoints return accurate, current data (the season ticket price matched the real Flexi 8 price to the penny; the day return price matched the manually-configured figure exactly). Worth deciding: should this replace the manually-entered prices outright, or sit alongside them as a live cross-check the person can choose to accept? A network call on the Buy screen also means it's no longer instant — worth a proper discussion on the trade-off before building.
-2. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
-3. **Christmas bunting variant** for the header.
-4. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
-5. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon.
-6. **Costs as one combined form** — currently a further list of two links (parking cost, day return price) rather than a single screen. Last remaining piece of the old Settings UI polish item — icon grid and in-place Back navigation are both done now.
-7. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
-8. **500m geofence radius likely too wide for the boarding-side silent detection/prompt** — now two real data points, both false positives. The first (403m) was a dropped pin near the station. The second, more telling one: a genuine office on the person's own walk route to the station, measured at 185m — comfortably inside even a much tighter radius than 500m. Genuine trade-off, not a simple number change: shrinking the radius reduces false positives like these, but risks reintroducing missed detections on the platform itself, since GPS accuracy in a station environment (tall buildings, sometimes indoor/underground platforms) can itself be poor. Needs a decision on how much to tighten, or whether a different signal entirely (e.g. dwell time / position stability, not just a single distance check) would serve better — worth a proper discussion rather than picking a number blind.
-9. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
-10. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #9. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #9.
-11. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
-12. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
-13. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
+1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
+2. **Christmas bunting variant** for the header.
+3. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
+4. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon.
+5. **Costs as one combined form** — currently a further list of two links (parking cost, day return price) rather than a single screen. Last remaining piece of the old Settings UI polish item — icon grid and in-place Back navigation are both done now.
+6. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
+7. **500m geofence radius likely too wide for the boarding-side silent detection/prompt** — now two real data points, both false positives. The first (403m) was a dropped pin near the station. The second, more telling one: a genuine office on the person's own walk route to the station, measured at 185m — comfortably inside even a much tighter radius than 500m. Genuine trade-off, not a simple number change: shrinking the radius reduces false positives like these, but risks reintroducing missed detections on the platform itself, since GPS accuracy in a station environment (tall buildings, sometimes indoor/underground platforms) can itself be poor. Needs a decision on how much to tighten, or whether a different signal entirely (e.g. dwell time / position stability, not just a single distance check) would serve better — worth a proper discussion rather than picking a number blind.
+8. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
+9. **Scheduled time itself may be wrong for calling points, not just the live estimate** — genuinely separate from #8. Warrington Bank Quay showed \`st=17:41\` in our raw data but \`17:42\` in both National Rail's app and our own Station Board — a scheduled-time mismatch, not a missing live update. The tracked/"here" station on that same service (Wigan North Western) was correct and consistent everywhere. Worth checking whether the "here" point (reads the service's own top-level fields) versus an ordinary calling point (reads the separate calling-points array) is the actual lead — a real code difference to investigate, not necessarily a Darwin data quality issue like #8.
+10. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
+11. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
+12. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
 `;
 
 function openHelpGuide(){
@@ -7419,6 +7460,27 @@ function estimateTravelDaysInWindow(startDateStr, windowLength){
   return count;
 }
 
+// Once-a-year live price check (see backlog discussion): only ever
+// called on the first Buy screen open on/after the current year's first
+// Sunday of March, and only once that year hasn't already been checked
+// — so the "no longer instant" network cost lands only at the one
+// moment it's actually worth paying for it. Returns the two prices in
+// pounds (converting from the Worker's pence figures) or throws.
+async function fetchFaresUpdate(){
+  const resp = await fetch(FARES_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orig: FARE_CHECK_ORIG, dest: FARE_CHECK_DEST })
+  });
+  if (!resp.ok) throw new Error(`Fares request failed: ${resp.status}`);
+  const data = await resp.json();
+  if (!data.ok) throw new Error(data.reason || 'Fares API returned no usable price');
+  return {
+    seasonPrice: data.season.pricePence / 100,
+    dayReturnPrice: data.dayReturn.pricePence / 100,
+  };
+}
+
 function openBuyScreen(defaultType){
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const suggested = fmtKey(addDays(today, 1));
@@ -7447,6 +7509,14 @@ function openBuyScreen(defaultType){
       </div>
 
       <div id="advisor-note" style="font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:16px;"></div>
+
+      <div id="fare-update-banner" style="display:none; font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:16px; background:rgba(90,140,224,0.12); border:1px solid rgba(90,140,224,0.35);">
+        <div id="fare-update-text" style="margin-bottom:8px;"></div>
+        <div style="display:flex; gap:8px;">
+          <div class="chip" id="fare-update-accept" style="flex:1; text-align:center;">Use these prices</div>
+          <div class="chip" id="fare-update-decline" style="flex:1; text-align:center;">Keep mine</div>
+        </div>
+      </div>
 
       <div id="buy-season-fields" style="${buyType==='season'?'':'display:none;'}">
         <div class="sub" style="margin-top:0;">Every time you buy a new ticket, set the date it starts. Your 8 uses and 28-day window will be tracked fresh from that date.</div>
@@ -7512,6 +7582,45 @@ function openBuyScreen(defaultType){
   document.getElementById('season-date-input').addEventListener('change', updateAdvisor);
   document.getElementById('season-cost-input').addEventListener('input', updateAdvisor);
   updateAdvisor();
+
+  // Once-a-year live price check — see fetchFaresUpdate() above. Fires
+  // in the background; the screen itself has already opened instantly
+  // either way, so there's nothing to wait on here.
+  if (shouldFetchFreshFares(today)){
+    fetchFaresUpdate().then(({ seasonPrice, dayReturnPrice: freshDayReturnPrice }) => {
+      if (!overlay.isConnected) return; // screen closed before this resolved
+      // A successful check — regardless of whether the person ends up
+      // accepting the new figures — is what "checked" means here, so
+      // this year won't be re-queried on the next Buy screen open.
+      fareCheckedYear = today.getFullYear();
+      saveFareCheckedYear();
+      const seasonChanged = Math.abs(seasonPrice - lastKnownPrice) >= 0.005;
+      const dayReturnChanged = Math.abs(freshDayReturnPrice - dayReturnPrice) >= 0.005;
+      if (!seasonChanged && !dayReturnChanged) return; // nothing to surface
+      const banner = document.getElementById('fare-update-banner');
+      document.getElementById('fare-update-text').innerHTML =
+        `This year's regulated fares are in. Season ticket: £${seasonPrice.toFixed(2)}` +
+        `${seasonChanged ? ` (currently £${lastKnownPrice.toFixed(2)})` : ''}` +
+        ` · Day return: £${freshDayReturnPrice.toFixed(2)}` +
+        `${dayReturnChanged ? ` (currently £${dayReturnPrice.toFixed(2)})` : ''}. Use the new prices?`;
+      banner.style.display = 'block';
+      document.getElementById('fare-update-accept').addEventListener('click', () => {
+        document.getElementById('season-cost-input').value = seasonPrice.toFixed(2);
+        document.getElementById('single-cost-input').value = freshDayReturnPrice.toFixed(2);
+        banner.style.display = 'none';
+        updateAdvisor();
+      });
+      document.getElementById('fare-update-decline').addEventListener('click', () => {
+        banner.style.display = 'none';
+      });
+    }).catch(e => {
+      // Left unchecked so the next Buy screen open tries again — a
+      // transient network failure shouldn't leave this year's price
+      // check permanently skipped. Logged rather than surfaced; the
+      // screen still works exactly as it always has either way.
+      console.error(`Fares update check failed: ${e.message}`);
+    });
+  }
 
   document.getElementById('buy-save-btn').addEventListener('click', async () => {
     if (buyType === 'season'){
