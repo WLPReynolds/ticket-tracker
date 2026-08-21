@@ -6280,7 +6280,15 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // language that's meaningless for a terminus.
       const dueMomentPassed = liveDates[i] && now >= liveDates[i];
       const isFinalPoint = i === points.length - 1;
-      const showNotYetPill = dueMomentPassed && isGenuinelyUnconfirmedDelay(p);
+      // Only the very next point after the last confirmed one gets the
+      // pill. Once the train hasn't genuinely departed/arrived *there*,
+      // it obviously hasn't reached any later point either — every
+      // point further down the line would independently satisfy the
+      // same dueMomentPassed && isGenuinelyUnconfirmedDelay check purely
+      // because its own due time has also elapsed, producing a pill on
+      // every remaining row (e.g. both Carlisle and the next stop after
+      // it) instead of just the one place the train is actually stuck.
+      const showNotYetPill = dueMomentPassed && isGenuinelyUnconfirmedDelay(p) && i === lastPassedIdx + 1;
       const notYetDepartedPill = showNotYetPill
         ? ` <span style="background:#ff4d3d; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">NOT YET ${isFinalPoint ? 'ARRIVED' : 'DEPARTED'}</span>`
         : '';
