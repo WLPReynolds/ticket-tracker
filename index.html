@@ -918,7 +918,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.17:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-21.17:31'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3696,7 +3696,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-21.17:25*
+*Last updated: v2026-08-21.17:31*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -5690,6 +5690,12 @@ async function fetchStationBoardForService(crs, boardType, schedTime, serviceId)
 // someone for. Written with no DOM access at all, so it's reusable
 // as-is by a future Wear OS client polling the same Worker endpoint —
 // only the notification mechanism at the end would ever need to differ.
+// Stores the full fetched data (not just platform/hasConfirmed) since
+// this same persisted state now doubles as the seed for boardOverrides
+// when the progress screen is reopened — without it, a platform that
+// had appeared would vanish again the instant you closed and reopened,
+// because boardOverrides itself only ever lived in that screen's own
+// closure and had nothing to rebuild itself from until the next poll.
 function diffAndNotifyJourneyState(stateKey, label, boardType, freshData){
   if (!stateKey || !freshData) return;
 
@@ -5699,18 +5705,23 @@ function diffAndNotifyJourneyState(stateKey, label, boardType, freshData){
 
   const prev = lastSeenJourneyState.get(stateKey);
   if (prev){
-    if (prev.platform && platform && prev.platform !== platform){
-      showLocalNotification('Platform changed', `${label}: now platform ${platform} (was ${prev.platform})`);
-    } else if (!prev.platform && platform){
+    // Defensive against an entry saved before this field shape changed
+    // (platform/hasConfirmed directly on the entry, no .data) — reads
+    // either shape rather than assuming every persisted entry is fresh.
+    const prevPlatform = prev.data ? (prev.data.platform || null) : (prev.platform || null);
+    const prevHasConfirmed = prev.data ? !!(prev.boardType === 'dep' ? prev.data.atd : prev.data.ata) : !!prev.hasConfirmed;
+    if (prevPlatform && platform && prevPlatform !== platform){
+      showLocalNotification('Platform changed', `${label}: now platform ${platform} (was ${prevPlatform})`);
+    } else if (!prevPlatform && platform){
       showLocalNotification('Platform confirmed', `${label}: platform ${platform}`);
     }
-    if (!prev.hasConfirmed && hasConfirmed){
+    if (!prevHasConfirmed && hasConfirmed){
       const verb = isDeparture ? 'departed' : 'arrived';
       showLocalNotification(isDeparture ? 'Train departed' : 'Train arrived', `${label} has ${verb}${platform ? ` — platform ${platform}` : ''}`);
     }
   }
 
-  lastSeenJourneyState.set(stateKey, { platform, hasConfirmed, boardType });
+  lastSeenJourneyState.set(stateKey, { boardType, data: freshData });
   saveLastSeenJourneyState();
 }
 
@@ -6532,6 +6543,24 @@ function openTrainProgress(train, service){
   // reposition the blob.
   let renderGeneration = 0;
   const serviceId = train.serviceId || service.serviceID || null;
+  // Seeded from whatever was last persisted for this journey — without
+  // this, boardOverrides starts empty every time the screen opens (it's
+  // only ever populated live, in this screen's own closure, as fresh
+  // polls come back), so a platform that had already appeared the last
+  // time this was open would vanish again until the next poll rediscovers
+  // it. lastSeenJourneyState already persists exactly this data, keyed
+  // the same way (`${serviceId}:${crs}`), so it doubles as the source
+  // to rebuild from here.
+  if (serviceId){
+    if (train.fromLoc){
+      const seedFrom = lastSeenJourneyState.get(`${serviceId}:${train.fromLoc}`);
+      if (seedFrom && seedFrom.data) boardOverrides[train.fromLoc] = seedFrom;
+    }
+    if (train.toLoc && train.toLoc !== train.fromLoc){
+      const seedTo = lastSeenJourneyState.get(`${serviceId}:${train.toLoc}`);
+      if (seedTo && seedTo.data) boardOverrides[train.toLoc] = seedTo;
+    }
+  }
   // Computed early (rather than at its previous spot, right before the
   // overlay markup) because the label below now needs to know whether
   // this station genuinely has its own departure, or whether the
