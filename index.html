@@ -1068,7 +1068,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-22.10:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-22.11:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1329,7 +1329,7 @@ let railSyncInProgress = false;
   // BACKUP_KEYS's own comment — it's disposable, unlike rail-perf-cache,
   // which IS backed up), so writes to it shouldn't mark a backup as
   // needed when nothing backup-relevant actually changed.
-  const NON_BACKUP_KEYS = new Set(['drive-backup-dirty', 'drive-backup-last-time', 'reason-codes-cache', 'rail-synced-days', 'rail-history-days-back']);
+  const NON_BACKUP_KEYS = new Set(['drive-backup-dirty', 'drive-backup-last-time', 'reason-codes-cache', 'rail-synced-days', 'rail-history-days-back', 'rail-synced-days-reset-v2']);
   localStorage.setItem = function(key, value){
     if (!NON_BACKUP_KEYS.has(key)){
       driveBackupDirty = true;
@@ -1788,6 +1788,21 @@ async function loadData(){
     const rsd = localStorage.getItem('rail-synced-days');
     railSyncedDays = rsd ? JSON.parse(rsd) : {};
   }catch(e){ railSyncedDays = {}; }
+  // One-time reset: an earlier version of railSyncedDays could mark a
+  // train as "synced" for a date based on a DIFFERENT train's result for
+  // that same date (a since-fixed proxy/client bug — see
+  // rail-performance-proxy.js and railSyncDatesBatch's comments). Those
+  // entries look identical to correct ones and can't be told apart after
+  // the fact, so the only reliable fix is to clear the whole cache once
+  // and let it rebuild accurately. Costs one extra full backfill pass;
+  // real data in railPerfCache itself is untouched.
+  try{
+    if (!localStorage.getItem('rail-synced-days-reset-v2')){
+      railSyncedDays = {};
+      localStorage.setItem('rail-synced-days', '{}'); // persist the clear immediately — don't rely on the next sync to save it
+      localStorage.setItem('rail-synced-days-reset-v2', '1');
+    }
+  }catch(e){ /* not critical if this flag can't be set — worst case it resets again next load */ }
   try{
     const rhd = localStorage.getItem('rail-history-days-back');
     railHistoryDaysBack = rhd ? JSON.parse(rhd) : 90;
@@ -2081,6 +2096,22 @@ function dateNeedsSync(dateKey, trains){
 // actually processed this round — including ones with no result — as
 // synced for these trains in railSyncedDays, so a genuine gap doesn't
 // get re-queried indefinitely.
+// Shared fetch loop used by both railSyncMissingDates (travel days only,
+// for the delay-repay claims flow) and railSyncFullHistory (every
+// weekday, for the Performance history page). Handles the Worker's own
+// truncation (its 45-subrequest-per-call ceiling) by looping until
+// everything's covered or no further progress is being made, updates
+// railPerfCache with whatever results came back, and marks exactly which
+// (date, train) pairs the Worker actually resolved this round —
+// genuinely checked, whether or not it found anything — in
+// railSyncedDays, so a genuine gap doesn't get re-queried indefinitely.
+// Tracked per train rather than assuming every requested train was
+// covered for every requested date: different trains can finish at
+// different points within the same call (one train's metrics call
+// failing while another succeeds, or the budget running out partway
+// through one train's dates but not another's), so treating "the date
+// is done" as a single flag shared across all trains would silently
+// stop asking about a train that was never actually resolved.
 async function railSyncDatesBatch(dates, trains){
   let remaining = dates;
   let guard = 0;
@@ -2108,20 +2139,26 @@ async function railSyncDatesBatch(dates, trains){
       }
     }
 
-    const truncated = response.truncatedDates || [];
-    const processedThisRound = remaining.filter(d => !truncated.includes(d));
-    const trainKeysRequested = trains.map(t => t.key);
-    for (const date of processedThisRound){
-      const already = railSyncedDays[date] || [];
-      railSyncedDays[date] = Array.from(new Set([...already, ...trainKeysRequested]));
+    const attemptedDates = response.attemptedDates || {};
+    for (const trainKey in attemptedDates){
+      for (const date of attemptedDates[trainKey]){
+        const already = railSyncedDays[date] || [];
+        if (!already.includes(trainKey)) railSyncedDays[date] = [...already, trainKey];
+      }
     }
 
     await saveRailPerfCache();
     await saveRailSyncedDays();
     render();
 
-    if (truncated.length === remaining.length) break; // no progress — stop rather than loop forever
-    remaining = truncated;
+    // Still worth another round if any requested train wasn't fully
+    // attempted (per attemptedDates) for a given date — regardless of
+    // whether some other train already was.
+    const stillNeeded = remaining.filter(d =>
+      trains.some(t => !((attemptedDates[t.key] || []).includes(d)))
+    );
+    if (stillNeeded.length === 0 || stillNeeded.length === remaining.length) break; // done, or no progress — stop rather than loop forever
+    remaining = stillNeeded;
   }
 }
 
