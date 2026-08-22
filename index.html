@@ -864,6 +864,41 @@
     font-weight: 800;
     margin-top: 2px;
   }
+
+  /* Per-train averages — a horizontally scrollable strip of small stat
+     chips, one per usual train, sitting above the main table. Kept
+     separate from the table's own header row rather than folded into it
+     as a second sticky row, since a fixed-height sticky stack is fragile
+     against font-size/zoom changes — this scrolls with the chips, not
+     pinned, which is fine since it's a summary rather than something
+     that needs to track the table as you scroll through dates. */
+  .perf-history-train-chips{
+    display: flex;
+    gap: 8px;
+    padding: 0 18px 14px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-shrink: 0;
+  }
+  .perf-history-train-chip{
+    flex-shrink: 0;
+    background: var(--board-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 12px;
+    text-align: center;
+    min-width: 74px;
+  }
+  .perf-history-train-chip .chip-label{
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    white-space: nowrap;
+  }
+  .perf-history-train-chip .chip-value{
+    font-size: 15px;
+    font-weight: 800;
+    margin-top: 2px;
+  }
   @keyframes blob-pulse{
     0%, 100% { opacity: 1; transform: scale(1); }
     50% { opacity: 0.5; transform: scale(1.3); }
@@ -1033,7 +1068,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-21.17:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-22.10:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1245,6 +1280,32 @@ const RAIL_DAYS_BACK_STEP = 7;
 const RAIL_MAX_DAYS_BACK = 28; // matches Avanti's Delay Repay claim deadline
 let railTrains = []; // [{ key, direction: 'AM'|'PM', fromLoc, toLoc, time, label }]
 let railPerfCache = {}; // { "YYYY-MM-DD": { trainKey: { delayMinutes, onTime, cancelled, reason } } } — delayMinutes/onTime are null/false when cancelled is true
+
+// Bookkeeping for which (date, train) combinations have actually been
+// queried against HSP before — distinct from railPerfCache itself, which
+// only ever holds a real result. A weekday can be fully queried and
+// still have nothing to show (the service didn't run, or HSP just has
+// no record), and without tracking that separately we'd keep re-querying
+// the same gap forever. Kept as its own top-level cache rather than a
+// sentinel key inside railPerfCache[date], since several places read
+// Object.keys()/every key of a day's perf object and expect only real
+// train results to be there.
+// { "YYYY-MM-DD": ["trainKey1", "trainKey2", ...] }
+let railSyncedDays = {};
+// Deliberately excluded from backup — losing this just means some
+// already-known weekdays get harmlessly re-queried once after a
+// restore, not that any real data is lost (see BACKUP_KEYS's comment).
+
+// How far back the Performance history page backfills every weekday
+// (not just days you actually travelled — see railSyncFullHistory).
+// Starts modest and grows via "Load more history" on that page, both to
+// avoid a huge burst of HSP subrequests the first time it's opened and
+// because RAIL_HISTORY_MAX_DAYS_BACK is already a bit past HSP's own
+// retention window, so there's rarely a reason to demand it all at once.
+let railHistoryDaysBack = 90;
+const RAIL_HISTORY_STEP_DAYS = 90;
+const RAIL_HISTORY_MAX_DAYS_BACK = 370;
+
 // { fetchedAt: <ms epoch>, codes: { "<numeric code>": { late: "...", canc: "..." } } }
 // — decodes railPerfCache's raw numeric `reason` into the actual English
 // text RDM's reference-data product gives for it. Refetched at most once
@@ -1268,7 +1329,7 @@ let railSyncInProgress = false;
   // BACKUP_KEYS's own comment — it's disposable, unlike rail-perf-cache,
   // which IS backed up), so writes to it shouldn't mark a backup as
   // needed when nothing backup-relevant actually changed.
-  const NON_BACKUP_KEYS = new Set(['drive-backup-dirty', 'drive-backup-last-time', 'reason-codes-cache']);
+  const NON_BACKUP_KEYS = new Set(['drive-backup-dirty', 'drive-backup-last-time', 'reason-codes-cache', 'rail-synced-days', 'rail-history-days-back']);
   localStorage.setItem = function(key, value){
     if (!NON_BACKUP_KEYS.has(key)){
       driveBackupDirty = true;
@@ -1724,6 +1785,14 @@ async function loadData(){
     railPerfCache = rc ? JSON.parse(rc) : {};
   }catch(e){ railPerfCache = {}; }
   try{
+    const rsd = localStorage.getItem('rail-synced-days');
+    railSyncedDays = rsd ? JSON.parse(rsd) : {};
+  }catch(e){ railSyncedDays = {}; }
+  try{
+    const rhd = localStorage.getItem('rail-history-days-back');
+    railHistoryDaysBack = rhd ? JSON.parse(rhd) : 90;
+  }catch(e){ railHistoryDaysBack = 90; }
+  try{
     const rcc = localStorage.getItem('reason-codes-cache');
     reasonCodesCache = rcc ? JSON.parse(rcc) : { fetchedAt: 0, codes: {} };
   }catch(e){ reasonCodesCache = { fetchedAt: 0, codes: {} }; }
@@ -1909,6 +1978,14 @@ async function saveRailPerfCache(){
   try{ localStorage.setItem('rail-perf-cache', JSON.stringify(railPerfCache)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
+async function saveRailSyncedDays(){
+  try{ localStorage.setItem('rail-synced-days', JSON.stringify(railSyncedDays)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveRailHistoryDaysBack(){
+  try{ localStorage.setItem('rail-history-days-back', JSON.stringify(railHistoryDaysBack)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
 async function saveReasonCodesCache(){
   try{ localStorage.setItem('reason-codes-cache', JSON.stringify(reasonCodesCache)); }
   catch(e){ /* save failed silently; will retry next change */ }
@@ -1986,11 +2063,75 @@ function getDelayStatus(dateKey){
   return null;
 }
 
+// True if HSP has never been asked about this date for one or more of
+// the given trains — not whether railPerfCache has data for it, since
+// "asked and got nothing back" (service didn't run, no HSP record) is a
+// perfectly valid outcome that shouldn't be retried forever.
+function dateNeedsSync(dateKey, trains){
+  const synced = railSyncedDays[dateKey] || [];
+  return trains.some(t => !synced.includes(t.key));
+}
+
+// Shared fetch loop used by both railSyncMissingDates (travel days only,
+// for the delay-repay claims flow) and railSyncFullHistory (every
+// weekday, for the Performance history page). Handles the Worker's own
+// truncation (its 50-subrequest-per-call ceiling) by looping until
+// everything's covered or no further progress is being made, updates
+// railPerfCache with whatever results came back, and marks every date
+// actually processed this round — including ones with no result — as
+// synced for these trains in railSyncedDays, so a genuine gap doesn't
+// get re-queried indefinitely.
+async function railSyncDatesBatch(dates, trains){
+  let remaining = dates;
+  let guard = 0;
+  while (remaining.length > 0 && guard < 8){
+    guard++;
+    let response;
+    try{
+      const resp = await fetch(RAIL_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trains: trains.map(t => ({ key: t.key, fromLoc: t.fromLoc, toLoc: t.toLoc, time: t.time })),
+          dates: remaining
+        })
+      });
+      if (!resp.ok) break;
+      response = await resp.json();
+    }catch(e){ break; }
+
+    const trainResults = response.trainResults || {};
+    for (const trainKey in trainResults){
+      for (const date in trainResults[trainKey]){
+        if (!railPerfCache[date]) railPerfCache[date] = {};
+        railPerfCache[date][trainKey] = trainResults[trainKey][date];
+      }
+    }
+
+    const truncated = response.truncatedDates || [];
+    const processedThisRound = remaining.filter(d => !truncated.includes(d));
+    const trainKeysRequested = trains.map(t => t.key);
+    for (const date of processedThisRound){
+      const already = railSyncedDays[date] || [];
+      railSyncedDays[date] = Array.from(new Set([...already, ...trainKeysRequested]));
+    }
+
+    await saveRailPerfCache();
+    await saveRailSyncedDays();
+    render();
+
+    if (truncated.length === remaining.length) break; // no progress — stop rather than loop forever
+    remaining = truncated;
+  }
+}
+
 // Checks the currently visible past-day window for any eligible travel
 // days that don't yet have performance data cached, and fetches just
-// those from the Worker. Loops to handle the Worker's own truncation
-// (its 50-subrequest-per-call ceiling) until everything's covered or no
-// further progress is being made.
+// those from the Worker. Stays scoped to actual travel days
+// (isEligibleRailDay) since this feeds the delay-repay claims flow,
+// where a day you didn't travel is simply irrelevant. For the broader
+// "how punctual is this train generally" picture, see
+// railSyncFullHistory below.
 async function railSyncMissingDates(){
   if (railSyncInProgress) return;
   if (!railTrains || railTrains.length === 0) return;
@@ -2004,49 +2145,44 @@ async function railSyncMissingDates(){
   for (let d = new Date(oldestVisible); d < today; d = addDays(d, 1)){
     if (!isEligibleRailDay(d, todayKeyLocal)) continue;
     const key = fmtKey(d);
-    const cached = railPerfCache[key];
-    const hasAllTrains = cached && railTrains.every(t => cached[t.key] !== undefined);
-    if (!hasAllTrains) neededDates.push(key);
+    if (dateNeedsSync(key, railTrains)) neededDates.push(key);
   }
   if (neededDates.length === 0) return;
 
   railSyncInProgress = true;
-  try{
-    let remaining = neededDates;
-    let guard = 0;
-    while (remaining.length > 0 && guard < 8){
-      guard++;
-      let response;
-      try{
-        const resp = await fetch(RAIL_WORKER_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trains: railTrains.map(t => ({ key: t.key, fromLoc: t.fromLoc, toLoc: t.toLoc, time: t.time })),
-            dates: remaining
-          })
-        });
-        if (!resp.ok) break;
-        response = await resp.json();
-      }catch(e){ break; }
+  try{ await railSyncDatesBatch(neededDates, railTrains); }
+  finally{ railSyncInProgress = false; }
+}
 
-      const trainResults = response.trainResults || {};
-      for (const trainKey in trainResults){
-        for (const date in trainResults[trainKey]){
-          if (!railPerfCache[date]) railPerfCache[date] = {};
-          railPerfCache[date][trainKey] = trainResults[trainKey][date];
-        }
-      }
-      await saveRailPerfCache();
-      render();
+// Backfills performance data for every weekday in the window,
+// regardless of whether it was a day you actually travelled — unlike
+// railSyncMissingDates above. This is what gives the Performance history
+// page (and its averages) the full picture of how the trains actually
+// run, not just the subset of days you happened to be on them. Safe to
+// call often: dateNeedsSync means dates already covered for every
+// currently-configured train are skipped, so a repeat call is cheap —
+// though the very first call after a usual train is added or changed
+// will genuinely re-check the whole window for that train, which is the
+// point (a newly added train should get its own backfilled history too).
+async function railSyncFullHistory(){
+  if (railSyncInProgress) return;
+  if (!railTrains || railTrains.length === 0) return;
+  if (RAIL_WORKER_URL.includes('YOUR-WORKER-NAME')) return;
 
-      const truncated = response.truncatedDates || [];
-      if (truncated.length === remaining.length) break; // no progress — stop rather than loop forever
-      remaining = truncated;
-    }
-  } finally {
-    railSyncInProgress = false;
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const oldest = addDays(today, -railHistoryDaysBack);
+
+  const neededDates = [];
+  for (let d = new Date(oldest); d < today; d = addDays(d, 1)){
+    if (isWeekend(d)) continue;
+    const key = fmtKey(d);
+    if (dateNeedsSync(key, railTrains)) neededDates.push(key);
   }
+  if (neededDates.length === 0) return;
+
+  railSyncInProgress = true;
+  try{ await railSyncDatesBatch(neededDates, railTrains); }
+  finally{ railSyncInProgress = false; }
 }
 
 // Fetches and caches the reason-code → English text table (see
@@ -2061,9 +2197,15 @@ async function ensureReasonCodes(){
   if (age < REASON_CODES_MAX_AGE_MS && Object.keys(reasonCodesCache.codes).length > 0) return;
   try{
     const resp = await fetch(`${DARWIN_WORKER_URL}/reason-codes`);
-    if (!resp.ok) return;
+    if (!resp.ok){
+      console.error(`reason-codes fetch failed: HTTP ${resp.status}`, await resp.text().catch(() => ''));
+      return;
+    }
     const list = await resp.json();
-    if (!Array.isArray(list)) return;
+    if (!Array.isArray(list)){
+      console.error('reason-codes response was not an array:', list);
+      return;
+    }
     const codes = {};
     for (const entry of list){
       if (entry && entry.code !== undefined && entry.code !== null){
@@ -2073,6 +2215,7 @@ async function ensureReasonCodes(){
     reasonCodesCache = { fetchedAt: Date.now(), codes };
     await saveReasonCodesCache();
   }catch(e){
+    console.error('reason-codes fetch threw:', e);
     // Offline or the worker's unreachable — whatever was already cached
     // (even if that's nothing) is left as-is; nothing to surface here.
   }
@@ -4421,17 +4564,21 @@ function openDayReturnPriceEditor(){
 // Deliberately excludes: confirmed-point-status-cache, silent-confirm-banner
 // (transient UI/derived state, not something a restore needs), and
 // drive-backup-dirty/drive-backup-last-time (the backup mechanism's own
-// internal bookkeeping, not app data). Also excludes reason-codes-cache —
-// that one's genuinely disposable (ensureReasonCodes() re-fetches it
-// whenever it's missing or stale, and it's the same table for everyone,
-// not personal data). rail-perf-cache stays IN the backup, unlike
-// reason-codes-cache: HSP's retention window means a badly-delayed
-// restore could otherwise lose real history permanently, not just
-// re-fetch it. Also excludes the smartcard pass photo entirely — that
-// lives in IndexedDB, not localStorage, and isn't covered by this
-// mechanism at all. If any of this ever needs to change, the messaging
-// around what a backup contains needs updating alongside it, not just
-// this list.
+// internal bookkeeping, not app data). Also excludes reason-codes-cache,
+// rail-synced-days, and rail-history-days-back — all genuinely
+// disposable: reason-codes-cache re-fetches itself when stale; rail-
+// synced-days is just "have we asked HSP about this date" bookkeeping,
+// not a value in itself (losing it means some already-known weekdays get
+// harmlessly re-queried once, nothing more); rail-history-days-back is
+// just how far the Performance history page currently reaches, trivially
+// regrown via its own "Load more history" button. rail-perf-cache itself
+// DOES stay in the backup, unlike those — it's the actual historical
+// values, and HSP's retention window means a badly-delayed restore could
+// otherwise lose real history permanently, not just re-fetch it. Also
+// excludes the smartcard pass photo entirely — that lives in IndexedDB,
+// not localStorage, and isn't covered by this mechanism at all. If any
+// of this ever needs to change, the messaging around what a backup
+// contains needs updating alongside it, not just this list.
 const BACKUP_KEYS = [
   'bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
   'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id',
@@ -7723,25 +7870,26 @@ function openRailDetail(key){
 // axes scrollable since a few months of data with several trains
 // configured won't fit either dimension on a phone screen. Tapping a
 // delayed cell with a recorded reason code shows what it was.
-function openPerformanceHistoryView(){
-  // Best-effort refresh — a stale/missing table just means reason taps
-  // fall back to "description not loaded yet" until this resolves.
-  ensureReasonCodes();
-
+// Renders (or re-renders, if called again on an already-open overlay)
+// the Performance history modal's contents from whatever's currently in
+// railPerfCache — kept as its own function, rather than inline in
+// openPerformanceHistoryView, so it can be called a second time once
+// railSyncFullHistory's background fetch resolves, to reflect the freshly
+// backfilled data without closing and reopening the modal.
+function renderPerfHistoryInto(overlay, syncing){
   const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
   const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a, b) => a.time.localeCompare(b.time));
   const orderedTrains = [...amTrains, ...pmTrains];
 
   const dateKeys = Object.keys(railPerfCache).sort((a, b) => (a < b ? 1 : (a > b ? -1 : 0))); // most recent first
 
-  // Average delay, split AM vs PM, across every recorded day for the
-  // currently configured usual trains — the whole point of keeping this
-  // data permanently is the long-run picture, not just what's currently
-  // scrolled into view. A train that ran early counts as 0 delay here
-  // rather than pulling the average below zero — this is meant to answer
+  // A train that ran early counts as 0 delay here rather than pulling
+  // the average below zero — both averages below are meant to answer
   // "how late does my train usually run", not track signed deviation
-  // from schedule.
-  function averageForDirection(trains){
+  // from schedule. Cancelled entries (delayMinutes: null) are excluded
+  // from both rather than counted as some assumed delay value, since
+  // there's no single "right" number to stand in for a cancellation.
+  function averageFor(trains){
     let total = 0, count = 0;
     for (const dateKey of dateKeys){
       const dayPerf = railPerfCache[dateKey];
@@ -7754,12 +7902,22 @@ function openPerformanceHistoryView(){
     }
     return count > 0 ? total / count : null;
   }
-  const amAvg = amTrains.length ? averageForDirection(amTrains) : null;
-  const pmAvg = pmTrains.length ? averageForDirection(pmTrains) : null;
+  const amAvg = amTrains.length ? averageFor(amTrains) : null;
+  const pmAvg = pmTrains.length ? averageFor(pmTrains) : null;
   const avgItemHtml = (label, avg) => `
     <div class="perf-history-avg-item">
       <div class="avg-label">${label} avg delay</div>
       <div class="avg-value">${avg === null ? '—' : `${avg.toFixed(1)} min`}</div>
+    </div>`;
+
+  // Per-train averages — same "clamp early trains to 0, exclude
+  // cancellations" treatment as the AM/PM figures above, just computed
+  // per train instead of per direction.
+  const perTrainAvg = t => averageFor([t]);
+  const trainChipHtml = t => `
+    <div class="perf-history-train-chip">
+      <div class="chip-label">${escapeHtml(t.label)} <span style="opacity:0.6;">${escapeHtml(t.direction)}</span></div>
+      <div class="chip-value">${(() => { const a = perTrainAvg(t); return a === null ? '—' : `${a.toFixed(1)}m`; })()}</div>
     </div>`;
 
   function cellHtml(dateKey, train){
@@ -7800,7 +7958,7 @@ function openPerformanceHistoryView(){
   const tableHtml = (orderedTrains.length === 0)
     ? `<div class="sub" style="padding:0 18px;">No usual trains configured yet — set them up under More → Settings first.</div>`
     : (dateKeys.length === 0
-      ? `<div class="sub" style="padding:0 18px;">No performance data recorded yet.</div>`
+      ? `<div class="sub" style="padding:0 18px;">${syncing ? 'Fetching performance history…' : 'No performance data recorded yet.'}</div>`
       : `<div class="perf-history-scroll">
           <table class="perf-history-table">
             <thead><tr><th>Date</th>${headerCellsHtml}</tr></thead>
@@ -7808,24 +7966,31 @@ function openPerformanceHistoryView(){
           </table>
         </div>`);
 
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-full';
-  overlay.style.alignItems = 'stretch';
-  overlay.innerHTML = `
-    <div class="modal" style="display:flex; flex-direction:column; padding:0 0 calc(72px + env(safe-area-inset-bottom)) 0; border-radius:0; overflow:hidden;">
-      <div style="padding:20px 18px 10px; flex-shrink:0;">
-        <h3>Performance history</h3>
-        <div class="sub" style="margin-bottom:0;">Tap a delayed entry to see why, if a reason's been recorded.</div>
+  const trainChipsHtml = orderedTrains.length > 1
+    ? `<div class="perf-history-train-chips">${orderedTrains.map(trainChipHtml).join('')}</div>`
+    : '';
+
+  const canLoadMore = railHistoryDaysBack < RAIL_HISTORY_MAX_DAYS_BACK;
+
+  overlay.querySelector('.modal').innerHTML = `
+    <div style="padding:20px 18px 10px; flex-shrink:0;">
+      <h3>Performance history</h3>
+      <div class="sub" style="margin-bottom:0;">
+        Tap a delayed or cancelled entry to see why, if a reason's been recorded.
+        ${syncing ? ' Backfilling more history in the background…' : ''}
       </div>
-      ${tableHtml}
-      <div class="perf-history-avg-bar">
-        ${avgItemHtml('Morning', amAvg)}
-        ${avgItemHtml('Evening', pmAvg)}
-      </div>
-      <div class="modal-close" id="perf-history-close-btn" style="margin:10px 18px; background:var(--board-2); flex-shrink:0;">Close</div>
+    </div>
+    ${trainChipsHtml}
+    ${tableHtml}
+    <div class="perf-history-avg-bar">
+      ${avgItemHtml('Morning', amAvg)}
+      ${avgItemHtml('Evening', pmAvg)}
+    </div>
+    <div style="display:flex; gap:10px; margin:10px 18px; flex-shrink:0;">
+      ${canLoadMore ? `<div class="day-nav-btn" id="perf-history-load-more" style="flex:1; margin:0;">Load more history</div>` : ''}
+      <div class="modal-close" id="perf-history-close-btn" style="flex:1; margin:0; background:var(--board-2); border:1px solid var(--line); border-radius:10px; padding:10px; display:flex; align-items:center; justify-content:center;">Close</div>
     </div>
   `;
-  document.body.appendChild(overlay);
 
   overlay.querySelectorAll('.perf-history-cell[data-perf-date]').forEach(cell => {
     cell.addEventListener('click', () => {
@@ -7838,8 +8003,47 @@ function openPerformanceHistoryView(){
     });
   });
 
-  document.getElementById('perf-history-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
+  const loadMoreBtn = overlay.querySelector('#perf-history-load-more');
+  if (loadMoreBtn){
+    loadMoreBtn.addEventListener('click', async () => {
+      railHistoryDaysBack = Math.min(railHistoryDaysBack + RAIL_HISTORY_STEP_DAYS, RAIL_HISTORY_MAX_DAYS_BACK);
+      await saveRailHistoryDaysBack();
+      renderPerfHistoryInto(overlay, true);
+      await railSyncFullHistory();
+      if (document.body.contains(overlay)) renderPerfHistoryInto(overlay, false);
+    });
+  }
+
+  const closeBtn = overlay.querySelector('#perf-history-close-btn');
+  if (closeBtn) closeBtn.addEventListener('click', () => { document.body.removeChild(overlay); });
+}
+
+// Full performance history — every weekday within railHistoryDaysBack
+// (backfilled regardless of whether it was a day you actually
+// travelled — see railSyncFullHistory), against every currently
+// configured usual train, as a table: trains across the top (sticky),
+// dates down the side (sticky), both axes scrollable since a few months
+// of data with several trains configured won't fit either dimension on
+// a phone screen. Tapping a delayed or cancelled cell with a recorded
+// reason code shows what it was. Opens immediately with whatever's
+// already cached (fast), then backfills any gap in the background and
+// re-renders in place once that resolves — a fresh device or a newly
+// widened window can otherwise mean a genuinely long wait before there's
+// anything to show at all.
+function openPerformanceHistoryView(){
+  // Best-effort refresh — a stale/missing table just means reason taps
+  // fall back to "description not loaded yet" until this resolves.
+  ensureReasonCodes();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay modal-overlay-full';
+  overlay.style.alignItems = 'stretch';
+  overlay.innerHTML = `<div class="modal" style="display:flex; flex-direction:column; padding:0 0 calc(72px + env(safe-area-inset-bottom)) 0; border-radius:0; overflow:hidden;"></div>`;
+  document.body.appendChild(overlay);
+
+  renderPerfHistoryInto(overlay, true);
+  railSyncFullHistory().then(() => {
+    if (document.body.contains(overlay)) renderPerfHistoryInto(overlay, false);
   });
 }
 
