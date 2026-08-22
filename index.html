@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-22.21:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-22.23:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6254,6 +6254,55 @@ function addMinutesToTime(hhmm, mins){
 
 const TRAIN_PROGRESS_ROW_HEIGHT = 54; // px — a sensible minimum row height; actual positioning now measures real rendered rows, not this value
 
+// Coach formation strip, Avanti-style horizontal scroll of coach boxes —
+// only ever rendered when GetServiceDetails actually included a
+// `formation.coaches[]` array, which isn't guaranteed on every service.
+// Deliberately displays whatever `coach.number` Darwin sends verbatim
+// (rather than re-lettering ourselves A/B/C...) since some operators may
+// already send letters through that field — unconfirmed until a real
+// example turns up (see buildFormationDebugHtml below for checking that).
+// The tapered end is applied to the last coach in array order purely to
+// visually match Avanti's own display; there's no confirmed signal in
+// the data for which physical end is the "front" of the train, so this
+// may need flipping once a real multi-coach service is inspected.
+function buildFormationHtml(service){
+  const coaches = service && service.formation && Array.isArray(service.formation.coaches) ? service.formation.coaches : null;
+  if (!coaches || !coaches.length) return '';
+  const anyFirstClass = coaches.some(c => c.coachClass && /first/i.test(c.coachClass));
+  const boxes = coaches.map((c, idx) => {
+    const isFirstClass = c.coachClass && /first/i.test(c.coachClass);
+    const isTaperedEnd = idx === coaches.length - 1;
+    const label = (c.number !== undefined && c.number !== null && c.number !== '') ? escapeHtml(String(c.number)) : '?';
+    let loadingBar = '';
+    if (c.loadingSpecified && typeof c.loading === 'number'){
+      const pct = Math.max(0, Math.min(100, c.loading));
+      const barColor = pct >= 70 ? '#e05a4e' : (pct >= 35 ? 'var(--amber)' : 'var(--good)');
+      loadingBar = `<div style="position:absolute; left:3px; right:3px; bottom:3px; height:3px; border-radius:2px; background:rgba(255,255,255,0.15); overflow:hidden;"><div style="width:${pct}%; height:100%; background:${barColor};"></div></div>`;
+    }
+    return `<div style="flex:0 0 auto; position:relative; width:36px; height:42px; margin-right:2px; background:${isFirstClass ? 'color-mix(in srgb, var(--amber) 20%, var(--tile))' : 'var(--tile)'}; border:1px solid var(--line); ${isTaperedEnd ? 'border-top-right-radius:18px; border-bottom-right-radius:18px;' : 'border-radius:4px;'} display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${label}${loadingBar}</div>`;
+  }).join('');
+  return `
+    <div id="train-progress-formation" style="margin-bottom:10px;">
+      <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${coaches.length} coach${coaches.length === 1 ? '' : 'es'}${anyFirstClass ? ' · amber = 1st class' : ''}</div>
+      <div style="display:flex; overflow-x:auto; padding-bottom:2px;">${boxes}</div>
+    </div>`;
+}
+
+// Debug-only raw view of exactly what GetServiceDetails sent back for
+// formation — separate from the coach-strip rendering above so it's
+// possible to confirm the real field shapes (e.g. whether `number` ever
+// actually contains a letter) even on services the pretty display can't
+// yet render anything useful for.
+function buildFormationDebugHtml(service, showRawDebug){
+  if (!showRawDebug) return '';
+  const hasFormation = !!(service && service.formation);
+  const body = hasFormation
+    ? JSON.stringify(service.formation, null, 2)
+    : '(no "formation" field in this GetServiceDetails response)';
+  return `<div id="train-progress-formation-debug" style="font-family:monospace; font-size:10px; color:#6a7a8a; white-space:pre-wrap; margin-bottom:10px; max-height:160px; overflow-y:auto; border:1px dashed var(--line); border-radius:6px; padding:6px;">formation debug:
+${escapeHtml(body)}</div>`;
+}
+
 function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides){
   const now = new Date();
   boardOverrides = boardOverrides || {};
@@ -6817,7 +6866,10 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
   // between polls, not just staying alive for the rest of this session.
   saveConfirmedPointStatusCache();
 
-  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints, departsHere, firstPoint: points[0] || null, lastPoint: points[points.length - 1] || null, toLocIdx };
+  const formationHtml = buildFormationHtml(service);
+  const formationDebugHtml = buildFormationDebugHtml(service, showRawDebug);
+
+  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints, departsHere, firstPoint: points[0] || null, lastPoint: points[points.length - 1] || null, toLocIdx, formationHtml, formationDebugHtml };
 }
 
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
@@ -7145,6 +7197,7 @@ function openTrainProgress(train, service){
       <div id="train-progress-reason-toggle-wrap" style="margin-bottom:10px; ${initial.anyReasonSuppressed ? '' : 'display:none;'}">
         <span id="show-all-reasons-toggle" style="font-size:12px; text-decoration:underline; color:var(--ink-dim); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
       </div>
+      <div id="train-progress-formation-wrap">${initial.formationHtml}${initial.formationDebugHtml}</div>
       <div id="train-progress-scroll" style="flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
         <div style="position:relative; padding-left:6px;">
           <div id="train-progress-line" style="position:absolute; left:11px; top:0px; width:2px; height:0px; background:var(--line);"></div>
@@ -7237,6 +7290,8 @@ function openTrainProgress(train, service){
     const summaryEl = overlay.querySelector('#train-progress-summary');
     if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
     if (summaryEl) summaryEl.innerHTML = rebuilt.summaryHtml;
+    const formationWrapEl = overlay.querySelector('#train-progress-formation-wrap');
+    if (formationWrapEl) formationWrapEl.innerHTML = rebuilt.formationHtml + rebuilt.formationDebugHtml;
     positionBlobAndLine(rebuilt.lastPassedIdx, rebuilt.fraction, 'auto');
     const reasonToggleWrap = overlay.querySelector('#train-progress-reason-toggle-wrap');
     const reasonToggle = document.getElementById('show-all-reasons-toggle');
@@ -7379,8 +7434,10 @@ function openTrainProgress(train, service){
         const offlineBanner = overlay.querySelector('#train-progress-offline-banner');
         const blobEl = overlay.querySelector('#train-progress-blob');
         const reasonToggleWrap = overlay.querySelector('#train-progress-reason-toggle-wrap');
+        const formationWrapEl = overlay.querySelector('#train-progress-formation-wrap');
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
+        if (formationWrapEl) formationWrapEl.innerHTML = fresh.formationHtml + fresh.formationDebugHtml;
         positionBlobAndLine(fresh.lastPassedIdx, fresh.fraction);
         renderGeneration++;
         applyWeather(fresh.weatherPoints, fresh.lastPassedIdx, fresh.fraction, renderGeneration);
