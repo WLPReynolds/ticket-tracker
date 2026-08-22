@@ -749,6 +749,121 @@
     padding: 60px 20px;
     color: var(--ink-dim);
   }
+
+  /* Transient toast — see showToast(). Sits above everything, including
+     a full-screen modal, since it's meant to be readable regardless of
+     what screen triggered it (e.g. tapping a delay cell inside the
+     Performance history table). */
+  .app-toast{
+    position: fixed;
+    left: 16px; right: 16px;
+    bottom: calc(84px + env(safe-area-inset-bottom));
+    z-index: 300;
+    background: var(--tile);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--amber);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--ink);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  .app-toast.visible{
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Performance history — a table wide/tall enough that it needs both
+     scroll axes: sticky header row (usual trains) + sticky first column
+     (dates), same "freeze panes" idea as a spreadsheet, so whichever
+     direction you're scrolling in you can still see what row/column
+     you're looking at. */
+  .perf-history-scroll{
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .perf-history-table{
+    border-collapse: separate;
+    border-spacing: 0;
+    width: max-content;
+    min-width: 100%;
+  }
+  .perf-history-table th, .perf-history-table td{
+    padding: 9px 14px;
+    font-size: 13px;
+    text-align: right;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--line);
+  }
+  .perf-history-table th:first-child, .perf-history-table td:first-child{
+    text-align: left;
+    position: sticky;
+    left: 0;
+    background: var(--board-2);
+    z-index: 2;
+  }
+  .perf-history-table thead th{
+    position: sticky;
+    top: 0;
+    background: var(--board-2);
+    z-index: 3;
+    color: var(--ink-dim);
+    font-size: 10.5px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+  .perf-history-table thead th:first-child{ z-index: 4; } /* corner cell — beats both sticky layers it overlaps */
+  .perf-history-cell{
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  .perf-history-cell.delay-red{ color: var(--danger); font-weight: 700; }
+  .perf-history-cell.delay-amber{ color: var(--amber); font-weight: 700; }
+  .perf-history-cell.delay-cancelled{ color: var(--danger); font-weight: 700; font-style: italic; }
+  /* Deliberately NOT position:fixed — it doesn't need to be. Only
+     .perf-history-scroll above it scrolls (flex:1; overflow:auto); this
+     bar is just the next flex child after it in the modal's column
+     layout, so it naturally stays put at the bottom of the screen,
+     pinned right above the real bottom nav (whose height the modal's
+     own padding-bottom already reserves), exactly like the existing
+     Station board screen keeps its refresh/close controls visible below
+     its own internally-scrolling panels. */
+  .perf-history-avg-bar{
+    flex-shrink: 0;
+    background: var(--board-2);
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-around;
+    padding: 10px 14px;
+  }
+  .perf-history-avg-item{
+    text-align: center;
+  }
+  .perf-history-avg-item .avg-label{
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .perf-history-avg-item .avg-value{
+    font-size: 16px;
+    font-weight: 800;
+    margin-top: 2px;
+  }
   @keyframes blob-pulse{
     0%, 100% { opacity: 1; transform: scale(1); }
     50% { opacity: 0.5; transform: scale(1.3); }
@@ -1129,7 +1244,14 @@ let railDaysBack = 3; // how far back the day list currently scrolls; grows via 
 const RAIL_DAYS_BACK_STEP = 7;
 const RAIL_MAX_DAYS_BACK = 28; // matches Avanti's Delay Repay claim deadline
 let railTrains = []; // [{ key, direction: 'AM'|'PM', fromLoc, toLoc, time, label }]
-let railPerfCache = {}; // { "YYYY-MM-DD": { trainKey: { delayMinutes, onTime } } }
+let railPerfCache = {}; // { "YYYY-MM-DD": { trainKey: { delayMinutes, onTime, cancelled, reason } } } — delayMinutes/onTime are null/false when cancelled is true
+// { fetchedAt: <ms epoch>, codes: { "<numeric code>": { late: "...", canc: "..." } } }
+// — decodes railPerfCache's raw numeric `reason` into the actual English
+// text RDM's reference-data product gives for it. Refetched at most once
+// a month (see REASON_CODES_MAX_AGE_MS below); the app works fine with
+// no map at all, it just falls back to showing the bare code.
+let reasonCodesCache = { fetchedAt: 0, codes: {} };
+const REASON_CODES_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 let railSyncInProgress = false;
 
 // Marks the Drive backup as needing a fresh upload whenever any of the
@@ -1138,8 +1260,17 @@ let railSyncInProgress = false;
 // automatically — no need to remember to flag dirtiness by hand.
 (function installDriveBackupDirtyTracker(){
   const originalSetItem = localStorage.setItem.bind(localStorage);
+  // BACKUP_KEYS isn't declared yet at this point in the file (it's a
+  // const further down), so the one exclusion that matters here is
+  // duplicated rather than referenced — small and deliberate, not worth
+  // restructuring load order over. reason-codes-cache is the only
+  // regular data key excluded from the backup payload itself (see
+  // BACKUP_KEYS's own comment — it's disposable, unlike rail-perf-cache,
+  // which IS backed up), so writes to it shouldn't mark a backup as
+  // needed when nothing backup-relevant actually changed.
+  const NON_BACKUP_KEYS = new Set(['drive-backup-dirty', 'drive-backup-last-time', 'reason-codes-cache']);
   localStorage.setItem = function(key, value){
-    if (key !== 'drive-backup-dirty' && key !== 'drive-backup-last-time'){
+    if (!NON_BACKUP_KEYS.has(key)){
       driveBackupDirty = true;
       try{ originalSetItem('drive-backup-dirty', JSON.stringify(true)); }catch(e){}
     }
@@ -1593,6 +1724,10 @@ async function loadData(){
     railPerfCache = rc ? JSON.parse(rc) : {};
   }catch(e){ railPerfCache = {}; }
   try{
+    const rcc = localStorage.getItem('reason-codes-cache');
+    reasonCodesCache = rcc ? JSON.parse(rcc) : { fetchedAt: 0, codes: {} };
+  }catch(e){ reasonCodesCache = { fetchedAt: 0, codes: {} }; }
+  try{
     const ct = localStorage.getItem('confirmed-trains');
     confirmedTrains = ct ? JSON.parse(ct) : {};
   }catch(e){ confirmedTrains = {}; }
@@ -1774,6 +1909,10 @@ async function saveRailPerfCache(){
   try{ localStorage.setItem('rail-perf-cache', JSON.stringify(railPerfCache)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
+async function saveReasonCodesCache(){
+  try{ localStorage.setItem('reason-codes-cache', JSON.stringify(reasonCodesCache)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
 async function saveConfirmedTrains(){
   try{ localStorage.setItem('confirmed-trains', JSON.stringify(confirmedTrains)); }
   catch(e){ /* save failed silently; will retry next change */ }
@@ -1908,6 +2047,47 @@ async function railSyncMissingDates(){
   } finally {
     railSyncInProgress = false;
   }
+}
+
+// Fetches and caches the reason-code → English text table (see
+// darwin-live-worker.js's /reason-codes route) if the local copy is
+// missing or older than REASON_CODES_MAX_AGE_MS. Safe to call often —
+// it's a no-op whenever the cache is already fresh. Never throws; a
+// failed fetch just leaves whatever was already cached (possibly
+// nothing) in place, since a bare numeric code is still shown as a
+// fallback rather than the toast being blocked entirely.
+async function ensureReasonCodes(){
+  const age = Date.now() - (reasonCodesCache.fetchedAt || 0);
+  if (age < REASON_CODES_MAX_AGE_MS && Object.keys(reasonCodesCache.codes).length > 0) return;
+  try{
+    const resp = await fetch(`${DARWIN_WORKER_URL}/reason-codes`);
+    if (!resp.ok) return;
+    const list = await resp.json();
+    if (!Array.isArray(list)) return;
+    const codes = {};
+    for (const entry of list){
+      if (entry && entry.code !== undefined && entry.code !== null){
+        codes[String(entry.code)] = { late: entry.lateReason || null, canc: entry.cancReason || null };
+      }
+    }
+    reasonCodesCache = { fetchedAt: Date.now(), codes };
+    await saveReasonCodesCache();
+  }catch(e){
+    // Offline or the worker's unreachable — whatever was already cached
+    // (even if that's nothing) is left as-is; nothing to surface here.
+  }
+}
+
+// Looks up a raw reason code (as stored in railPerfCache[date][key].reason)
+// against the cached table, returning the right text for whether the
+// service was delayed or cancelled. Falls back to a plain "reason code
+// N" string if the table hasn't loaded that code yet, rather than
+// showing nothing at all.
+function describeReasonCode(code, isCancelled){
+  if (code === null || code === undefined || code === '') return null;
+  const entry = reasonCodesCache.codes[String(code)];
+  const text = entry ? (isCancelled ? entry.canc : entry.late) : null;
+  return text || `Reason code ${code} — description not loaded yet`;
 }
 
 async function syncBankHolidays(){
@@ -2597,6 +2777,7 @@ function render(){
     { id: 'depboard-link', label: 'Station board', weight: 0 },
     { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
     { id: 'stats-link', label: 'View stats', weight: 0 },
+    { id: 'perf-history-link', label: 'Performance history', weight: 0 },
     { id: 'delay-claims-link', label: 'Delay repay claims', weight: 0 },
   ];
   if (typeof Notification !== 'undefined' && Notification.permission === 'default'){
@@ -3173,6 +3354,9 @@ function render(){
 
   const statsLink = document.getElementById('stats-link');
   if (statsLink) statsLink.addEventListener('click', () => { menuOpen = false; render(); openStatsView(); });
+
+  const perfHistoryLink = document.getElementById('perf-history-link');
+  if (perfHistoryLink) perfHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openPerformanceHistoryView(); });
 
   const delayClaimsLink = document.getElementById('delay-claims-link');
   if (delayClaimsLink) delayClaimsLink.addEventListener('click', () => { menuOpen = false; render(); openDelayClaimsManager(); });
@@ -4237,11 +4421,17 @@ function openDayReturnPriceEditor(){
 // Deliberately excludes: confirmed-point-status-cache, silent-confirm-banner
 // (transient UI/derived state, not something a restore needs), and
 // drive-backup-dirty/drive-backup-last-time (the backup mechanism's own
-// internal bookkeeping, not app data). Also excludes the smartcard pass
-// photo entirely — that lives in IndexedDB, not localStorage, and isn't
-// covered by this mechanism at all. If that ever needs to change, the
-// messaging around what a backup contains needs updating alongside it,
-// not just this list.
+// internal bookkeeping, not app data). Also excludes reason-codes-cache —
+// that one's genuinely disposable (ensureReasonCodes() re-fetches it
+// whenever it's missing or stale, and it's the same table for everyone,
+// not personal data). rail-perf-cache stays IN the backup, unlike
+// reason-codes-cache: HSP's retention window means a badly-delayed
+// restore could otherwise lose real history permanently, not just
+// re-fetch it. Also excludes the smartcard pass photo entirely — that
+// lives in IndexedDB, not localStorage, and isn't covered by this
+// mechanism at all. If any of this ever needs to change, the messaging
+// around what a backup contains needs updating alongside it, not just
+// this list.
 const BACKUP_KEYS = [
   'bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
   'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id',
@@ -7526,6 +7716,133 @@ function openRailDetail(key){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
+// Full performance history — every day railPerfCache has ever recorded
+// (it's kept permanently, not just the rolling window the day list
+// shows), against every currently configured usual train, as a table:
+// trains across the top (sticky), dates down the side (sticky), both
+// axes scrollable since a few months of data with several trains
+// configured won't fit either dimension on a phone screen. Tapping a
+// delayed cell with a recorded reason code shows what it was.
+function openPerformanceHistoryView(){
+  // Best-effort refresh — a stale/missing table just means reason taps
+  // fall back to "description not loaded yet" until this resolves.
+  ensureReasonCodes();
+
+  const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
+  const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a, b) => a.time.localeCompare(b.time));
+  const orderedTrains = [...amTrains, ...pmTrains];
+
+  const dateKeys = Object.keys(railPerfCache).sort((a, b) => (a < b ? 1 : (a > b ? -1 : 0))); // most recent first
+
+  // Average delay, split AM vs PM, across every recorded day for the
+  // currently configured usual trains — the whole point of keeping this
+  // data permanently is the long-run picture, not just what's currently
+  // scrolled into view. A train that ran early counts as 0 delay here
+  // rather than pulling the average below zero — this is meant to answer
+  // "how late does my train usually run", not track signed deviation
+  // from schedule.
+  function averageForDirection(trains){
+    let total = 0, count = 0;
+    for (const dateKey of dateKeys){
+      const dayPerf = railPerfCache[dateKey];
+      for (const t of trains){
+        const perf = dayPerf[t.key];
+        if (!perf || typeof perf.delayMinutes !== 'number') continue;
+        total += Math.max(0, perf.delayMinutes);
+        count++;
+      }
+    }
+    return count > 0 ? total / count : null;
+  }
+  const amAvg = amTrains.length ? averageForDirection(amTrains) : null;
+  const pmAvg = pmTrains.length ? averageForDirection(pmTrains) : null;
+  const avgItemHtml = (label, avg) => `
+    <div class="perf-history-avg-item">
+      <div class="avg-label">${label} avg delay</div>
+      <div class="avg-value">${avg === null ? '—' : `${avg.toFixed(1)} min`}</div>
+    </div>`;
+
+  function cellHtml(dateKey, train){
+    const perf = (railPerfCache[dateKey] || {})[train.key];
+    if (!perf){
+      return `<td style="color:var(--ink-dim);">–</td>`;
+    }
+    if (perf.cancelled){
+      const attrs = perf.reason ? ` data-perf-date="${dateKey}" data-perf-train="${escapeHtml(train.key)}"` : '';
+      return `<td class="perf-history-cell delay-cancelled"${attrs}>Cancelled</td>`;
+    }
+    if (typeof perf.delayMinutes !== 'number'){
+      return `<td style="color:var(--ink-dim);">–</td>`;
+    }
+    const mins = perf.delayMinutes;
+    let cls = '';
+    if (mins >= DELAY_REPAY_THRESHOLD_MINUTES) cls = 'delay-red';
+    else if (mins > 0) cls = 'delay-amber';
+    const text = mins <= 0 ? 'On time' : `${mins} min`;
+    // Only wired up as tappable if there's actually a reason recorded
+    // for it — an on-time row or one with no reason code just isn't
+    // interactive, rather than showing an empty toast on tap.
+    const tappable = mins > 0 && perf.reason;
+    const attrs = tappable ? ` data-perf-date="${dateKey}" data-perf-train="${escapeHtml(train.key)}"` : '';
+    return `<td class="perf-history-cell${cls ? ` ${cls}` : ''}"${attrs}>${text}</td>`;
+  }
+
+  const headerCellsHtml = orderedTrains.map(t =>
+    `<th>${escapeHtml(t.label)}<br><span style="font-weight:400; opacity:0.7;">${escapeHtml(t.direction)}</span></th>`
+  ).join('');
+  const rowsHtml = dateKeys.map(dateKey => `
+    <tr>
+      <td>${escapeHtml(dateLabelShort(parseKey(dateKey)))}</td>
+      ${orderedTrains.map(t => cellHtml(dateKey, t)).join('')}
+    </tr>
+  `).join('');
+
+  const tableHtml = (orderedTrains.length === 0)
+    ? `<div class="sub" style="padding:0 18px;">No usual trains configured yet — set them up under More → Settings first.</div>`
+    : (dateKeys.length === 0
+      ? `<div class="sub" style="padding:0 18px;">No performance data recorded yet.</div>`
+      : `<div class="perf-history-scroll">
+          <table class="perf-history-table">
+            <thead><tr><th>Date</th>${headerCellsHtml}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>`);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay modal-overlay-full';
+  overlay.style.alignItems = 'stretch';
+  overlay.innerHTML = `
+    <div class="modal" style="display:flex; flex-direction:column; padding:0 0 calc(72px + env(safe-area-inset-bottom)) 0; border-radius:0; overflow:hidden;">
+      <div style="padding:20px 18px 10px; flex-shrink:0;">
+        <h3>Performance history</h3>
+        <div class="sub" style="margin-bottom:0;">Tap a delayed entry to see why, if a reason's been recorded.</div>
+      </div>
+      ${tableHtml}
+      <div class="perf-history-avg-bar">
+        ${avgItemHtml('Morning', amAvg)}
+        ${avgItemHtml('Evening', pmAvg)}
+      </div>
+      <div class="modal-close" id="perf-history-close-btn" style="margin:10px 18px; background:var(--board-2); flex-shrink:0;">Close</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelectorAll('.perf-history-cell[data-perf-date]').forEach(cell => {
+    cell.addEventListener('click', () => {
+      const dateKey = cell.dataset.perfDate;
+      const trainKey = cell.dataset.perfTrain;
+      const perf = (railPerfCache[dateKey] || {})[trainKey];
+      if (!perf) return;
+      const text = describeReasonCode(perf.reason, !!perf.cancelled);
+      if (text) showToast(text);
+    });
+  });
+
+  document.getElementById('perf-history-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+}
+
 function openCalendarView(){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay cal-overlay';
@@ -8139,6 +8456,31 @@ function renderSilentConfirmBanner(){
   }
 }
 
+// One-off transient toast, e.g. for showing a decoded delay reason after
+// tapping a delay cell. Stacks harmlessly if called again before the
+// previous one has faded — each call owns its own element and timer —
+// though callers should generally avoid firing several in a row.
+let toastDismissTimer = null;
+function showToast(text){
+  const existing = document.getElementById('app-toast');
+  if (existing){
+    existing.remove();
+    if (toastDismissTimer){ clearTimeout(toastDismissTimer); toastDismissTimer = null; }
+  }
+  const el = document.createElement('div');
+  el.id = 'app-toast';
+  el.className = 'app-toast';
+  el.textContent = text;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('visible'));
+  const dismiss = () => {
+    el.classList.remove('visible');
+    setTimeout(() => { if (el.isConnected) el.remove(); }, 200);
+  };
+  el.addEventListener('click', dismiss, { once: true });
+  toastDismissTimer = setTimeout(dismiss, 4500);
+}
+
 (async function init(){
   await loadData();
   render();
@@ -8148,6 +8490,7 @@ function renderSilentConfirmBanner(){
   // delayed by a network call. Re-render only if new dates were filled in.
   syncBankHolidays().then((changed) => { if (changed) render(); });
   railSyncMissingDates();
+  ensureReasonCodes();
 
   // Backgrounding (switching away, locking the phone, or closing) is a
   // far more reliable signal on mobile than "unload" events, which the OS
