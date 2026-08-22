@@ -1068,7 +1068,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-22.11:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-22.11:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2082,50 +2082,37 @@ function getDelayStatus(dateKey){
 // the given trains — not whether railPerfCache has data for it, since
 // "asked and got nothing back" (service didn't run, no HSP record) is a
 // perfectly valid outcome that shouldn't be retried forever.
-function dateNeedsSync(dateKey, trains){
-  const synced = railSyncedDays[dateKey] || [];
-  return trains.some(t => !synced.includes(t.key));
-}
-
 // Shared fetch loop used by both railSyncMissingDates (travel days only,
 // for the delay-repay claims flow) and railSyncFullHistory (every
-// weekday, for the Performance history page). Handles the Worker's own
-// truncation (its 50-subrequest-per-call ceiling) by looping until
-// everything's covered or no further progress is being made, updates
-// railPerfCache with whatever results came back, and marks every date
-// actually processed this round — including ones with no result — as
-// synced for these trains in railSyncedDays, so a genuine gap doesn't
-// get re-queried indefinitely.
-// Shared fetch loop used by both railSyncMissingDates (travel days only,
-// for the delay-repay claims flow) and railSyncFullHistory (every
-// weekday, for the Performance history page). Handles the Worker's own
-// truncation (its 45-subrequest-per-call ceiling) by looping until
-// everything's covered or no further progress is being made, updates
-// railPerfCache with whatever results came back, and marks exactly which
-// (date, train) pairs the Worker actually resolved this round —
-// genuinely checked, whether or not it found anything — in
-// railSyncedDays, so a genuine gap doesn't get re-queried indefinitely.
-// Tracked per train rather than assuming every requested train was
-// covered for every requested date: different trains can finish at
-// different points within the same call (one train's metrics call
-// failing while another succeeds, or the budget running out partway
-// through one train's dates but not another's), so treating "the date
-// is done" as a single flag shared across all trains would silently
-// stop asking about a train that was never actually resolved.
-async function railSyncDatesBatch(dates, trains){
-  let remaining = dates;
+// weekday, for the Performance history page). Takes neededByTrain —
+// { trainKey: [dates] } — rather than one date list shared across every
+// train, and narrows each train's own list independently as rounds
+// complete, so a retry only ever asks about the specific (train, date)
+// gaps still outstanding. Sharing one list across all trains would mean
+// a train that already had a complete answer gets needlessly resent (and
+// reprocessed server-side, burning its subrequest budget) on every round
+// just because some OTHER train in the batch still had gaps — starving
+// whichever trains happen to sort last in the list, worse the longer the
+// date range. Mutates neededByTrain in place; updates railPerfCache and
+// railSyncedDays with whatever the Worker resolved, marking exactly
+// which (date, train) pairs it actually answered — genuinely checked,
+// whether or not it found anything — so a genuine gap doesn't get
+// re-queried indefinitely.
+async function railSyncDatesBatch(neededByTrain, trains){
   let guard = 0;
-  while (remaining.length > 0 && guard < 8){
+  while (guard < 8){
     guard++;
+    const requestPayload = trains
+      .map(t => ({ key: t.key, fromLoc: t.fromLoc, toLoc: t.toLoc, time: t.time, dates: neededByTrain[t.key] || [] }))
+      .filter(r => r.dates.length > 0);
+    if (requestPayload.length === 0) break;
+
     let response;
     try{
       const resp = await fetch(RAIL_WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          trains: trains.map(t => ({ key: t.key, fromLoc: t.fromLoc, toLoc: t.toLoc, time: t.time })),
-          dates: remaining
-        })
+        body: JSON.stringify({ requests: requestPayload })
       });
       if (!resp.ok) break;
       response = await resp.json();
@@ -2140,10 +2127,14 @@ async function railSyncDatesBatch(dates, trains){
     }
 
     const attemptedDates = response.attemptedDates || {};
-    for (const trainKey in attemptedDates){
-      for (const date of attemptedDates[trainKey]){
-        const already = railSyncedDays[date] || [];
-        if (!already.includes(trainKey)) railSyncedDays[date] = [...already, trainKey];
+    let anyProgress = false;
+    for (const trainKey in neededByTrain){
+      const attempted = new Set(attemptedDates[trainKey] || []);
+      if (attempted.size > 0) anyProgress = true;
+      neededByTrain[trainKey] = (neededByTrain[trainKey] || []).filter(d => !attempted.has(d));
+      for (const d of attempted){
+        const already = railSyncedDays[d] || [];
+        if (!already.includes(trainKey)) railSyncedDays[d] = [...already, trainKey];
       }
     }
 
@@ -2151,14 +2142,8 @@ async function railSyncDatesBatch(dates, trains){
     await saveRailSyncedDays();
     render();
 
-    // Still worth another round if any requested train wasn't fully
-    // attempted (per attemptedDates) for a given date — regardless of
-    // whether some other train already was.
-    const stillNeeded = remaining.filter(d =>
-      trains.some(t => !((attemptedDates[t.key] || []).includes(d)))
-    );
-    if (stillNeeded.length === 0 || stillNeeded.length === remaining.length) break; // done, or no progress — stop rather than loop forever
-    remaining = stillNeeded;
+    const remainingTotal = Object.values(neededByTrain).reduce((sum, arr) => sum + arr.length, 0);
+    if (remainingTotal === 0 || !anyProgress) break; // done, or no progress — stop rather than loop forever
   }
 }
 
@@ -2178,16 +2163,21 @@ async function railSyncMissingDates(){
   const todayKeyLocal = fmtKey(today);
   const oldestVisible = addDays(today, -railDaysBack);
 
-  const neededDates = [];
+  const neededByTrain = {};
+  for (const t of railTrains) neededByTrain[t.key] = [];
   for (let d = new Date(oldestVisible); d < today; d = addDays(d, 1)){
     if (!isEligibleRailDay(d, todayKeyLocal)) continue;
     const key = fmtKey(d);
-    if (dateNeedsSync(key, railTrains)) neededDates.push(key);
+    const synced = railSyncedDays[key] || [];
+    for (const t of railTrains){
+      if (!synced.includes(t.key)) neededByTrain[t.key].push(key);
+    }
   }
-  if (neededDates.length === 0) return;
+  const totalNeeded = Object.values(neededByTrain).reduce((sum, arr) => sum + arr.length, 0);
+  if (totalNeeded === 0) return;
 
   railSyncInProgress = true;
-  try{ await railSyncDatesBatch(neededDates, railTrains); }
+  try{ await railSyncDatesBatch(neededByTrain, railTrains); }
   finally{ railSyncInProgress = false; }
 }
 
@@ -2196,11 +2186,11 @@ async function railSyncMissingDates(){
 // railSyncMissingDates above. This is what gives the Performance history
 // page (and its averages) the full picture of how the trains actually
 // run, not just the subset of days you happened to be on them. Safe to
-// call often: dateNeedsSync means dates already covered for every
-// currently-configured train are skipped, so a repeat call is cheap —
-// though the very first call after a usual train is added or changed
-// will genuinely re-check the whole window for that train, which is the
-// point (a newly added train should get its own backfilled history too).
+// call often: dates already covered for every currently-configured
+// train are skipped, so a repeat call is cheap — though the very first
+// call after a usual train is added or changed will genuinely re-check
+// the whole window for that train, which is the point (a newly added
+// train should get its own backfilled history too).
 async function railSyncFullHistory(){
   if (railSyncInProgress) return;
   if (!railTrains || railTrains.length === 0) return;
@@ -2209,16 +2199,21 @@ async function railSyncFullHistory(){
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const oldest = addDays(today, -railHistoryDaysBack);
 
-  const neededDates = [];
+  const neededByTrain = {};
+  for (const t of railTrains) neededByTrain[t.key] = [];
   for (let d = new Date(oldest); d < today; d = addDays(d, 1)){
     if (isWeekend(d)) continue;
     const key = fmtKey(d);
-    if (dateNeedsSync(key, railTrains)) neededDates.push(key);
+    const synced = railSyncedDays[key] || [];
+    for (const t of railTrains){
+      if (!synced.includes(t.key)) neededByTrain[t.key].push(key);
+    }
   }
-  if (neededDates.length === 0) return;
+  const totalNeeded = Object.values(neededByTrain).reduce((sum, arr) => sum + arr.length, 0);
+  if (totalNeeded === 0) return;
 
   railSyncInProgress = true;
-  try{ await railSyncDatesBatch(neededDates, railTrains); }
+  try{ await railSyncDatesBatch(neededByTrain, railTrains); }
   finally{ railSyncInProgress = false; }
 }
 
