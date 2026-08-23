@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-22.23:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-23.17:43'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1746,7 +1746,38 @@ const TRACKED_TRAIN_MAX_AGE_MS = 6 * 60 * 60 * 1000; // stop tracking after 6 ho
 const TRACKED_TRAIN_MAX = 5; // matches the cap enforced when a train is opened (see openTrainProgress) — kept in one place so the "Track a train" flow can check it before adding, rather than only finding out after something's already been silently dropped
 
 // "I think you're on this train" detection
-const GEOFENCE_RADIUS_M = 500; // informed by real field-test readings — Crewe/Wigan both fall well inside this
+const DEFAULT_GEOFENCE_RADIUS_M = 500; // original single value, informed by real field-test readings — now just the starting point for both stations, and a defensive fallback for an unrecognised station code
+// Sane bounds for either station's radius, shared by the settings editor
+// and by loading back from storage — a tight floor stops the boarding
+// side from being tuned so small that ordinary GPS wobble on the
+// platform itself starts causing missed detections; the ceiling is a
+// sanity cap well beyond the original 500m already found too wide.
+const GEOFENCE_RADIUS_MIN_M = 50;
+const GEOFENCE_RADIUS_MAX_M = 1000;
+function clampGeofenceRadius(v){
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < GEOFENCE_RADIUS_MIN_M) return GEOFENCE_RADIUS_MIN_M;
+  return Math.min(GEOFENCE_RADIUS_MAX_M, Math.round(n));
+}
+// Resolved, per-station values — always the actual effective radius in
+// use right now, whether set independently or currently driven by the
+// other station's "Match" tickbox in the settings editor. Deliberately
+// the only thing the geofence check itself ever reads — anything reading
+// these later (this app, or a future Wear OS companion) only ever needs
+// two plain numbers, not the sync relationship that produced them.
+let geofenceRadiusCrewe = DEFAULT_GEOFENCE_RADIUS_M;
+let geofenceRadiusWigan = DEFAULT_GEOFENCE_RADIUS_M;
+// UI memory only — which direction of sync (if any) the settings editor
+// should show as ticked next time it's opened. At most one of these is
+// ever true; the editor enforces that mutual exclusion on tick, not just
+// on save. Not consulted by the geofence check itself.
+let geofenceCreweMatchesWigan = false;
+let geofenceWiganMatchesCrewe = false;
+function geofenceRadiusForCrs(crs){
+  if (crs === 'CRE') return geofenceRadiusCrewe;
+  if (crs === 'WGN') return geofenceRadiusWigan;
+  return DEFAULT_GEOFENCE_RADIUS_M; // defensive — shouldn't happen with the two configured stations
+}
 const LIKELY_TRAIN_CHECK_INTERVAL_MS = 2 * 60 * 1000; // how often to check while the app is open
 // Was 45 — wide enough that adjacent configured trains an hour apart
 // (e.g. 16:31/17:31) had overlapping windows, so simply being near the
@@ -1833,6 +1864,22 @@ async function loadData(){
     const pci = localStorage.getItem('poll-check-in-interval-min');
     pollCheckInIntervalMin = clampPollCheckInIntervalMin(pci ? JSON.parse(pci) : 15);
   }catch(e){ pollCheckInIntervalMin = 15; }
+  try{
+    const grc = localStorage.getItem('geofence-radius-crewe');
+    geofenceRadiusCrewe = clampGeofenceRadius(grc ? JSON.parse(grc) : DEFAULT_GEOFENCE_RADIUS_M);
+  }catch(e){ geofenceRadiusCrewe = DEFAULT_GEOFENCE_RADIUS_M; }
+  try{
+    const grw = localStorage.getItem('geofence-radius-wigan');
+    geofenceRadiusWigan = clampGeofenceRadius(grw ? JSON.parse(grw) : DEFAULT_GEOFENCE_RADIUS_M);
+  }catch(e){ geofenceRadiusWigan = DEFAULT_GEOFENCE_RADIUS_M; }
+  try{
+    const gcmw = localStorage.getItem('geofence-crewe-matches-wigan');
+    geofenceCreweMatchesWigan = gcmw ? JSON.parse(gcmw) : false;
+  }catch(e){ geofenceCreweMatchesWigan = false; }
+  try{
+    const gwmc = localStorage.getItem('geofence-wigan-matches-crewe');
+    geofenceWiganMatchesCrewe = gwmc ? JSON.parse(gwmc) : false;
+  }catch(e){ geofenceWiganMatchesCrewe = false; }
   try{
     const dr = localStorage.getItem('ticket-day-return-price');
     dayReturnPrice = dr ? JSON.parse(dr) : 21.00;
@@ -2048,6 +2095,14 @@ async function savePollingSettings(){
   try{
     localStorage.setItem('poll-before-departure-min', JSON.stringify(pollBeforeDepartureMin));
     localStorage.setItem('poll-check-in-interval-min', JSON.stringify(pollCheckInIntervalMin));
+  }catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveGeofenceSettings(){
+  try{
+    localStorage.setItem('geofence-radius-crewe', JSON.stringify(geofenceRadiusCrewe));
+    localStorage.setItem('geofence-radius-wigan', JSON.stringify(geofenceRadiusWigan));
+    localStorage.setItem('geofence-crewe-matches-wigan', JSON.stringify(geofenceCreweMatchesWigan));
+    localStorage.setItem('geofence-wigan-matches-crewe', JSON.stringify(geofenceWiganMatchesCrewe));
   }catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveDayReturnPrice(){
@@ -4168,7 +4223,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-22.21:21*
+*Last updated: v2026-08-23.17:43*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -4176,14 +4231,13 @@ const BACKLOG_MD = `
 4. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon.
 5. **Costs as one combined form** — currently a further list of two links (parking cost, day return price) rather than a single screen. Last remaining piece of the old Settings UI polish item — icon grid and in-place Back navigation are both done now.
 6. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
-7. **500m geofence radius likely too wide for the boarding-side silent detection/prompt** — now two real data points, both false positives. The first (403m) was a dropped pin near the station. The second, more telling one: a genuine office on the person's own walk route to the station, measured at 185m — comfortably inside even a much tighter radius than 500m. Genuine trade-off, not a simple number change: shrinking the radius reduces false positives like these, but risks reintroducing missed detections on the platform itself, since GPS accuracy in a station environment (tall buildings, sometimes indoor/underground platforms) can itself be poor. Needs a decision on how much to tighten, or whether a different signal entirely (e.g. dwell time / position stability, not just a single distance check) would serve better — worth a proper discussion rather than picking a number blind.
-8. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
-9. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
-10. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
-11. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
-12. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
-13. **Destination picker for search-tracked (non-configured) trains** — the tracked-to-station platform/atd-ata accuracy check (built for Crewe) only ever fires for one of the five hardcoded \`railTrains\` routes, because it's keyed entirely off \`train.toLoc\`, and that's only ever set for those. A train tracked from a station search (e.g. Stockport → wherever) opens with just \`{ label, fromLoc, serviceId }\` — no destination captured anywhere, so every calling point past the origin misses out, not just the physical end of the journey. Fix: when tracking a searched train, let the user pick which calling point is their actual destination (defaulting to none), store it as \`toLoc\` on the tracked-train entry the same way a configured route already has one — the existing platform/notification logic should then apply with no further changes. Raised heading into the Christmas period, when off-usual-route journeys (e.g. into Manchester for shopping) are more likely than normal.
-14. **Watch item, not a bug: \`stationBoardForService\`'s same-minute tie-break hasn't been observed live yet** — the RID-numeric-prefix tie-break (used when two services share the same \`schedTime\` on a pure dep/arr board) is sound in design and its underlying premise (the numeric prefix is portable across board products, the trailing station tag isn't) is confirmed via real Cloudflare logs — but the tie-break logic itself triggering on a genuine same-minute collision hasn't been. No action needed: if it ever does trigger ambiguously, the Worker already logs up to 50 candidate services rather than guessing (\`stationBoardForService ambiguous match\` in Cloudflare's logs) — that log entry, whenever it first appears, is the real-world test case worth pulling and reviewing.
+7. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
+8. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
+9. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
+10. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
+11. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
+12. **Destination picker for search-tracked (non-configured) trains** — the tracked-to-station platform/atd-ata accuracy check (built for Crewe) only ever fires for one of the five hardcoded \`railTrains\` routes, because it's keyed entirely off \`train.toLoc\`, and that's only ever set for those. A train tracked from a station search (e.g. Stockport → wherever) opens with just \`{ label, fromLoc, serviceId }\` — no destination captured anywhere, so every calling point past the origin misses out, not just the physical end of the journey. Fix: when tracking a searched train, let the user pick which calling point is their actual destination (defaulting to none), store it as \`toLoc\` on the tracked-train entry the same way a configured route already has one — the existing platform/notification logic should then apply with no further changes. Raised heading into the Christmas period, when off-usual-route journeys (e.g. into Manchester for shopping) are more likely than normal.
+13. **Watch item, not a bug: \`stationBoardForService\`'s same-minute tie-break hasn't been observed live yet** — the RID-numeric-prefix tie-break (used when two services share the same \`schedTime\` on a pure dep/arr board) is sound in design and its underlying premise (the numeric prefix is portable across board products, the trailing station tag isn't) is confirmed via real Cloudflare logs — but the tie-break logic itself triggering on a genuine same-minute collision hasn't been. No action needed: if it ever does trigger ambiguously, the Worker already logs up to 50 candidate services rather than guessing (\`stationBoardForService ambiguous match\` in Cloudflare's logs) — that log entry, whenever it first appears, is the real-world test case worth pulling and reviewing.
 `;
 
 function openHelpGuide(){
@@ -4230,6 +4284,7 @@ const SETTINGS_ICONS = {
   cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .3-8 6 6 0 0 0-11.6 1.6A4 4 0 0 0 7 18z"/></svg>',
   bug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="10" rx="4"/><path d="M12 8V5M8 11H4M20 11h-4M9 6 7.5 4.5M15 6l1.5-1.5M8 18l-2 2M16 18l2 2M9 13h6"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
+  geo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-7.5 7-12a7 7 0 1 0-14 0c0 4.5 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>',
 };
 
 function openSettingsMenu(){
@@ -4250,6 +4305,7 @@ function openSettingsMenu(){
       <div class="settings-grid">
         <div class="settings-grid-item" id="settings-costs-link">${SETTINGS_ICONS.costs}<span class="cat-label">Costs</span></div>
         <div class="settings-grid-item" id="settings-polling-link">${SETTINGS_ICONS.polling}<span class="cat-label">Polling</span></div>
+        <div class="settings-grid-item" id="settings-geofence-link">${SETTINGS_ICONS.geo}<span class="cat-label">Geofence</span></div>
         <div class="settings-grid-item${preferredGoogleEmail ? ' active' : ''}" id="settings-preferred-google-link">${SETTINGS_ICONS.account}<span class="cat-label">Account</span><span class="status-label">${preferredGoogleEmail ? 'Connected' : 'Not connected'}</span></div>
         <div class="settings-grid-item${gcalEnabled ? ' active' : ''}" id="settings-gcal-link">${SETTINGS_ICONS.calendar}<span class="cat-label">Calendar</span><span class="status-label">${gcalEnabled ? 'Connected' : 'Not connected'}</span></div>
         <div class="settings-grid-item" id="settings-rail-config-link">${SETTINGS_ICONS.train}<span class="cat-label">Trains</span></div>
@@ -4277,6 +4333,7 @@ function openSettingsMenu(){
 
   document.getElementById('settings-costs-link').addEventListener('click', () => { close(); openCostsMenu(true); });
   document.getElementById('settings-polling-link').addEventListener('click', () => { close(); openPollingSettingsEditor(true); });
+  document.getElementById('settings-geofence-link').addEventListener('click', () => { close(); openGeofenceSettingsEditor(true); });
   document.getElementById('settings-preferred-google-link').addEventListener('click', () => { close(); openPreferredGoogleEditor(true); });
   document.getElementById('settings-rail-config-link').addEventListener('click', () => { close(); openRailConfig(true); });
   document.getElementById('settings-pass-photo-link').addEventListener('click', () => { close(); openPassPhotoManager(true); });
@@ -4430,6 +4487,98 @@ function openPollingSettingsEditor(cameFromSettings){
     }
   });
   document.getElementById('poll-settings-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+    if (cameFromSettings) openSettingsMenu();
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay){
+      document.body.removeChild(overlay);
+      if (cameFromSettings) openSettingsMenu();
+    }
+  });
+}
+
+function openGeofenceSettingsEditor(cameFromSettings){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Geofence radius</h3>
+      <div class="sub">How close you need to be to a station before the app will silently confirm a train or suggest one. Tighter catches false positives (like a nearby office on your walk in), but too tight risks missing a real detection if GPS wanders once you're on the platform itself.</div>
+
+      <div style="margin-top:14px; font-size:13px; color:var(--ink-dim);">Crewe radius (metres)</div>
+      <input type="number" id="geofence-crewe-input" value="${geofenceRadiusCrewe}" step="10" min="${GEOFENCE_RADIUS_MIN_M}" max="${GEOFENCE_RADIUS_MAX_M}" style="margin-bottom:6px;" />
+      <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-dim); margin-bottom:16px; cursor:pointer; -webkit-user-select:none; user-select:none;">
+        <input type="checkbox" id="geofence-crewe-match" ${geofenceCreweMatchesWigan ? 'checked' : ''} /> Match Wigan
+      </label>
+
+      <div style="font-size:13px; color:var(--ink-dim);">Wigan radius (metres)</div>
+      <input type="number" id="geofence-wigan-input" value="${geofenceRadiusWigan}" step="10" min="${GEOFENCE_RADIUS_MIN_M}" max="${GEOFENCE_RADIUS_MAX_M}" style="margin-bottom:6px;" />
+      <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-dim); margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none;">
+        <input type="checkbox" id="geofence-wigan-match" ${geofenceWiganMatchesCrewe ? 'checked' : ''} /> Match Crewe
+      </label>
+
+      <button class="save-btn" id="geofence-settings-save">Save</button>
+      <div class="modal-close" id="geofence-settings-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const creweInput = document.getElementById('geofence-crewe-input');
+  const wiganInput = document.getElementById('geofence-wigan-input');
+  const creweMatch = document.getElementById('geofence-crewe-match');
+  const wiganMatch = document.getElementById('geofence-wigan-match');
+
+  // Reflects the active sync direction (if any) in the fields themselves —
+  // the "driven" field is disabled and kept showing the other one's value,
+  // so it's visually obvious which side is in control before Save is even
+  // pressed.
+  function applyMatchUI(){
+    creweInput.disabled = creweMatch.checked;
+    wiganInput.disabled = wiganMatch.checked;
+    if (creweMatch.checked) creweInput.value = wiganInput.value;
+    if (wiganMatch.checked) wiganInput.value = creweInput.value;
+  }
+  applyMatchUI();
+
+  creweMatch.addEventListener('change', () => {
+    // Mutually exclusive — at most one direction of sync active at a
+    // time, or the two fields would each be trying to drive the other.
+    if (creweMatch.checked) wiganMatch.checked = false;
+    applyMatchUI();
+  });
+  wiganMatch.addEventListener('change', () => {
+    if (wiganMatch.checked) creweMatch.checked = false;
+    applyMatchUI();
+  });
+  creweInput.addEventListener('input', () => { if (wiganMatch.checked) wiganInput.value = creweInput.value; });
+  wiganInput.addEventListener('input', () => { if (creweMatch.checked) creweInput.value = wiganInput.value; });
+
+  document.getElementById('geofence-settings-save').addEventListener('click', async () => {
+    const creweVal = parseInt(creweInput.value, 10);
+    const wiganVal = parseInt(wiganInput.value, 10);
+    if (isNaN(creweVal) || isNaN(wiganVal)) return;
+    geofenceCreweMatchesWigan = creweMatch.checked;
+    geofenceWiganMatchesCrewe = wiganMatch.checked;
+    // Resolve to the actual effective numbers before storing — the
+    // geofence check (and anything else reading these later, including a
+    // future Wear OS companion) only ever needs two plain radii, not the
+    // sync relationship that produced them.
+    if (geofenceCreweMatchesWigan){
+      geofenceRadiusWigan = clampGeofenceRadius(wiganVal);
+      geofenceRadiusCrewe = geofenceRadiusWigan;
+    } else if (geofenceWiganMatchesCrewe){
+      geofenceRadiusCrewe = clampGeofenceRadius(creweVal);
+      geofenceRadiusWigan = geofenceRadiusCrewe;
+    } else {
+      geofenceRadiusCrewe = clampGeofenceRadius(creweVal);
+      geofenceRadiusWigan = clampGeofenceRadius(wiganVal);
+    }
+    await saveGeofenceSettings();
+    document.body.removeChild(overlay);
+    if (cameFromSettings) openSettingsMenu(); else render();
+  });
+  document.getElementById('geofence-settings-close').addEventListener('click', () => {
     document.body.removeChild(overlay);
     if (cameFromSettings) openSettingsMenu();
   });
@@ -4728,7 +4877,9 @@ function openDayReturnPriceEditor(){
 const BACKUP_KEYS = [
   'bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
   'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id',
-  'gcal-enabled','gcal-event-id','gcal-pending-sync','parked-days','parking-savings-snapshots',
+  'gcal-enabled','gcal-event-id','gcal-pending-sync',
+  'geofence-crewe-matches-wigan','geofence-radius-crewe','geofence-radius-wigan','geofence-wigan-matches-crewe',
+  'parked-days','parking-savings-snapshots',
   'payday-estimate-snapshots','poll-before-departure-min','poll-check-in-interval-min','preferred-google-email',
   'produce-claim-details-file','rail-perf-cache','rail-trains','smartcard-number',
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
@@ -5101,7 +5252,7 @@ async function checkLikelyTrain(){
     const pos = await getCurrentPositionOnce();
     if (!pos) continue; // no permission or unavailable — skip silently
     const distM = distanceKm(pos.latitude, pos.longitude, stationCoord.lat, stationCoord.lon) * 1000;
-    if (distM > GEOFENCE_RADIUS_M) continue; // not plausibly at the station
+    if (distM > geofenceRadiusForCrs(fromLoc)) continue; // not plausibly at the station
 
     let boards;
     try{ boards = await fetchLiveBoards(); }catch(e){ continue; }
@@ -5222,7 +5373,7 @@ async function checkLikelyArrival(){
     const pos = await getCurrentPositionOnce();
     if (!pos) continue;
     const distM = distanceKm(pos.latitude, pos.longitude, stationCoord.lat, stationCoord.lon) * 1000;
-    if (distM > GEOFENCE_RADIUS_M) continue;
+    if (distM > geofenceRadiusForCrs(toLoc)) continue;
 
     let arrivals;
     try{ arrivals = await fetchPureBoard(toLoc, 'arr', 20); }catch(e){ continue; }
