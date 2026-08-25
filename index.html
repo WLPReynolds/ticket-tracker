@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-25.22:08'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-25.22:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6467,6 +6467,22 @@ function findCallingPointSchedTime(service, crs){
   return null;
 }
 
+// Returns { crs, st } for the true first point of the journey — not
+// via service.origin[0], which turned out not to be a reliable field
+// on GetServiceDetails' own response shape (confirmed missing/unusable
+// live, 2026-08-25 — a wrong assumption on my part, carried over from
+// the combined/staff board products, which do have it). This instead
+// reuses previousCallingPoints — the exact same array that already
+// correctly renders the origin as the very first row on this screen —
+// so there's nothing here that isn't already proven to work. Returns
+// null when previousCallingPoints is empty, meaning the tracked
+// station itself IS the true origin (nothing earlier exists to anchor
+// to, nor any need to).
+function findServiceOriginPoint(service){
+  const points = (service && service.previousCallingPoints && service.previousCallingPoints[0] && service.previousCallingPoints[0].callingPoint) || [];
+  return points.length ? points[0] : null;
+}
+
 function describePointStatusRemembered(serviceId, pointKey, schedTime, liveTime, isCancelled){
   const status = describePointStatus(schedTime, liveTime, isCancelled);
   if (isCancelled || !serviceId || !pointKey) return status; // cancellation is unambiguous either way; no key to remember against
@@ -7852,12 +7868,22 @@ function openTrainProgress(train, service){
           // actual comparison, while the raw JSON shown below now
           // covers the whole thing, not just from wherever tracking
           // happened to start.
-          const originCrs = freshService.origin && freshService.origin[0] && freshService.origin[0].crs;
-          const destCrsForStaff = freshService.destination && freshService.destination[0] && freshService.destination[0].crs;
-          const anchorAtOrigin = originCrs && originCrs !== train.fromLoc;
-          const staffFromQueryCrs = anchorAtOrigin ? originCrs : train.fromLoc;
-          const staffFromSchedTime = anchorAtOrigin ? findCallingPointSchedTime(freshService, originCrs) : hereSchedTime;
-          const staffFromFilterCrs = anchorAtOrigin ? (destCrsForStaff || undefined) : (train.toLoc || undefined);
+          //
+          // originPoint comes from findServiceOriginPoint, not
+          // service.origin[0] — confirmed live (2026-08-25) that the
+          // latter isn't a reliable field on GetServiceDetails' own
+          // response shape, unlike on the combined/staff board
+          // products. filterCrs is train.fromLoc itself (not the
+          // service's ultimate destination) — what actually matters is
+          // finding the departure that reaches the station being
+          // tracked, which for a mid-journey configured route isn't
+          // necessarily the same as where the physical train eventually
+          // terminates.
+          const originPoint = findServiceOriginPoint(freshService);
+          const anchorAtOrigin = originPoint && originPoint.crs && originPoint.crs !== train.fromLoc;
+          const staffFromQueryCrs = anchorAtOrigin ? originPoint.crs : train.fromLoc;
+          const staffFromSchedTime = anchorAtOrigin ? originPoint.st : hereSchedTime;
+          const staffFromFilterCrs = anchorAtOrigin ? train.fromLoc : (train.toLoc || undefined);
           const staffFromFilterType = staffFromFilterCrs ? 'to' : undefined;
           const staffFromBoardType = anchorAtOrigin ? 'dep' : boardTypeForHere; // the true origin only ever departs — matched by std, never sta
           if (showRawDebug && staffFromSchedTime){
@@ -7915,6 +7941,16 @@ function openTrainProgress(train, service){
           // toLoc when it's anchored at the origin, so this fetch is
           // mainly an independent freshness cross-check for toLoc
           // specifically, not the only source of that station's data.
+          // Worth being aware of a structural limitation this side
+          // still carries, confirmed live (2026-08-25): the Worker's
+          // staffBoard type only ever calls GetDepBoardWithDetails (a
+          // departures product), so a query anchored at a station that
+          // has no onward departure — i.e. a genuine terminus — can
+          // never find that service no matter how the target time or
+          // filters are tuned. Not an issue for either of the two
+          // configured Crewe/Wigan routes (both always mid-journey),
+          // but worth remembering if toLoc is ever a searched train's
+          // actual final destination.
           // See staff-board-scoping.md Phase 2.
           if (showRawDebug && toSchedTime){
             fetchStaffBoardComparison(train.toLoc, train.fromLoc || undefined, train.fromLoc ? 'from' : undefined, 'arr', toSchedTime, freshService.sdd)
