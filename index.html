@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-25.21:44'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-25.22:08'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6382,6 +6382,26 @@ async function fetchStaffBoardComparison(crs, filterCrs, filterType, boardType, 
   return { raw: r.data, match, serviceCount: services.length, targetTime };
 }
 
+// Pulls out the arrival/departure fields for one specific station
+// (`wantedCrs`) from a matched Staff service, regardless of whether
+// that station is the one the query was actually anchored at (the
+// service's own top-level fields — confirmed: the top-level std/etd/
+// atd/sta/eta/ata on a Staff service always describe whichever station
+// the board itself was queried at, given back as `raw.crs`) or a
+// downstream point reachable via `subsequentLocations` (queried at an
+// earlier station — typically now the true origin, see the "from" side
+// fetch below). Returns null if `wantedCrs` genuinely isn't part of
+// this service's journey at all — shouldn't normally happen when
+// `wantedCrs` came from the same service's own known calling points,
+// but this is Phase 2 investigation code, so "surface it, don't hide
+// it" applies here too, same as fetchStaffBoardComparison above.
+function extractStaffLocationFields(raw, match, wantedCrs){
+  if (!match) return null;
+  if (raw && raw.crs === wantedCrs) return match;
+  const locs = Array.isArray(match.subsequentLocations) ? match.subsequentLocations : [];
+  return locs.find(l => l.crs === wantedCrs) || null;
+}
+
 // Compares a fresh stationBoardForService result against what was last
 // seen for this journey and fires exactly two kinds of notification:
 // the platform changing (including being confirmed for the first time),
@@ -7313,16 +7333,18 @@ function openTrainProgress(train, service){
     const tag = `${label} staff[${entry.schedTime ?? '?'}]`;
     if (entry.error) return `${tag}  ERROR: ${entry.error}`;
     if (!entry.match) return `${tag}  no matching service (${entry.serviceCount ?? 0} services returned, target=${entry.targetTime ?? '?'})`;
-    const m = entry.match;
+    const m = entry.match; // the whole matched service — used for journey-wide facts (subsequentLocations count, futureCancellation)
+    const wanted = entry.wanted; // this station's own fields specifically — see extractStaffLocationFields
+    if (!wanted) return `${tag}  matched a service, but ${entry.crs} isn't one of its own calling points (unexpected — worth a closer look)`;
     const fields = entry.boardType === 'dep' ? ['std', 'etd', 'atd'] : ['sta', 'eta', 'ata'];
-    const staffVals = fields.map(f => `${f}=${m[f] ?? '·'}`).join('  ');
+    const staffVals = fields.map(f => `${f}=${wanted[f] ?? '·'}`).join('  ');
     const darwinVals = (boardEntry && boardEntry.data)
       ? fields.map(f => `${f}=${boardEntry.data[f] ?? '·'}`).join('  ')
       : '(no Darwin pure-board result yet)';
     const flags = [
-      m.isCancelled ? 'CANCELLED' : null,
+      wanted.isCancelled ? 'CANCELLED' : null,
       m.futureCancellation ? 'FUTURE-CANCEL' : null,
-      m.lateness !== undefined ? `lateness=${m.lateness}` : null,
+      wanted.lateness !== undefined ? `lateness=${wanted.lateness}` : null,
     ].filter(Boolean).join(' ');
     const points = Array.isArray(m.subsequentLocations) ? m.subsequentLocations.length : 0;
     return [
@@ -7812,10 +7834,37 @@ function openTrainProgress(train, service){
           // it feeds real behaviour). Strictly read-only: no
           // boardOverrides write, no rebuildDisplay() call, ever. See
           // staff-board-scoping.md Phase 2.
-          if (showRawDebug && hereSchedTime){
-            fetchStaffBoardComparison(train.fromLoc, train.toLoc || undefined, train.toLoc ? 'to' : undefined, boardTypeForHere, hereSchedTime, freshService.sdd)
+          //
+          // Anchored at the service's TRUE origin, not train.fromLoc,
+          // whenever they differ — confirmed live (2026-08-25) that
+          // subsequentLocations only ever runs forward from wherever
+          // queried, never backward, so a train tracked from partway
+          // through its journey (a searched train, or either of the
+          // two configured Crewe/Wigan routes — neither is ever the
+          // service's actual origin) would otherwise never see Staff's
+          // view of anything before that point, even though the
+          // existing Darwin-based Live Progress screen already shows
+          // the full journey regardless (via GetServiceDetails'
+          // previousCallingPoints, looked up by serviceId rather than
+          // by station). Querying at the true origin instead returns
+          // the entire journey in one response; extractStaffLocationFields
+          // then picks train.fromLoc's own fields back out of it for the
+          // actual comparison, while the raw JSON shown below now
+          // covers the whole thing, not just from wherever tracking
+          // happened to start.
+          const originCrs = freshService.origin && freshService.origin[0] && freshService.origin[0].crs;
+          const destCrsForStaff = freshService.destination && freshService.destination[0] && freshService.destination[0].crs;
+          const anchorAtOrigin = originCrs && originCrs !== train.fromLoc;
+          const staffFromQueryCrs = anchorAtOrigin ? originCrs : train.fromLoc;
+          const staffFromSchedTime = anchorAtOrigin ? findCallingPointSchedTime(freshService, originCrs) : hereSchedTime;
+          const staffFromFilterCrs = anchorAtOrigin ? (destCrsForStaff || undefined) : (train.toLoc || undefined);
+          const staffFromFilterType = staffFromFilterCrs ? 'to' : undefined;
+          const staffFromBoardType = anchorAtOrigin ? 'dep' : boardTypeForHere; // the true origin only ever departs — matched by std, never sta
+          if (showRawDebug && staffFromSchedTime){
+            fetchStaffBoardComparison(staffFromQueryCrs, staffFromFilterCrs, staffFromFilterType, staffFromBoardType, staffFromSchedTime, freshService.sdd)
               .then(result => {
-                lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, ...result, error: null };
+                const wanted = extractStaffLocationFields(result.raw, result.match, train.fromLoc);
+                lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, ...result, wanted, error: null };
                 updateStaffDebugPanel();
               })
               .catch(err => {
@@ -7857,12 +7906,21 @@ function openTrainProgress(train, service){
           // actually been confirmed working live yet; if this side's
           // comparison ever shows serviceCount=0 or a suspicious
           // no-match, that's worth checking before trusting it, not
-          // silently assuming the mechanism is broken. See
-          // staff-board-scoping.md Phase 2.
+          // silently assuming the mechanism is broken. Still queried
+          // directly at train.toLoc (not origin-anchored like the
+          // "from" side) — since subsequentLocations runs forward from
+          // wherever queried, this side already sees everything from
+          // toLoc onward to the true final destination; the from-side
+          // fetch above already covers everything up to and including
+          // toLoc when it's anchored at the origin, so this fetch is
+          // mainly an independent freshness cross-check for toLoc
+          // specifically, not the only source of that station's data.
+          // See staff-board-scoping.md Phase 2.
           if (showRawDebug && toSchedTime){
             fetchStaffBoardComparison(train.toLoc, train.fromLoc || undefined, train.fromLoc ? 'from' : undefined, 'arr', toSchedTime, freshService.sdd)
               .then(result => {
-                lastStaffDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, ...result, error: null };
+                const wanted = extractStaffLocationFields(result.raw, result.match, train.toLoc);
+                lastStaffDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, ...result, wanted, error: null };
                 updateStaffDebugPanel();
               })
               .catch(err => {
