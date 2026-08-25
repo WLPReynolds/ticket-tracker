@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-25.21:31'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-25.21:44'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -7301,6 +7301,13 @@ function openTrainProgress(train, service){
   // output, not a permanent fixture, and keeping it structurally
   // distinct makes it trivial to delete cleanly later if the comparison
   // concludes there's nothing further to learn from it.
+  // Holds whatever raw JSON is currently on screen in the panel below,
+  // for the copy button — kept in this closure rather than read back
+  // out of a DOM attribute, since JSON's own quote characters would
+  // need their own separate (and easy to get subtly wrong) escaping
+  // rules to survive round-tripping through an HTML attribute; a plain
+  // JS variable has no such problem.
+  let lastStaffRawJson = null;
   function formatStaffCompareLine(entry, boardEntry, label){
     if (!entry) return null;
     const tag = `${label} staff[${entry.schedTime ?? '?'}]`;
@@ -7340,11 +7347,32 @@ function openTrainProgress(train, service){
     const rawSource = (lastStaffDebugFrom && lastStaffDebugFrom.match) ? lastStaffDebugFrom
       : (lastStaffDebugTo && lastStaffDebugTo.match) ? lastStaffDebugTo
       : null;
+    lastStaffRawJson = rawSource ? JSON.stringify(rawSource.match, null, 2) : null;
     const rawHtml = rawSource
-      ? `<div style="margin-top:6px; max-height:160px; overflow-y:auto; border:1px dashed var(--line); border-radius:6px; padding:6px;">${escapeHtml(JSON.stringify(rawSource.match, null, 2))}</div>`
+      ? `<div style="margin-top:6px;">
+          <span id="train-progress-staff-copy" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Copy raw JSON</span>
+          <div style="margin-top:4px; max-height:160px; overflow-y:auto; border:1px dashed var(--line); border-radius:6px; padding:6px;">${escapeHtml(lastStaffRawJson)}</div>
+        </div>`
       : '';
     el.innerHTML = `staff (LDBSVWS) comparison:<br>${lines.join('<br>')}${rawHtml}`;
     el.style.display = '';
+    // Re-queried and re-bound every render rather than delegated once —
+    // this whole panel's innerHTML gets replaced wholesale above, which
+    // would silently detach any listener bound the old-fashioned way.
+    // .onclick (a property assignment, not addEventListener) is safe to
+    // reassign like this on every call with no listener pile-up.
+    const copyBtn = el.querySelector('#train-progress-staff-copy');
+    if (copyBtn){
+      copyBtn.onclick = async () => {
+        if (!lastStaffRawJson) return;
+        try{
+          await navigator.clipboard.writeText(lastStaffRawJson);
+          showToast('Copied raw JSON');
+        }catch(e){
+          showToast('Copy failed — clipboard unavailable');
+        }
+      };
+    }
   }
   // Cleanup (below) clears the interval, but that alone can't cancel an
   // already-in-flight doRefresh() that's mid-await — without this flag,
