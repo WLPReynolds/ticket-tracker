@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-24.20:37'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-25.21:31'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6314,6 +6314,74 @@ async function fetchStationBoardForService(crs, boardType, schedTime, serviceId)
   return r.data || null; // null here means "not currently on this board" — see docblock above, not a failure
 }
 
+// Phase 2 (staff-board-scoping.md) — Staff board (LDBSVWS) read-only
+// comparison. Never called outside debug mode, never feeds into
+// boardOverrides or anything user-visible; this exists purely so the
+// raw-debug panel can show the Staff board's view of the same service
+// alongside the existing Darwin pure-board data already fetched for
+// comparison. See fetchStaffBoardComparison below for the actual fetch
+// + client-side match — the Worker's `staffBoard` query type does no
+// matching of its own, it's a thin proxy (see darwin-live-worker.js),
+// so matching against the right service in the returned list happens
+// here, the same way stationBoardForService's own matching happens
+// server-side instead — different split, same reason: whoever has the
+// context (a known schedTime to match against) does the matching.
+//
+// Builds the "yyyyMMddTHHmmss" target-time string the Staff board's
+// path requires. Deliberately built from local wall-clock string
+// pieces, never a parsed/reconstructed Date object crossing a BST
+// boundary — same discipline as localWallClockString above, for the
+// same reason (a UTC round-trip would shift the hour whenever BST is
+// in effect). Falls back to today's local date only if the service
+// itself didn't carry an `sdd` (schedule date) — normally it will.
+function buildStaffTargetTime(sdd, hhmm){
+  const pad = (n) => String(n).padStart(2, '0');
+  let dateDigits;
+  if (typeof sdd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(sdd)){
+    dateDigits = sdd.replace(/-/g, '');
+  } else {
+    const d = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+    dateDigits = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
+  }
+  return `${dateDigits}T${hhmm.replace(':', '')}00`;
+}
+
+// Fetches the Staff board at `crs` for the given target time, then
+// picks out (client-side — see docblock above) whichever returned
+// service's own std ('dep') or sta ('arr') matches schedTime to the
+// minute. filterCrs/filterType narrow the candidate list the same way
+// fetchLiveBoards' combined-board calls already do, but are optional —
+// the time-match above is what actually identifies the right service,
+// the filter is just there to keep the candidate list small and
+// relevant. Returns { raw, match, serviceCount } rather than throwing
+// on "no match found" — that's an ordinary outcome here (this endpoint
+// is still genuinely new; a shape or timing mismatch is exactly the
+// kind of thing Phase 2 exists to surface, not something to hide).
+async function fetchStaffBoardComparison(crs, filterCrs, filterType, boardType, schedTime, sdd){
+  const targetTime = buildStaffTargetTime(sdd, schedTime);
+  const resp = await fetch(DARWIN_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queries: [{ type: 'staffBoard', crs, targetTime, filterCrs, filterType }] })
+  });
+  if (!resp.ok) throw new Error(`Staff board request failed: ${resp.status}`);
+  const data = await resp.json();
+  const r = (data.results || [])[0];
+  if (!r || !r.ok){
+    const detail = r
+      ? `${r.reason || 'request failed'}${r.status ? ` (status ${r.status})` : ''}`
+      : 'no response from worker';
+    throw new Error(detail);
+  }
+  const services = (r.data && r.data.trainServices) || [];
+  const timeField = boardType === 'dep' ? 'std' : 'sta';
+  // Compare to the minute only — the service's own top-level std/sta
+  // carries seconds ("...T16:31:00"), targetTime doesn't need to.
+  const wantedPrefix = `${targetTime.slice(0, 8)}T${targetTime.slice(9, 13)}`;
+  const match = services.find(s => typeof s[timeField] === 'string' && s[timeField].replace(/[-:]/g, '').startsWith(wantedPrefix)) || null;
+  return { raw: r.data, match, serviceCount: services.length, targetTime };
+}
+
 // Compares a fresh stationBoardForService result against what was last
 // seen for this journey and fires exactly two kinds of notification:
 // the platform changing (including being confirmed for the first time),
@@ -7187,6 +7255,12 @@ function openTrainProgress(train, service){
   // "the Worker rejected the request" looked identical from here.
   let lastBoardDebugFrom = null; // { crs, boardType, schedTime, data, error }
   let lastBoardDebugTo = null;   // { crs, boardType, schedTime, data, error }
+  // Phase 2 staff-board comparison — same shape family as the two
+  // above, plus { match, serviceCount, raw } from fetchStaffBoardComparison.
+  // Strictly read-only: never merged into boardOverrides, never affects
+  // rebuildDisplay(). See staff-board-scoping.md.
+  let lastStaffDebugFrom = null;
+  let lastStaffDebugTo = null;
   // Feeds buildTrainProgress's mergeBoardOverride — the same fetched
   // pure-board data that drives the debug panel and notifications above,
   // now also applied to the actual rendered row for that station. Keyed
@@ -7214,6 +7288,62 @@ function openTrainProgress(train, service){
     const lines = [formatBoardDebugLine(lastBoardDebugFrom), formatBoardDebugLine(lastBoardDebugTo)].filter(Boolean);
     if (lines.length === 0){ el.style.display = 'none'; return; }
     el.innerHTML = lines.join('<br>');
+    el.style.display = '';
+  }
+  // Phase 2 staff-board comparison rendering. Two parts per side: a
+  // short summary line (Staff's own std/etd/atd or sta/eta/ata next to
+  // whatever the existing pure-board fetch above already returned for
+  // the same station — the actual point of the comparison), and the
+  // full raw Staff response underneath for whichever side has one, in
+  // the same collapsed/scrollable style as buildFormationDebugHtml.
+  // Deliberately separate from formatBoardDebugLine/updateBoardDebugPanel
+  // above rather than merged into them — this is Phase 2 investigation
+  // output, not a permanent fixture, and keeping it structurally
+  // distinct makes it trivial to delete cleanly later if the comparison
+  // concludes there's nothing further to learn from it.
+  function formatStaffCompareLine(entry, boardEntry, label){
+    if (!entry) return null;
+    const tag = `${label} staff[${entry.schedTime ?? '?'}]`;
+    if (entry.error) return `${tag}  ERROR: ${entry.error}`;
+    if (!entry.match) return `${tag}  no matching service (${entry.serviceCount ?? 0} services returned, target=${entry.targetTime ?? '?'})`;
+    const m = entry.match;
+    const fields = entry.boardType === 'dep' ? ['std', 'etd', 'atd'] : ['sta', 'eta', 'ata'];
+    const staffVals = fields.map(f => `${f}=${m[f] ?? '·'}`).join('  ');
+    const darwinVals = (boardEntry && boardEntry.data)
+      ? fields.map(f => `${f}=${boardEntry.data[f] ?? '·'}`).join('  ')
+      : '(no Darwin pure-board result yet)';
+    const flags = [
+      m.isCancelled ? 'CANCELLED' : null,
+      m.futureCancellation ? 'FUTURE-CANCEL' : null,
+      m.lateness !== undefined ? `lateness=${m.lateness}` : null,
+    ].filter(Boolean).join(' ');
+    const points = Array.isArray(m.subsequentLocations) ? m.subsequentLocations.length : 0;
+    return [
+      `${tag} — ${points} subsequentLocations${flags ? `  ${flags}` : ''}`,
+      `&nbsp;&nbsp;staff:  ${staffVals}`,
+      `&nbsp;&nbsp;darwin: ${darwinVals}`,
+    ].join('<br>');
+  }
+  function updateStaffDebugPanel(){
+    const el = overlay.querySelector('#train-progress-staff-debug');
+    if (!el) return;
+    if (!showRawDebug){ el.style.display = 'none'; return; }
+    const lines = [
+      formatStaffCompareLine(lastStaffDebugFrom, lastBoardDebugFrom, 'from'),
+      formatStaffCompareLine(lastStaffDebugTo, lastBoardDebugTo, 'to'),
+    ].filter(Boolean);
+    if (lines.length === 0){ el.style.display = 'none'; return; }
+    // Raw JSON for whichever side has a match — shown once, not per
+    // side, to keep this readable; if both sides ever need inspecting
+    // at once the summary lines above already show enough to know
+    // which one's worth a closer look via its own dedicated fetch.
+    const rawSource = (lastStaffDebugFrom && lastStaffDebugFrom.match) ? lastStaffDebugFrom
+      : (lastStaffDebugTo && lastStaffDebugTo.match) ? lastStaffDebugTo
+      : null;
+    const rawHtml = rawSource
+      ? `<div style="margin-top:6px; max-height:160px; overflow-y:auto; border:1px dashed var(--line); border-radius:6px; padding:6px;">${escapeHtml(JSON.stringify(rawSource.match, null, 2))}</div>`
+      : '';
+    el.innerHTML = `staff (LDBSVWS) comparison:<br>${lines.join('<br>')}${rawHtml}`;
     el.style.display = '';
   }
   // Cleanup (below) clears the interval, but that alone can't cancel an
@@ -7343,6 +7473,7 @@ function openTrainProgress(train, service){
       </div>
       <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
       <div id="train-progress-board-debug" style="display:none; font-family:monospace; font-size:10px; color:#6a7a8a; text-align:right; margin-top:-6px; margin-bottom:10px;"></div>
+      <div id="train-progress-staff-debug" style="display:none; font-family:monospace; font-size:10px; color:#6a7a8a; white-space:pre-wrap; text-align:left; margin-bottom:10px; border:1px dashed var(--line); border-radius:6px; padding:6px;"></div>
       <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
       <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:10px;">${initial.summaryHtml}</div>
       <div id="train-progress-reason-toggle-wrap" style="margin-bottom:10px; ${initial.anyReasonSuppressed ? '' : 'display:none;'}">
@@ -7460,6 +7591,7 @@ function openTrainProgress(train, service){
       rawDebugToggle.textContent = showRawDebug ? 'Hide raw data' : 'Show raw data';
       rebuildDisplay();
       updateBoardDebugPanel();
+      updateStaffDebugPanel();
     });
   }
 
@@ -7647,6 +7779,22 @@ function openTrainProgress(train, service){
                 updateBoardDebugPanel();
               });
           }
+          // Phase 2 staff-board comparison — fired only in debug mode
+          // (unlike the pure-board fetch above, which always runs since
+          // it feeds real behaviour). Strictly read-only: no
+          // boardOverrides write, no rebuildDisplay() call, ever. See
+          // staff-board-scoping.md Phase 2.
+          if (showRawDebug && hereSchedTime){
+            fetchStaffBoardComparison(train.fromLoc, train.toLoc || undefined, train.toLoc ? 'to' : undefined, boardTypeForHere, hereSchedTime, freshService.sdd)
+              .then(result => {
+                lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, ...result, error: null };
+                updateStaffDebugPanel();
+              })
+              .catch(err => {
+                lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, error: err.message };
+                updateStaffDebugPanel();
+              });
+          }
         }
         if (serviceId && train.toLoc && train.toLoc !== train.fromLoc){
           // Always 'arr' — the tracked-to station is by definition where
@@ -7673,6 +7821,25 @@ function openTrainProgress(train, service){
               .catch(err => {
                 lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, data: null, error: err.message };
                 updateBoardDebugPanel();
+              });
+          }
+          // Phase 2 staff-board comparison, "to" side. filterType 'from'
+          // here is the semantically-correct opposite of the 'to' used
+          // on the "from" side above, but — unlike that one — hasn't
+          // actually been confirmed working live yet; if this side's
+          // comparison ever shows serviceCount=0 or a suspicious
+          // no-match, that's worth checking before trusting it, not
+          // silently assuming the mechanism is broken. See
+          // staff-board-scoping.md Phase 2.
+          if (showRawDebug && toSchedTime){
+            fetchStaffBoardComparison(train.toLoc, train.fromLoc || undefined, train.fromLoc ? 'from' : undefined, 'arr', toSchedTime, freshService.sdd)
+              .then(result => {
+                lastStaffDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, ...result, error: null };
+                updateStaffDebugPanel();
+              })
+              .catch(err => {
+                lastStaffDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, error: err.message };
+                updateStaffDebugPanel();
               });
           }
         }
