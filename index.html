@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.10:36'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.11:54'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4230,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.10:36*
+*Last updated: v2026-08-26.11:54*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -7002,7 +7002,22 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     // position.
     const lastStaffPlatformRaw = staffPlatformStatusFor(last.crs, staffLiveStatusOverrides, now);
     const afterLastStaffPlatform = afterLast ? staffPlatformStatusFor(afterLast.crs, staffLiveStatusOverrides, now) : null;
-    const atPlatformPoint = afterLastStaffPlatform ? afterLast : (lastStaffPlatformRaw ? last : null);
+    // Also recognises the original, pre-existing Darwin-only "not yet
+    // departed" trigger for afterLast, not just Staff's — found live
+    // (2026-08-26) on a later point in the same journey (Colwyn Bay):
+    // its own row correctly showed NOT YET DEPARTED, but the summary
+    // still said "between Rhyl and Colwyn Bay", because that particular
+    // row's pill had actually come from isGenuinelyUnconfirmedDelay
+    // (Staff simply had no ata/atd for Colwyn Bay on that poll), which
+    // the Staff-only check above has no way to see. Whichever mechanism
+    // triggered the pill, the real-world meaning is identical — it
+    // hasn't left afterLast yet — so both need to count here. Mirrors
+    // the row loop's own dueMomentPassed/isGenuinelyUnconfirmedDelay
+    // condition for that exact index, minus the i === lastPassedIdx + 1
+    // check, since afterLast already IS that index by definition.
+    const afterLastDueMomentPassed = !!(afterLast && liveDates[lastPassedIdx + 1] && now >= liveDates[lastPassedIdx + 1]);
+    const afterLastNotYetDepartedViaDarwin = !!(afterLast && afterLastDueMomentPassed && isGenuinelyUnconfirmedDelay(afterLast));
+    const atPlatformPoint = (afterLastStaffPlatform || afterLastNotYetDepartedViaDarwin) ? afterLast : (lastStaffPlatformRaw ? last : null);
     const lastStaffPlatform = afterLastStaffPlatform || lastStaffPlatformRaw;
     // "Terminated early" — every remaining booked calling point has been
     // cancelled, meaning the train stops here and won't reach its real
