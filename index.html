@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.11:54'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.13:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4230,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.11:54*
+*Last updated: v2026-08-26.13:05*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -6939,8 +6939,22 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
   // Darwin very often never sends a real "at" even once a point has
   // clearly already happened, and treating every such point as unsafe
   // would stop the blob advancing through most of an ordinary journey.
+  //
+  // staffPlatformStatusFor exception added 2026-08-26, closing the
+  // blob-position gap found live on a real Cardiff–Holyhead service:
+  // this walkback only ever looked at Darwin's own confirmed-actual
+  // signal, with no awareness that Staff might independently confirm
+  // ataSpecified for the exact same point — so a genuinely-reached
+  // point Darwin itself hadn't confirmed got walked back past anyway,
+  // even though Staff already knew the train was sitting right there.
+  // Once atdSpecified also becomes true (genuinely departed),
+  // staffPlatformStatusFor stops returning anything for that point —
+  // by then Darwin's own hasConfirmedActual has almost always caught
+  // up too (helped along by the backlog #7 fix), so this exception is
+  // only ever needed for exactly the still-there window, not beyond it.
   while (lastPassedIdx >= 0 && (
-    points[lastPassedIdx].isCancelled || isGenuinelyUnconfirmedDelay(points[lastPassedIdx])
+    points[lastPassedIdx].isCancelled ||
+    (isGenuinelyUnconfirmedDelay(points[lastPassedIdx]) && !staffPlatformStatusFor(points[lastPassedIdx].crs, staffLiveStatusOverrides, now))
   )){
     lastPassedIdx--;
   }
@@ -6953,11 +6967,25 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
   // real DOM after rendering rather than assumed from a fixed row height
   // — this fraction is just "how far between these two points", applied
   // to real measurements by positionBlobAndLine().
+  //
+  // Pinned to 0 whenever Staff confirms the train is still genuinely
+  // sitting at lastPassedIdx itself (ataSpecified && !atdSpecified) —
+  // added 2026-08-26, same live finding as the walkback exception just
+  // above. Without this, the elapsed-time maths below would keep
+  // computing partial "progress" toward the next point purely because
+  // real clock time has gone past a schedule reality has since
+  // overtaken — creeping the blob forward even though the train
+  // genuinely hasn't moved. Once it actually departs, atdSpecified
+  // flips true, this stops applying, and the ordinary elapsed-time
+  // fraction takes back over correctly from wherever it actually is.
   let fraction = 0;
   if (lastPassedIdx >= 0 && lastPassedIdx < points.length - 1 && !points[lastPassedIdx + 1].isCancelled){
-    const t1 = liveDates[lastPassedIdx], t2 = liveDates[lastPassedIdx + 1];
-    if (t1 && t2 && t2 > t1){
-      fraction = Math.max(0, Math.min(1, (now - t1) / (t2 - t1)));
+    const stillAtLastPassed = !!staffPlatformStatusFor(points[lastPassedIdx].crs, staffLiveStatusOverrides, now);
+    if (!stillAtLastPassed){
+      const t1 = liveDates[lastPassedIdx], t2 = liveDates[lastPassedIdx + 1];
+      if (t1 && t2 && t2 > t1){
+        fraction = Math.max(0, Math.min(1, (now - t1) / (t2 - t1)));
+      }
     }
   }
 
