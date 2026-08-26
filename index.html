@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-25.22:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.06:14'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4223,7 +4223,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-24.20:37*
+*Last updated: v2026-08-26.06:14*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -4238,6 +4238,7 @@ const BACKLOG_MD = `
 11. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
 12. **Destination picker for search-tracked (non-configured) trains** — the tracked-to-station platform/atd-ata accuracy check (built for Crewe) only ever fires for one of the five hardcoded \`railTrains\` routes, because it's keyed entirely off \`train.toLoc\`, and that's only ever set for those. A train tracked from a station search (e.g. Stockport → wherever) opens with just \`{ label, fromLoc, serviceId }\` — no destination captured anywhere, so every calling point past the origin misses out, not just the physical end of the journey. Fix: when tracking a searched train, let the user pick which calling point is their actual destination (defaulting to none), store it as \`toLoc\` on the tracked-train entry the same way a configured route already has one — the existing platform/notification logic should then apply with no further changes. Raised heading into the Christmas period, when off-usual-route journeys (e.g. into Manchester for shopping) are more likely than normal.
 13. **Watch item, not a bug: \`stationBoardForService\`'s same-minute tie-break hasn't been observed live yet** — the RID-numeric-prefix tie-break (used when two services share the same \`schedTime\` on a pure dep/arr board) is sound in design and its underlying premise (the numeric prefix is portable across board products, the trailing station tag isn't) is confirmed via real Cloudflare logs — but the tie-break logic itself triggering on a genuine same-minute collision hasn't been. No action needed: if it ever does trigger ambiguously, the Worker already logs up to 50 candidate services rather than guessing (\`stationBoardForService ambiguous match\` in Cloudflare's logs) — that log entry, whenever it first appears, is the real-world test case worth pulling and reviewing.
+14. **Remove the Staff (LDBSVWS) debug/comparison plumbing once it's no longer needed** — \`lastStaffDebugFrom\`/\`lastStaffDebugTo\`, \`formatStaffCompareLine\`, \`updateStaffDebugPanel\`, the \`#train-progress-staff-debug\` panel, and the "Copy raw JSON" button were all built purely to validate the Staff board against Darwin side-by-side (see \`staff-board-scoping.md\`), and are being kept around only so a real response can still be copied out for analysis while the AT PLATFORM and blob-position work is ongoing. The genuinely load-bearing pieces — \`fetchStaffBoardComparison\`, \`extractStaffLocationFields\`, \`findServiceOriginPoint\`, \`buildStaffPlatformOverrides\`, and \`staffPlatformOverrides\` itself — are NOT part of this cleanup and should stay; only the debug-display layer around them is temporary. Safe to remove once the Staff integration is settled and there's no further need to eyeball a live raw response.
 `;
 
 function openHelpGuide(){
@@ -6558,9 +6559,10 @@ function buildFormationDebugHtml(service, showRawDebug){
 ${escapeHtml(body)}</div>`;
 }
 
-function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides){
+function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides){
   const now = new Date();
   boardOverrides = boardOverrides || {};
+  staffPlatformOverrides = staffPlatformOverrides || {};
 
   // Applied to any point (before/here/after) whose crs has a fresher
   // result from a stationBoardForService lookup — that's the whole
@@ -6650,7 +6652,20 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     hasConfirmedActual: !!cp.at,
     raw: { st: cp.st, at: cp.at, et: cp.et },
   }));
-  const points = [...before, ...here, ...after];
+  let points = [...before, ...here, ...after];
+  // Fills in platform ONLY where nothing already supplied one — never
+  // overrides a platform GetServiceDetails or the existing fromLoc/
+  // toLoc board-override already gave. Deliberately fallback-only, not
+  // "Staff always wins": tonight's goal is populating the gaps every
+  // other intermediate point has today, not re-litigating which source
+  // is more current for the two stations that already have one. See
+  // staffPlatformOverrides above for why this is a separate, narrower
+  // mechanism rather than reusing boardOverrides' own merge.
+  points = points.map(p => (
+    p.platform || !p.crs || !staffPlatformOverrides[p.crs]
+      ? p
+      : { ...p, platform: staffPlatformOverrides[p.crs] }
+  ));
   // Darwin attaches one reason to a service and doesn't seem to clear or
   // refresh it as the journey continues — a reason first seen on an
   // early cancelled point can still be sitting there hours and hundreds
@@ -7305,6 +7320,41 @@ function openTrainProgress(train, service){
   // same shape as one debug entry, minus the debug-only crs/schedTime
   // fields.
   let boardOverrides = {};
+  // Platform-only enrichment, sourced from the Staff (LDBSVWS) board —
+  // deliberately kept separate from boardOverrides above rather than
+  // merged into it. boardOverrides' merge (mergeBoardOverride) is
+  // all-or-nothing per point — platform, liveTime, hasConfirmedActual,
+  // isCancelled and reason all come from the same source together —
+  // and reusing it here would have quietly started trusting Staff data
+  // for confirmed-time/cancellation status on every intermediate point
+  // too, not just platform, which is a materially bigger change than
+  // "populate platform for all stops" and wasn't the agreed scope for
+  // this round (2026-08-26) — that's deliberately being held back for
+  // its own separate, later step (the AT PLATFORM work). Keyed by crs.
+  // Only ever set wholesale on a successful fetch (see the "from" side
+  // fetch below) — never cleared on a transient failure, so a brief
+  // Staff outage doesn't blank out platforms that were already known.
+  let staffPlatformOverrides = {};
+  // Builds a fresh platform-only map from one Staff fetch's full
+  // result — the queried station's own top-level entry plus every
+  // point in subsequentLocations — filtering out anything with
+  // platformIsHidden or isPass set, since those are junctions/pass
+  // points, not genuine calling points a passenger would recognise as
+  // "a platform". Deliberately a full rebuild each time (the
+  // origin-anchored fetch below always covers the entire journey in
+  // one response), not a merge forward — a stale platform lingering
+  // from an earlier poll after a real change would be worse than
+  // briefly having none.
+  function buildStaffPlatformOverrides(raw, match){
+    const overrides = {};
+    if (!raw || !match) return overrides;
+    if (raw.crs && match.platform && !match.platformIsHidden && !match.isPass) overrides[raw.crs] = match.platform;
+    const locs = Array.isArray(match.subsequentLocations) ? match.subsequentLocations : [];
+    for (const loc of locs){
+      if (loc.crs && loc.platform && !loc.platformIsHidden && !loc.isPass) overrides[loc.crs] = loc.platform;
+    }
+    return overrides;
+  }
   function formatBoardDebugLine(entry){
     if (!entry) return null;
     const tag = `${entry.crs}/${entry.boardType}[${entry.schedTime ?? '?'}]`;
@@ -7378,21 +7428,26 @@ function openTrainProgress(train, service){
       formatStaffCompareLine(lastStaffDebugTo, lastBoardDebugTo, 'to'),
     ].filter(Boolean);
     if (lines.length === 0){ el.style.display = 'none'; return; }
-    // Raw JSON for whichever side has a match — shown once, not per
-    // side, to keep this readable; if both sides ever need inspecting
-    // at once the summary lines above already show enough to know
-    // which one's worth a closer look via its own dedicated fetch.
+    // Whichever side has a match — shown once, not per side, to keep
+    // this readable; if both sides ever need inspecting at once the
+    // summary lines above already show enough to know which one's
+    // worth copying via its own dedicated fetch.
+    // No visible JSON box any more (backlog #14, 2026-08-26) — now that
+    // this data feeds real behaviour (staffPlatformOverrides) rather
+    // than being purely a debug comparison, the big always-rendered
+    // text block stopped earning its screen space for day-to-day use.
+    // The copy button stays, specifically so a real response can still
+    // be grabbed and brought back for analysis whenever that's useful —
+    // this whole panel (including this fetch's debug plumbing) is
+    // meant to come out entirely once that's no longer needed.
     const rawSource = (lastStaffDebugFrom && lastStaffDebugFrom.match) ? lastStaffDebugFrom
       : (lastStaffDebugTo && lastStaffDebugTo.match) ? lastStaffDebugTo
       : null;
     lastStaffRawJson = rawSource ? JSON.stringify(rawSource.match, null, 2) : null;
-    const rawHtml = rawSource
-      ? `<div style="margin-top:6px;">
-          <span id="train-progress-staff-copy" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Copy raw JSON</span>
-          <div style="margin-top:4px; max-height:160px; overflow-y:auto; border:1px dashed var(--line); border-radius:6px; padding:6px;">${escapeHtml(lastStaffRawJson)}</div>
-        </div>`
+    const copyHtml = rawSource
+      ? `<div style="margin-top:6px;"><span id="train-progress-staff-copy" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Copy raw JSON</span></div>`
       : '';
-    el.innerHTML = `staff (LDBSVWS) comparison:<br>${lines.join('<br>')}${rawHtml}`;
+    el.innerHTML = `staff (LDBSVWS) comparison:<br>${lines.join('<br>')}${copyHtml}`;
     el.style.display = '';
     // Re-queried and re-bound every render rather than delegated once —
     // this whole panel's innerHTML gets replaced wholesale above, which
@@ -7456,7 +7511,7 @@ function openTrainProgress(train, service){
   // overlay markup) because the label below now needs to know whether
   // this station genuinely has its own departure, or whether the
   // tracked/searched station turned out to be an arrival-only point.
-  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides);
+  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides);
   // A configured train's own .label is just its departure time (e.g.
   // "17:31") — fine for the compact board row it came from, but not
   // enough detail once it's the title of this screen, or sitting in the
@@ -7633,7 +7688,7 @@ function openTrainProgress(train, service){
   applyWeather(initial.weatherPoints, initial.lastPassedIdx, initial.fraction, renderGeneration);
 
   function rebuildDisplay(){
-    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides);
+    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides);
     const rowsEl = overlay.querySelector('#train-progress-rows');
     const summaryEl = overlay.querySelector('#train-progress-summary');
     if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
@@ -7775,7 +7830,7 @@ function openTrainProgress(train, service){
       if (!instanceActive) return;
       if (freshService){
         lastKnownService = freshService;
-        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons, boardOverrides);
+        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides);
         const rowsEl = overlay.querySelector('#train-progress-rows');
         const summaryEl = overlay.querySelector('#train-progress-summary');
         const pillEl = overlay.querySelector('#train-progress-reverse-pill');
@@ -7845,11 +7900,15 @@ function openTrainProgress(train, service){
                 updateBoardDebugPanel();
               });
           }
-          // Phase 2 staff-board comparison — fired only in debug mode
-          // (unlike the pure-board fetch above, which always runs since
-          // it feeds real behaviour). Strictly read-only: no
-          // boardOverrides write, no rebuildDisplay() call, ever. See
-          // staff-board-scoping.md Phase 2.
+          // Phase 2 staff-board comparison, plus (2026-08-26) genuine
+          // platform enrichment — the fetch itself now always runs,
+          // same as the pure-board fetch above, since staffPlatformOverrides
+          // feeds real behaviour now. Still strictly read-only in every
+          // other respect: no boardOverrides write, no influence on
+          // hasConfirmedActual/liveTime/isCancelled/walkback — only
+          // platform, via the separate staffPlatformOverrides mechanism
+          // above, deliberately kept apart from boardOverrides' own
+          // all-or-nothing merge. See staff-board-scoping.md Phase 2.
           //
           // Anchored at the service's TRUE origin, not train.fromLoc,
           // whenever they differ — confirmed live (2026-08-25) that
@@ -7886,16 +7945,30 @@ function openTrainProgress(train, service){
           const staffFromFilterCrs = anchorAtOrigin ? train.fromLoc : (train.toLoc || undefined);
           const staffFromFilterType = staffFromFilterCrs ? 'to' : undefined;
           const staffFromBoardType = anchorAtOrigin ? 'dep' : boardTypeForHere; // the true origin only ever departs — matched by std, never sta
-          if (showRawDebug && staffFromSchedTime){
+          // Runs every poll now, not just in debug mode (2026-08-26) —
+          // this is the fetch that powers staffPlatformOverrides (see
+          // its declaration above), which is real user-facing
+          // enrichment now, not just a debug comparison. The debug
+          // panel/copy-button below is still gated on showRawDebug —
+          // only the fetch itself was ever debug-only, and that's what
+          // changed.
+          if (staffFromSchedTime){
             fetchStaffBoardComparison(staffFromQueryCrs, staffFromFilterCrs, staffFromFilterType, staffFromBoardType, staffFromSchedTime, freshService.sdd)
               .then(result => {
                 const wanted = extractStaffLocationFields(result.raw, result.match, train.fromLoc);
                 lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, ...result, wanted, error: null };
                 updateStaffDebugPanel();
+                if (result.match){
+                  staffPlatformOverrides = buildStaffPlatformOverrides(result.raw, result.match);
+                  rebuildDisplay();
+                }
               })
               .catch(err => {
                 lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, error: err.message };
                 updateStaffDebugPanel();
+                // staffPlatformOverrides deliberately left untouched here
+                // — see its declaration above for why a transient failure
+                // shouldn't blank out platforms already known.
               });
           }
         }
@@ -7996,7 +8069,7 @@ function openTrainProgress(train, service){
       // point times compared against the real current clock — re-run it
       // against the last data we did get, so the blob keeps creeping
       // forward on a reasonable assumption rather than sitting frozen.
-      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides);
+      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides);
       const rowsEl = overlay.querySelector('#train-progress-rows');
       const summaryEl = overlay.querySelector('#train-progress-summary');
       const offlineBanner = overlay.querySelector('#train-progress-offline-banner');
