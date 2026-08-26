@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.07:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.08:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4230,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.07:20*
+*Last updated: v2026-08-26.08:50*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -4238,14 +4238,13 @@ const BACKLOG_MD = `
 4. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon. Per-station geofence radius must not be baked into the watch build the way coordinates are (a one-time copy is fine for those, since they don't change) — radius gets retuned in practice (500m→185m for Wigan on real data within one session) and a compiled-in value would need a watch rebuild every time. Instead: PWA pushes \`geofenceRadiusCrewe\`/\`geofenceRadiusWigan\` to the Worker's KV whenever Settings saves them; the Worker holds that value with no logic of its own; the watch reads it via a small GET endpoint to register its \`GeofencingClient\` radius, rather than having one compiled in. The PWA's own geofence check keeps reading straight from its own localStorage as now — this is a one-way broadcast out to the watch, not a round-trip the PWA depends on.
 5. **Costs as one combined form** — currently a further list of two links (parking cost, day return price) rather than a single screen. Last remaining piece of the old Settings UI polish item — icon grid and in-place Back navigation are both done now.
 6. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
-7. **Departure-board precision via scheduled Cron Trigger + KV** — Darwin's \`GetServiceDetails\` (Live Progress) can return a flattened "On time" where the dedicated departures-board product shows a genuine specific time — confirmed via a real side-by-side comparison. A Cloudflare Cron Trigger (1-minute minimum, not exact to the second) could poll the departures board around a tracked train's expected departure and write the result to KV for the PWA to collect later, working around Darwin's ~2-minute post-departure window closing while the app's shut. Shares real infrastructure with the Wear OS companion's own Durable Object/KV design. Needs a mechanism for the PWA to tell the scheduled Worker which station/train is currently worth checking, rather than polling blindly.
-8. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
-9. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
-10. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
-11. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
-12. **Destination picker for search-tracked (non-configured) trains** — the tracked-to-station platform/atd-ata accuracy check (built for Crewe) only ever fires for one of the five hardcoded \`railTrains\` routes, because it's keyed entirely off \`train.toLoc\`, and that's only ever set for those. A train tracked from a station search (e.g. Stockport → wherever) opens with just \`{ label, fromLoc, serviceId }\` — no destination captured anywhere, so every calling point past the origin misses out, not just the physical end of the journey. Fix: when tracking a searched train, let the user pick which calling point is their actual destination (defaulting to none), store it as \`toLoc\` on the tracked-train entry the same way a configured route already has one — the existing platform/notification logic should then apply with no further changes. Raised heading into the Christmas period, when off-usual-route journeys (e.g. into Manchester for shopping) are more likely than normal.
-13. **Watch item, not a bug: \`stationBoardForService\`'s same-minute tie-break hasn't been observed live yet** — the RID-numeric-prefix tie-break (used when two services share the same \`schedTime\` on a pure dep/arr board) is sound in design and its underlying premise (the numeric prefix is portable across board products, the trailing station tag isn't) is confirmed via real Cloudflare logs — but the tie-break logic itself triggering on a genuine same-minute collision hasn't been. No action needed: if it ever does trigger ambiguously, the Worker already logs up to 50 candidate services rather than guessing (\`stationBoardForService ambiguous match\` in Cloudflare's logs) — that log entry, whenever it first appears, is the real-world test case worth pulling and reviewing.
-14. **Remove the Staff (LDBSVWS) debug/comparison plumbing once it's no longer needed** — \`lastStaffDebugFrom\`/\`lastStaffDebugTo\`, \`formatStaffCompareLine\`, \`updateStaffDebugPanel\`, the \`#train-progress-staff-debug\` panel, and the "Copy raw JSON" button were all built purely to validate the Staff board against Darwin side-by-side (see \`staff-board-scoping.md\`), and are being kept around only so a real response can still be copied out for analysis while the AT PLATFORM and blob-position work is ongoing. The genuinely load-bearing pieces — \`fetchStaffBoardComparison\`, \`extractStaffLocationFields\`, \`findServiceOriginPoint\`, \`buildStaffPlatformOverrides\`, and \`staffPlatformOverrides\` itself — are NOT part of this cleanup and should stay; only the debug-display layer around them is temporary. Safe to remove once the Staff integration is settled and there's no further need to eyeball a live raw response.
+7. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
+8. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
+9. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
+10. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
+11. **Destination picker for search-tracked (non-configured) trains** — the tracked-to-station platform/atd-ata accuracy check (built for Crewe) only ever fires for one of the five hardcoded \`railTrains\` routes, because it's keyed entirely off \`train.toLoc\`, and that's only ever set for those. A train tracked from a station search (e.g. Stockport → wherever) opens with just \`{ label, fromLoc, serviceId }\` — no destination captured anywhere, so every calling point past the origin misses out, not just the physical end of the journey. Fix: when tracking a searched train, let the user pick which calling point is their actual destination (defaulting to none), store it as \`toLoc\` on the tracked-train entry the same way a configured route already has one — the existing platform/notification logic should then apply with no further changes. Raised heading into the Christmas period, when off-usual-route journeys (e.g. into Manchester for shopping) are more likely than normal.
+12. **Watch item, not a bug: \`stationBoardForService\`'s same-minute tie-break hasn't been observed live yet** — the RID-numeric-prefix tie-break (used when two services share the same \`schedTime\` on a pure dep/arr board) is sound in design and its underlying premise (the numeric prefix is portable across board products, the trailing station tag isn't) is confirmed via real Cloudflare logs — but the tie-break logic itself triggering on a genuine same-minute collision hasn't been. No action needed: if it ever does trigger ambiguously, the Worker already logs up to 50 candidate services rather than guessing (\`stationBoardForService ambiguous match\` in Cloudflare's logs) — that log entry, whenever it first appears, is the real-world test case worth pulling and reviewing.
+13. **Remove the Staff (LDBSVWS) debug/comparison plumbing once it's no longer needed** — \`lastStaffDebugFrom\`/\`lastStaffDebugTo\`, \`formatStaffCompareLine\`, \`updateStaffDebugPanel\`, the \`#train-progress-staff-debug\` panel, and the "Copy raw JSON" button were all built purely to validate the Staff board against Darwin side-by-side (see \`staff-board-scoping.md\`), and are being kept around only so a real response can still be copied out for analysis while the AT PLATFORM and blob-position work is ongoing. The genuinely load-bearing pieces — \`fetchStaffBoardComparison\`, \`extractStaffLocationFields\`, \`findServiceOriginPoint\`, \`buildStaffPlatformOverrides\`, \`buildStaffLiveStatusOverrides\`, \`isoTimeToHHMM\`, and the override maps themselves — are NOT part of this cleanup and should stay; only the debug-display layer around them is temporary. Safe to remove once the Staff integration is settled and there's no further need to eyeball a live raw response.
 `;
 
 function openHelpGuide(){
@@ -6435,6 +6434,15 @@ function extractStaffLocationFields(raw, match, wantedCrs){
   return locs.find(l => l.crs === wantedCrs) || null;
 }
 
+// Extracts just "HH:MM" from a Staff ISO timestamp ("...T08:09:01" ->
+// "08:09") — the same bare-clock-time format schedTime/liveTime already
+// use everywhere else in this file. Top-level (not inside
+// openTrainProgress) because buildTrainProgress, a separate top-level
+// function, needs it too — see its use there, closing backlog #7.
+function isoTimeToHHMM(iso){
+  return (typeof iso === 'string' && iso.length >= 16) ? iso.slice(11, 16) : null;
+}
+
 // Compares a fresh stationBoardForService result against what was last
 // seen for this journey and fires exactly two kinds of notification:
 // the platform changing (including being confirmed for the first time),
@@ -6699,6 +6707,35 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       ? p
       : { ...p, platform: staffPlatformOverrides[p.crs] }
   ));
+  // Backlog #7 (closed 2026-08-26): GetServiceDetails can flatten a
+  // genuinely-known specific delay down to the literal string "On
+  // time" — confirmed via a real side-by-side comparison (Crewe showed
+  // "On time" here while Staff's own atd/lateness said 60 seconds
+  // late). Corrects it using Staff's own confirmed atd (for an
+  // ordinary calling point — Darwin's calling-point time convention is
+  // departure) or ata (for the final point, which only ever arrives in
+  // this app's journey view — same isFinalPoint distinction the AT
+  // PLATFORM logic below uses). Deliberately narrow, matching that
+  // same "fallback only" discipline: only steps in for the *exact*
+  // literal "On time" case, and only when Staff's own value for the
+  // relevant field is genuinely confirmed (ataSpecified/atdSpecified),
+  // never an unconfirmed forecast — this is closing one specific known
+  // flattening bug, not a general "prefer Staff" policy. Setting
+  // hasConfirmedActual here is deliberate too: the train genuinely did
+  // depart/arrive, so treating this point as reached is objectively
+  // correct — if anything an improvement to lastPassedIdx's walkback,
+  // not a risk to it.
+  points = points.map((p, i, arr) => {
+    if (p.liveTime !== 'On time' || !p.crs) return p;
+    const status = staffLiveStatusOverrides[p.crs];
+    if (!status) return p;
+    const isFinalPointRow = i === arr.length - 1;
+    const preciseIso = isFinalPointRow
+      ? (status.ataSpecified ? status.ata : null)
+      : (status.atdSpecified ? status.atd : null);
+    const precise = preciseIso ? isoTimeToHHMM(preciseIso) : null;
+    return precise ? { ...p, liveTime: precise, hasConfirmedActual: true } : p;
+  });
   // Darwin attaches one reason to a service and doesn't seem to clear or
   // refresh it as the journey continues — a reason first seen on an
   // early cancelled point can still be sitting there hours and hundreds
@@ -7429,20 +7466,30 @@ function openTrainProgress(train, service){
   // means "arrived, still sitting at the platform". Kept as its own
   // map, same reasoning as staffPlatformOverrides above: this only ever
   // feeds a badge, never boardOverrides/hasConfirmedActual/lastPassedIdx.
-  // Stores { ataSpecified, atdSpecified, etd } per crs — enough to
-  // compute both AT PLATFORM and its overrun state (see the row-render
-  // loop below) without carrying the whole point object around.
+  // Stores { ataSpecified, atdSpecified, ata, atd, etd } per crs — the
+  // ata/atd raw values (added 2026-08-26, closing backlog #7 below)
+  // let the precise-status correction below use a genuine confirmed
+  // time rather than just knowing one exists.
   let staffLiveStatusOverrides = {};
   function buildStaffLiveStatusOverrides(raw, match){
     const overrides = {};
     if (!raw || !match) return overrides;
-    if (raw.crs) overrides[raw.crs] = { ataSpecified: !!match.ataSpecified, atdSpecified: !!match.atdSpecified, etd: match.etd || null };
+    if (raw.crs) overrides[raw.crs] = { ataSpecified: !!match.ataSpecified, atdSpecified: !!match.atdSpecified, ata: match.ata || null, atd: match.atd || null, etd: match.etd || null };
     const locs = Array.isArray(match.subsequentLocations) ? match.subsequentLocations : [];
     for (const loc of locs){
-      if (loc.crs) overrides[loc.crs] = { ataSpecified: !!loc.ataSpecified, atdSpecified: !!loc.atdSpecified, etd: loc.etd || null };
+      if (loc.crs) overrides[loc.crs] = { ataSpecified: !!loc.ataSpecified, atdSpecified: !!loc.atdSpecified, ata: loc.ata || null, atd: loc.atd || null, etd: loc.etd || null };
     }
     return overrides;
   }
+  // Closes backlog #7 (removed below) — GetServiceDetails can return
+  // the literal string "On time" for a point that Darwin's own more
+  // precise products (and now Staff) know departed/arrived a specific
+  // number of seconds late, confirmed via a real side-by-side
+  // comparison (2026-08-26): Crewe showed "On time" here while Staff's
+  // own atd/lateness said 60 seconds late. isoTimeToHHMM (extracting
+  // just "HH:MM" from a Staff ISO timestamp) lives at top level, not
+  // here — it's needed inside buildTrainProgress, a separate top-level
+  // function, not nested inside this closure.
   function formatBoardDebugLine(entry){
     if (!entry) return null;
     const tag = `${entry.crs}/${entry.boardType}[${entry.schedTime ?? '?'}]`;
