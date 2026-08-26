@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.21:31'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.21:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4230,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.21:31*
+*Last updated: v2026-08-26.21:40*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -7620,6 +7620,24 @@ function openTrainProgress(train, service){
   let showRawDebug = false; // off by default — a temporary diagnostic toggle, not for normal use
   let showAllReasons = false; // manual override for the staleness-suppression heuristic, in case it's wrong on a given service
   let lastKnownService = service; // lets the debug toggle rebuild instantly without a fresh network call
+  // Warms the shared station-name cache if it isn't already loaded this
+  // session (2026-08-26) — without this, a searched (non-configured)
+  // train's own tracked-from/to station can show its bare CRS code
+  // ("SOP") instead of its real name ("Southport") in the "here" row
+  // and the "Arrived at X" summary, since GetServiceDetails' own
+  // top-level object has no location-name field for wherever
+  // train.fromLoc actually is — only STATION_COORDS (manually-verified
+  // Crewe/Wigan only) or this cache can supply one. Same underlying gap
+  // already fixed once for weather (see loadStationIndex's own comment
+  // there) — this was the other place still just assuming it was
+  // already loaded. Fire-and-forget: doesn't block anything else on
+  // this screen, and rebuildDisplay() (defined below) picks up the
+  // correct name retroactively if this resolves after the first render.
+  if (!stationIndexCache){
+    loadStationIndex(false)
+      .then(() => { if (instanceActive && overlay.isConnected) rebuildDisplay(); })
+      .catch(() => {}); // no station data at all — the bare CRS code fallback stays, same as before this fix existed
+  }
   // Latest stationBoardForService outcome for each lookup (the pure
   // dep/arr board checks used for platform-change/departed-arrived
   // notifications — one for the tracked-from station, one for the
