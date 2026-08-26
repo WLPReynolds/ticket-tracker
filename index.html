@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.21:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.21:48'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4230,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.21:40*
+*Last updated: v2026-08-26.21:48*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -7371,12 +7371,32 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // Stockport, Rugby): ataSpecified && !atdSpecified from the Staff
       // board reliably means "arrived, still sitting at the platform".
       // Takes priority over the NOT YET DEPARTED/ARRIVED pill below for
-      // whichever one point currently satisfies it — a real train can
-      // only be at-platform-somewhere once at a time, so this is
-      // naturally self-limiting without needing the same
-      // i === lastPassedIdx + 1 restriction the Darwin-only pill uses.
-      // Deliberately doesn't apply to the final point — there's no
-      // "departing" the destination in this app's journey view.
+      // the current point. Deliberately doesn't apply to the final
+      // point — there's no "departing" the destination in this app's
+      // journey view.
+      //
+      // Restricted to i === lastPassedIdx (fixed same day, found live
+      // on a real Manchester–Southport service): originally this
+      // checked every row's own crs independently, on the reasoning
+      // that "a real train can only be at-platform-somewhere once at a
+      // time" made it naturally self-limiting. That reasoning breaks
+      // down for a permanent Darwin/Staff data gap — Wigan Wallgate's
+      // own entry had departureType "NoLog" (no departure ever
+      // recorded for that point at all, not "hasn't happened yet"),
+      // even though the train had clearly continued for real, confirmed
+      // several stops further on at Meols Cop and beyond. That left
+      // ataSpecified && !atdSpecified permanently true for Wigan
+      // Wallgate, so it kept showing AT PLATFORM at the same time as
+      // the genuinely current point further down the journey — two rows
+      // simultaneously claiming the train's position, which should be
+      // structurally impossible. lastPassedIdx (already correctly
+      // resolved by the walkback/forward-advance pair above, which
+      // reconcile Darwin's and Staff's signals against each other) is
+      // the one place in this function that already represents the
+      // real current frontier — checking against it here, rather than
+      // trusting any individual row's own raw ataSpecified/atdSpecified
+      // in isolation, makes the two-rows-at-once case impossible by
+      // construction instead of by an assumption that didn't hold.
       //
       // Routed through staffPlatformStatusFor rather than reading
       // staffLiveStatusOverrides directly (refactored 2026-08-26,
@@ -7385,7 +7405,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // inline, which meant it was also the one place the new
       // staffDataAge staleness gate could have been missed if it had
       // stayed separate.
-      const staffPlatformHere = staffPlatformStatusFor(p.crs, staffLiveStatusOverrides, now, staffDataAge);
+      const staffPlatformHere = (i === lastPassedIdx) ? staffPlatformStatusFor(p.crs, staffLiveStatusOverrides, now, staffDataAge) : null;
       const isAtPlatformViaStaff = !isFinalPoint && !!staffPlatformHere;
       const staffOverrun = isAtPlatformViaStaff && !!staffPlatformHere.overrun;
       // Fixes a real contradiction found live (2026-08-26): staffOverrun
@@ -7414,11 +7434,14 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // it) instead of just the one place the train is actually stuck.
       // staffOverrun (confirmed arrived via Staff, past its own etd,
       // still not departed) is an additional, more precise trigger for
-      // this exact same pill — deliberately not gated behind
-      // i === lastPassedIdx + 1 the way the Darwin-only path is, since
-      // it's already self-limiting the same way isAtPlatformViaStaff is
-      // above. Never both pills at once: showNotYetPill is forced false
-      // whenever the calmer AT PLATFORM pill above is already showing.
+      // this exact same pill. Now implicitly gated to i === lastPassedIdx
+      // rather than i === lastPassedIdx + 1 (see staffPlatformHere's own
+      // restriction above) — previously described as "not gated" on the
+      // reasoning that it was naturally self-limiting, which a real
+      // permanent Darwin/Staff data gap (Wigan Wallgate's "NoLog"
+      // departure, above) proved false. Never both pills at once:
+      // showNotYetPill is forced false whenever the calmer AT PLATFORM
+      // pill above is already showing.
       const showNotYetPill = !atPlatformPill && (
         staffOverrun || (dueMomentPassed && isGenuinelyUnconfirmedDelay(p) && i === lastPassedIdx + 1)
       );
