@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.09:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.10:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4230,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.09:45*
+*Last updated: v2026-08-26.10:10*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -6443,6 +6443,23 @@ function isoTimeToHHMM(iso){
   return (typeof iso === 'string' && iso.length >= 16) ? iso.slice(11, 16) : null;
 }
 
+// Shared AT PLATFORM check, used both by the summary banner and the
+// per-row pill (2026-08-26) — factored out after finding they'd been
+// computed independently and could disagree: the banner still said
+// "Currently between Carlisle and Glasgow Central" / "Running on
+// time" while the very same row correctly showed AT PLATFORM, then
+// NOT YET DEPARTED, because nothing tied the two together. Returns
+// null when Staff doesn't show this crs as arrived-but-not-departed
+// at all; otherwise { overrun } — same ataSpecified/atdSpecified/etd
+// logic as the row pill, just reusable from both call sites now.
+function staffPlatformStatusFor(crs, staffLiveStatusOverrides, now){
+  if (!crs) return null;
+  const s = staffLiveStatusOverrides[crs];
+  if (!s || !s.ataSpecified || s.atdSpecified) return null;
+  const etdDate = s.etd ? new Date(s.etd) : null;
+  return { overrun: etdDate ? now > etdDate : false };
+}
+
 // Compares a fresh stationBoardForService result against what was last
 // seen for this journey and fires exactly two kinds of notification:
 // the platform changing (including being confirmed for the first time),
@@ -6964,6 +6981,14 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     const status = describePointStatusRemembered(service.serviceID, last.crs || `idx-${lastPassedIdx}`, last.schedTime, last.liveTime, last.isCancelled);
     const afterLast = points[lastPassedIdx + 1];
     const remaining = points.slice(lastPassedIdx + 1);
+    // Same Staff AT PLATFORM signal the row pill uses, checked here too
+    // (2026-08-26) — without this, the summary banner could keep saying
+    // "Currently between Carlisle and Glasgow Central" / "Running on
+    // time" while the Carlisle row itself correctly showed AT PLATFORM
+    // then NOT YET DEPARTED, found live. Genuinely more accurate either
+    // way: it hasn't actually left `last` yet, so "between" is wrong
+    // regardless of whether it's overrunning its expected departure.
+    const lastStaffPlatform = staffPlatformStatusFor(last.crs, staffLiveStatusOverrides, now);
     // "Terminated early" — every remaining booked calling point has been
     // cancelled, meaning the train stops here and won't reach its real
     // destination (or the last-passed point itself was cancelled, an
@@ -7056,6 +7081,15 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
         runningText = 'Running on time';
       }
       if (overallStatus.minutesLate > 0) knownOverallDelay = overallStatus.minutesLate;
+      // Overrides the "Running X" line specifically for the overrun
+      // case (2026-08-26) — same reasoning as the row-level fix: once
+      // Staff confirms it's sat there past its expected departure,
+      // "Running on time" (or any other pre-existing text) is actively
+      // contradicted by the AT PLATFORM/NOT YET DEPARTED pill on its
+      // own row. Left alone (not overridden) when it's genuinely still
+      // within its expected dwell — "Running on time" can be perfectly
+      // correct there.
+      if (lastStaffPlatform && lastStaffPlatform.overrun) runningText = 'Delayed — not yet departed';
       // Three separate lines — where it is, its status, and why (if
       // known) — rather than one long line that wraps awkwardly with
       // longer station names.
@@ -7070,7 +7104,18 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       const wouldSuppress = rawReason && !last.isCancelled && !afterLast.isCancelled && inheritedReasons.has(normalizeReason(rawReason));
       if (wouldSuppress) anyReasonSuppressed = true;
       primaryReason = (rawReason && (showAllReasons || !wouldSuppress)) ? rawReason : null;
-      summaryHtml = `<div>Currently between ${last.locationName} and ${afterLast.locationName}</div>` +
+      // "Currently at X" (with platform, when known) whenever Staff
+      // confirms it's genuinely still sitting there, rather than
+      // "Currently between X and Y" — found live (2026-08-26) saying
+      // "between Carlisle and Glasgow Central" while Carlisle's own row
+      // correctly showed AT PLATFORM. True regardless of overrun: it
+      // hasn't left `last` either way, so "between" undersells what's
+      // actually known here.
+      const lastPlatformText = last.platform ? ` · Platform ${last.platform}` : '';
+      const locationLine = lastStaffPlatform
+        ? `Currently at ${last.locationName}${lastPlatformText}`
+        : `Currently between ${last.locationName} and ${afterLast.locationName}`;
+      summaryHtml = `<div>${locationLine}</div>` +
         `<div style="font-size:12px; margin-top:4px; opacity:0.9;">${runningText}</div>` +
         (primaryReason ? `<div style="font-size:12px; margin-top:4px; opacity:0.85;">${primaryReason}</div>` : '');
     }
@@ -7190,6 +7235,19 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // rather than escalating on missing data.
       const staffEtdDate = isAtPlatformViaStaff && staffStatus.etd ? new Date(staffStatus.etd) : null;
       const staffOverrun = isAtPlatformViaStaff && staffEtdDate ? now > staffEtdDate : false;
+      // Fixes a real contradiction found live (2026-08-26): staffOverrun
+      // firing the NOT YET DEPARTED pill while statusText underneath it
+      // still said "On time" — genuinely confusing, since by definition
+      // staffOverrun means it's now running late by some amount. No
+      // specific minutes figure here (that would need continuous
+      // recalculation against "now" between polls, which nothing else
+      // in this row does either) — same plain "Delayed" wording/colour
+      // describePointStatus already uses elsewhere, rather than leaving
+      // the pre-existing, now-contradicted text in place.
+      if (staffOverrun){
+        statusText = 'Delayed';
+        statusColor = '#ff8b7e';
+      }
       const atPlatformPill = (isAtPlatformViaStaff && !staffOverrun)
         ? ` <span style="background:#2fa360; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">AT PLATFORM</span>`
         : '';
