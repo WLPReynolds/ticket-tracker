@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.06:14'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.06:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4223,7 +4223,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.06:14*
+*Last updated: v2026-08-26.06:50*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -6559,10 +6559,11 @@ function buildFormationDebugHtml(service, showRawDebug){
 ${escapeHtml(body)}</div>`;
 }
 
-function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides){
+function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides){
   const now = new Date();
   boardOverrides = boardOverrides || {};
   staffPlatformOverrides = staffPlatformOverrides || {};
+  staffLiveStatusOverrides = staffLiveStatusOverrides || {};
 
   // Applied to any point (before/here/after) whose crs has a fresher
   // result from a stationBoardForService lookup — that's the whole
@@ -7083,6 +7084,26 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // language that's meaningless for a terminus.
       const dueMomentPassed = liveDates[i] && now >= liveDates[i];
       const isFinalPoint = i === points.length - 1;
+      // AT PLATFORM (2026-08-26) — confirmed live three times now (Bryn,
+      // Stockport, Rugby): ataSpecified && !atdSpecified from the Staff
+      // board reliably means "arrived, still sitting at the platform".
+      // Takes priority over the NOT YET DEPARTED/ARRIVED pill below for
+      // whichever one point currently satisfies it — a real train can
+      // only be at-platform-somewhere once at a time, so this is
+      // naturally self-limiting without needing the same
+      // i === lastPassedIdx + 1 restriction the Darwin-only pill uses.
+      // Deliberately doesn't apply to the final point — there's no
+      // "departing" the destination in this app's journey view.
+      const staffStatus = p.crs ? staffLiveStatusOverrides[p.crs] : null;
+      const isAtPlatformViaStaff = !isFinalPoint && !!(staffStatus && staffStatus.ataSpecified && !staffStatus.atdSpecified);
+      // No etd to compare against doesn't mean "overrun" — it means
+      // "can't tell", so this defaults to the calmer AT PLATFORM state
+      // rather than escalating on missing data.
+      const staffEtdDate = isAtPlatformViaStaff && staffStatus.etd ? new Date(staffStatus.etd) : null;
+      const staffOverrun = isAtPlatformViaStaff && staffEtdDate ? now > staffEtdDate : false;
+      const atPlatformPill = (isAtPlatformViaStaff && !staffOverrun)
+        ? ` <span style="background:#2fa360; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">AT PLATFORM</span>`
+        : '';
       // Only the very next point after the last confirmed one gets the
       // pill. Once the train hasn't genuinely departed/arrived *there*,
       // it obviously hasn't reached any later point either — every
@@ -7091,7 +7112,16 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // because its own due time has also elapsed, producing a pill on
       // every remaining row (e.g. both Carlisle and the next stop after
       // it) instead of just the one place the train is actually stuck.
-      const showNotYetPill = dueMomentPassed && isGenuinelyUnconfirmedDelay(p) && i === lastPassedIdx + 1;
+      // staffOverrun (confirmed arrived via Staff, past its own etd,
+      // still not departed) is an additional, more precise trigger for
+      // this exact same pill — deliberately not gated behind
+      // i === lastPassedIdx + 1 the way the Darwin-only path is, since
+      // it's already self-limiting the same way isAtPlatformViaStaff is
+      // above. Never both pills at once: showNotYetPill is forced false
+      // whenever the calmer AT PLATFORM pill above is already showing.
+      const showNotYetPill = !atPlatformPill && (
+        staffOverrun || (dueMomentPassed && isGenuinelyUnconfirmedDelay(p) && i === lastPassedIdx + 1)
+      );
       const notYetDepartedPill = showNotYetPill
         ? ` <span style="background:#ff4d3d; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">NOT YET ${isFinalPoint ? 'ARRIVED' : 'DEPARTED'}</span>`
         : '';
@@ -7105,7 +7135,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
           <span style="min-width:56px;">${timeHtml}</span>
           <span style="flex:1; text-align:right;">
             <span class="wx-badge" data-wx-idx="${i}" style="margin-right:6px; font-size:12.5px; white-space:nowrap;"></span><span style="color:${nameColor}; font-weight:${(p.isYourStation||isToLocRow)?600:400};">${p.locationName || 'Unknown'}</span>
-            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}${notYetDepartedPill}${platformText}</div>
+            <div style="color:${statusColor}; font-size:12.5px; margin-top:1px;">${statusText}${atPlatformPill}${notYetDepartedPill}${platformText}</div>
             ${reasonHtml}
             ${debugHtml}
           </span>
@@ -7355,6 +7385,25 @@ function openTrainProgress(train, service){
     }
     return overrides;
   }
+  // AT PLATFORM support (2026-08-26) — confirmed live three times now
+  // (Bryn, Stockport, Rugby) that ataSpecified && !atdSpecified reliably
+  // means "arrived, still sitting at the platform". Kept as its own
+  // map, same reasoning as staffPlatformOverrides above: this only ever
+  // feeds a badge, never boardOverrides/hasConfirmedActual/lastPassedIdx.
+  // Stores { ataSpecified, atdSpecified, etd } per crs — enough to
+  // compute both AT PLATFORM and its overrun state (see the row-render
+  // loop below) without carrying the whole point object around.
+  let staffLiveStatusOverrides = {};
+  function buildStaffLiveStatusOverrides(raw, match){
+    const overrides = {};
+    if (!raw || !match) return overrides;
+    if (raw.crs) overrides[raw.crs] = { ataSpecified: !!match.ataSpecified, atdSpecified: !!match.atdSpecified, etd: match.etd || null };
+    const locs = Array.isArray(match.subsequentLocations) ? match.subsequentLocations : [];
+    for (const loc of locs){
+      if (loc.crs) overrides[loc.crs] = { ataSpecified: !!loc.ataSpecified, atdSpecified: !!loc.atdSpecified, etd: loc.etd || null };
+    }
+    return overrides;
+  }
   function formatBoardDebugLine(entry){
     if (!entry) return null;
     const tag = `${entry.crs}/${entry.boardType}[${entry.schedTime ?? '?'}]`;
@@ -7511,7 +7560,7 @@ function openTrainProgress(train, service){
   // overlay markup) because the label below now needs to know whether
   // this station genuinely has its own departure, or whether the
   // tracked/searched station turned out to be an arrival-only point.
-  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides);
+  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides);
   // A configured train's own .label is just its departure time (e.g.
   // "17:31") — fine for the compact board row it came from, but not
   // enough detail once it's the title of this screen, or sitting in the
@@ -7688,7 +7737,7 @@ function openTrainProgress(train, service){
   applyWeather(initial.weatherPoints, initial.lastPassedIdx, initial.fraction, renderGeneration);
 
   function rebuildDisplay(){
-    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides);
+    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides);
     const rowsEl = overlay.querySelector('#train-progress-rows');
     const summaryEl = overlay.querySelector('#train-progress-summary');
     if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
@@ -7830,7 +7879,7 @@ function openTrainProgress(train, service){
       if (!instanceActive) return;
       if (freshService){
         lastKnownService = freshService;
-        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides);
+        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides);
         const rowsEl = overlay.querySelector('#train-progress-rows');
         const summaryEl = overlay.querySelector('#train-progress-summary');
         const pillEl = overlay.querySelector('#train-progress-reverse-pill');
@@ -7960,6 +8009,7 @@ function openTrainProgress(train, service){
                 updateStaffDebugPanel();
                 if (result.match){
                   staffPlatformOverrides = buildStaffPlatformOverrides(result.raw, result.match);
+                  staffLiveStatusOverrides = buildStaffLiveStatusOverrides(result.raw, result.match);
                   rebuildDisplay();
                 }
               })
@@ -8069,7 +8119,7 @@ function openTrainProgress(train, service){
       // point times compared against the real current clock — re-run it
       // against the last data we did get, so the blob keeps creeping
       // forward on a reasonable assumption rather than sitting frozen.
-      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides);
+      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides);
       const rowsEl = overlay.querySelector('#train-progress-rows');
       const summaryEl = overlay.querySelector('#train-progress-summary');
       const offlineBanner = overlay.querySelector('#train-progress-offline-banner');
