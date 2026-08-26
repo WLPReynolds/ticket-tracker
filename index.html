@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.16:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.21:31'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4230,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.16:25*
+*Last updated: v2026-08-26.21:31*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -6498,6 +6498,30 @@ function staffPlatformStatusFor(crs, staffLiveStatusOverrides, now, staffDataAge
   return { overrun: etdDate ? now > etdDate : false };
 }
 
+// Deliberately broader than staffPlatformStatusFor above — that one
+// specifically means "still there right now" (ataSpecified but not yet
+// atdSpecified); this one just means "Staff confirms the train reached
+// this point at all", regardless of whether it's since also departed.
+// Added 2026-08-26 to fix a genuinely different bug the earlier
+// walkback exception didn't cover: an EARLY-running train (confirmed
+// live — Birkdale, ata 70 seconds before its own scheduled time) can
+// have Staff confirm arrival while Darwin's own forecast for that same
+// point is still technically in the future (Darwin hadn't moved its
+// estimate at all, still sitting at the original scheduled time). The
+// forward pass that sets lastPassedIdx only ever advances once a
+// point's own Darwin-based time has passed "now" — for an early train
+// it simply never reaches the point Staff already confirms, so the
+// walkback (which only ever pulls lastPassedIdx backward) never gets a
+// chance to help; the blob stayed one stop behind while the summary
+// text (which separately checks afterLast) correctly said otherwise.
+// Same staleness gate as staffPlatformStatusFor, same reasoning.
+function staffConfirmsArrival(crs, staffLiveStatusOverrides, now, staffDataAge){
+  if (!crs) return false;
+  if (!staffDataAge || (now - staffDataAge) > STAFF_DATA_MAX_AGE_MS) return false;
+  const s = staffLiveStatusOverrides[crs];
+  return !!(s && s.ataSpecified);
+}
+
 // Compares a fresh stationBoardForService result against what was last
 // seen for this journey and fires exactly two kinds of notification:
 // the platform changing (including being confirmed for the first time),
@@ -6996,6 +7020,32 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     (isGenuinelyUnconfirmedDelay(points[lastPassedIdx]) && !staffPlatformStatusFor(points[lastPassedIdx].crs, staffLiveStatusOverrides, now, staffDataAge))
   )){
     lastPassedIdx--;
+  }
+
+  // Symmetrical forward-advance, added 2026-08-26 — fixes a genuinely
+  // different bug found live on an early-running train (Birkdale,
+  // arrived confirmed 70 seconds before its own scheduled time): the
+  // forward pass above only advances lastPassedIdx once a point's own
+  // Darwin-based time has passed "now", which an early train can defeat
+  // entirely (Darwin's forecast simply hadn't moved yet, still sitting
+  // in the future relative to "now" even though Staff already confirmed
+  // arrival). The walkback just above only ever pulls lastPassedIdx
+  // backward, so it has nothing to do here — this is the forward-facing
+  // counterpart, advancing through any consecutive run of points Staff
+  // confirms were genuinely reached, regardless of whether Darwin's own
+  // due-time has technically elapsed yet. staffConfirmsArrival is
+  // deliberately broader than staffPlatformStatusFor (arrival alone,
+  // not "still there right now") — a point that's already departed too
+  // is even more clearly reached, and should still count here. The
+  // isCancelled guard is defensive: a genuinely cancelled point
+  // shouldn't real-world ever have a Staff-confirmed arrival, but this
+  // never advances onto one regardless.
+  while (
+    lastPassedIdx < points.length - 1 &&
+    !points[lastPassedIdx + 1].isCancelled &&
+    staffConfirmsArrival(points[lastPassedIdx + 1].crs, staffLiveStatusOverrides, now, staffDataAge)
+  ){
+    lastPassedIdx++;
   }
 
   // How far between the last-passed and next-due point we are right now,
