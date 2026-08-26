@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.06:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-26.07:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2017,6 +2017,11 @@ async function loadData(){
     pruneLastSeenJourneyState(); // trackedTrains is already fully loaded/filtered by this point above
   }catch(e){ lastSeenJourneyState = new Map(); }
   try{
+    const lssm = localStorage.getItem('last-seen-staff-match');
+    lastSeenStaffMatch = lssm ? new Map(JSON.parse(lssm)) : new Map();
+    pruneLastSeenStaffMatch();
+  }catch(e){ lastSeenStaffMatch = new Map(); }
+  try{
     const p = localStorage.getItem('ticket-period-start');
     periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
   }catch(e){ periodStart = DEFAULT_PERIOD_START; }
@@ -2192,6 +2197,8 @@ async function saveTrackedTrains(){
   saveConfirmedPointStatusCache();
   pruneLastSeenJourneyState();
   saveLastSeenJourneyState();
+  pruneLastSeenStaffMatch();
+  saveLastSeenStaffMatch();
 }
 async function savePeriodStart(){
   try{ localStorage.setItem('ticket-period-start', JSON.stringify(periodStart)); }
@@ -4223,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.06:50*
+*Last updated: v2026-08-26.07:20*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -6280,6 +6287,31 @@ async function saveLastSeenJourneyState(){
   catch(e){ /* save failed silently; will retry next change */ }
 }
 
+// Same idea, one level up: the Staff board's own matched service for a
+// journey, persisted so staffPlatformOverrides/staffLiveStatusOverrides
+// (see openTrainProgress) can be rebuilt immediately on reopening a
+// screen, rather than starting empty and waiting for the first poll to
+// rediscover what was already known a moment ago (2026-08-26 — this is
+// the exact gap Wayne found: platform/AT PLATFORM detail vanishing on
+// close/reopen). One entry per serviceId, not per crs — the
+// origin-anchored fetch's match already covers the entire journey in
+// one object, so there's nothing to gain from splitting it the way
+// lastSeenJourneyState splits per station. Stores only `crs` (which
+// station the match's own top-level fields describe) and `match`
+// itself — not the full raw board response, which can contain several
+// unrelated services from the same board query.
+let lastSeenStaffMatch = new Map(); // serviceId -> { crs, match }
+function pruneLastSeenStaffMatch(){
+  const liveServiceIds = new Set(trackedTrains.map(t => t.serviceId));
+  for (const serviceId of Array.from(lastSeenStaffMatch.keys())){
+    if (!liveServiceIds.has(serviceId)) lastSeenStaffMatch.delete(serviceId);
+  }
+}
+async function saveLastSeenStaffMatch(){
+  try{ localStorage.setItem('last-seen-staff-match', JSON.stringify(Array.from(lastSeenStaffMatch.entries()))); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+
 // Queries the pure departures-only or arrivals-only board (never the
 // combined one — that's the whole reason this query type exists) for
 // one specific service, matched server-side in the Worker by scheduled
@@ -7367,21 +7399,28 @@ function openTrainProgress(train, service){
   let staffPlatformOverrides = {};
   // Builds a fresh platform-only map from one Staff fetch's full
   // result — the queried station's own top-level entry plus every
-  // point in subsequentLocations — filtering out anything with
-  // platformIsHidden or isPass set, since those are junctions/pass
-  // points, not genuine calling points a passenger would recognise as
-  // "a platform". Deliberately a full rebuild each time (the
-  // origin-anchored fetch below always covers the entire journey in
-  // one response), not a merge forward — a stale platform lingering
-  // from an earlier poll after a real change would be worse than
-  // briefly having none.
+  // point in subsequentLocations — filtering out isPass points (junctions),
+  // which have no crs and no genuine platform anyway, so they're already
+  // excluded by the crs check alone. Deliberately does NOT also exclude
+  // platformIsHidden (that was the original filter, removed 2026-08-26)
+  // — confirmed live that a genuine calling point (Horden: real crs,
+  // isPass: false, real sta/eta) can still carry platformIsHidden: true,
+  // most likely meaning National Rail doesn't bother showing it publicly
+  // for a small single-platform station, not that the value's wrong or
+  // provisional. The whole point of this feature is filling in platform
+  // detail that's otherwise missing, so a genuine value is worth
+  // surfacing even where its own public display chooses not to.
+  // Deliberately a full rebuild each time (the origin-anchored fetch
+  // below always covers the entire journey in one response), not a
+  // merge forward — a stale platform lingering from an earlier poll
+  // after a real change would be worse than briefly having none.
   function buildStaffPlatformOverrides(raw, match){
     const overrides = {};
     if (!raw || !match) return overrides;
-    if (raw.crs && match.platform && !match.platformIsHidden && !match.isPass) overrides[raw.crs] = match.platform;
+    if (raw.crs && match.platform && !match.isPass) overrides[raw.crs] = match.platform;
     const locs = Array.isArray(match.subsequentLocations) ? match.subsequentLocations : [];
     for (const loc of locs){
-      if (loc.crs && loc.platform && !loc.platformIsHidden && !loc.isPass) overrides[loc.crs] = loc.platform;
+      if (loc.crs && loc.platform && !loc.isPass) overrides[loc.crs] = loc.platform;
     }
     return overrides;
   }
@@ -7555,7 +7594,69 @@ function openTrainProgress(train, service){
       const seedTo = lastSeenJourneyState.get(`${serviceId}:${train.toLoc}`);
       if (seedTo && seedTo.data) boardOverrides[train.toLoc] = seedTo;
     }
+    // Same idea, for the Staff-derived platform/AT PLATFORM data
+    // (2026-08-26) — without this, staffPlatformOverrides/
+    // staffLiveStatusOverrides start empty every time the screen opens,
+    // so platform detail that had already appeared the last time this
+    // was open would vanish again until the next poll rediscovers it —
+    // exactly the gap Wayne found. lastSeenStaffMatch stores just
+    // { crs, match } — passing that same shape straight into the two
+    // existing build functions (they only ever read raw.crs from their
+    // first argument) rebuilds both maps with no new logic needed here.
+    const seedStaff = lastSeenStaffMatch.get(serviceId);
+    if (seedStaff && seedStaff.match){
+      staffPlatformOverrides = buildStaffPlatformOverrides(seedStaff, seedStaff.match);
+      staffLiveStatusOverrides = buildStaffLiveStatusOverrides(seedStaff, seedStaff.match);
+    }
   }
+  // Fetches and applies the Staff-derived platform/AT PLATFORM data for
+  // one service snapshot — factored out so it can be called both
+  // immediately on open (using the `service` this screen was opened
+  // with) and from every doRefresh() cycle thereafter (using
+  // freshService), without duplicating the fetch logic itself.
+  // Added 2026-08-26 specifically so opening the screen doesn't have to
+  // wait for the first scheduled refresh before platform detail shows
+  // up — the seed block above handles "was this already known from a
+  // previous time this screen was open"; this handles "get something
+  // fresh straight away regardless". Origin-anchoring logic, filter
+  // choices and the reasoning behind them are otherwise unchanged from
+  // the original doRefresh-only version.
+  function refreshStaffPlatformData(serviceForThis){
+    if (!serviceId || !train.fromLoc) return;
+    const departsHereNow = !!(serviceForThis.std || serviceForThis.etd || serviceForThis.atd);
+    const boardTypeForHereNow = departsHereNow ? 'dep' : 'arr';
+    const hereSchedTimeNow = boardTypeForHereNow === 'dep' ? serviceForThis.std : serviceForThis.sta;
+    const originPoint = findServiceOriginPoint(serviceForThis);
+    const anchorAtOrigin = originPoint && originPoint.crs && originPoint.crs !== train.fromLoc;
+    const staffFromQueryCrs = anchorAtOrigin ? originPoint.crs : train.fromLoc;
+    const staffFromSchedTime = anchorAtOrigin ? originPoint.st : hereSchedTimeNow;
+    const staffFromFilterCrs = anchorAtOrigin ? train.fromLoc : (train.toLoc || undefined);
+    const staffFromFilterType = staffFromFilterCrs ? 'to' : undefined;
+    const staffFromBoardType = anchorAtOrigin ? 'dep' : boardTypeForHereNow;
+    if (!staffFromSchedTime) return;
+    fetchStaffBoardComparison(staffFromQueryCrs, staffFromFilterCrs, staffFromFilterType, staffFromBoardType, staffFromSchedTime, serviceForThis.sdd)
+      .then(result => {
+        const wanted = extractStaffLocationFields(result.raw, result.match, train.fromLoc);
+        lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHereNow, schedTime: hereSchedTimeNow, ...result, wanted, error: null };
+        updateStaffDebugPanel();
+        if (result.match){
+          staffPlatformOverrides = buildStaffPlatformOverrides(result.raw, result.match);
+          staffLiveStatusOverrides = buildStaffLiveStatusOverrides(result.raw, result.match);
+          lastSeenStaffMatch.set(serviceId, { crs: result.raw.crs, match: result.match });
+          saveLastSeenStaffMatch();
+          rebuildDisplay();
+        }
+      })
+      .catch(err => {
+        lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHereNow, schedTime: hereSchedTimeNow, error: err.message };
+        updateStaffDebugPanel();
+        // staffPlatformOverrides/staffLiveStatusOverrides deliberately
+        // left untouched here — a transient failure shouldn't blank out
+        // platform/AT PLATFORM detail that was already known, same
+        // reasoning as staffPlatformOverrides' own declaration above.
+      });
+  }
+  refreshStaffPlatformData(service); // immediately, not waiting for the first scheduled refresh — see docblock above
   // Computed early (rather than at its previous spot, right before the
   // overlay markup) because the label below now needs to know whether
   // this station genuinely has its own departure, or whether the
@@ -7950,77 +8051,17 @@ function openTrainProgress(train, service){
               });
           }
           // Phase 2 staff-board comparison, plus (2026-08-26) genuine
-          // platform enrichment — the fetch itself now always runs,
-          // same as the pure-board fetch above, since staffPlatformOverrides
-          // feeds real behaviour now. Still strictly read-only in every
-          // other respect: no boardOverrides write, no influence on
-          // hasConfirmedActual/liveTime/isCancelled/walkback — only
-          // platform, via the separate staffPlatformOverrides mechanism
-          // above, deliberately kept apart from boardOverrides' own
+          // platform enrichment — now handled by the shared
+          // refreshStaffPlatformData (see its declaration near the
+          // seed block above), which this same call also feeds every
+          // refresh cycle, not just on initial open. Still strictly
+          // read-only in every other respect: no boardOverrides write,
+          // no influence on hasConfirmedActual/liveTime/isCancelled/
+          // walkback — only platform and AT PLATFORM status, via the
+          // separate staffPlatformOverrides/staffLiveStatusOverrides
+          // mechanism, deliberately kept apart from boardOverrides' own
           // all-or-nothing merge. See staff-board-scoping.md Phase 2.
-          //
-          // Anchored at the service's TRUE origin, not train.fromLoc,
-          // whenever they differ — confirmed live (2026-08-25) that
-          // subsequentLocations only ever runs forward from wherever
-          // queried, never backward, so a train tracked from partway
-          // through its journey (a searched train, or either of the
-          // two configured Crewe/Wigan routes — neither is ever the
-          // service's actual origin) would otherwise never see Staff's
-          // view of anything before that point, even though the
-          // existing Darwin-based Live Progress screen already shows
-          // the full journey regardless (via GetServiceDetails'
-          // previousCallingPoints, looked up by serviceId rather than
-          // by station). Querying at the true origin instead returns
-          // the entire journey in one response; extractStaffLocationFields
-          // then picks train.fromLoc's own fields back out of it for the
-          // actual comparison, while the raw JSON shown below now
-          // covers the whole thing, not just from wherever tracking
-          // happened to start.
-          //
-          // originPoint comes from findServiceOriginPoint, not
-          // service.origin[0] — confirmed live (2026-08-25) that the
-          // latter isn't a reliable field on GetServiceDetails' own
-          // response shape, unlike on the combined/staff board
-          // products. filterCrs is train.fromLoc itself (not the
-          // service's ultimate destination) — what actually matters is
-          // finding the departure that reaches the station being
-          // tracked, which for a mid-journey configured route isn't
-          // necessarily the same as where the physical train eventually
-          // terminates.
-          const originPoint = findServiceOriginPoint(freshService);
-          const anchorAtOrigin = originPoint && originPoint.crs && originPoint.crs !== train.fromLoc;
-          const staffFromQueryCrs = anchorAtOrigin ? originPoint.crs : train.fromLoc;
-          const staffFromSchedTime = anchorAtOrigin ? originPoint.st : hereSchedTime;
-          const staffFromFilterCrs = anchorAtOrigin ? train.fromLoc : (train.toLoc || undefined);
-          const staffFromFilterType = staffFromFilterCrs ? 'to' : undefined;
-          const staffFromBoardType = anchorAtOrigin ? 'dep' : boardTypeForHere; // the true origin only ever departs — matched by std, never sta
-          // Runs every poll now, not just in debug mode (2026-08-26) —
-          // this is the fetch that powers staffPlatformOverrides (see
-          // its declaration above), which is real user-facing
-          // enrichment now, not just a debug comparison. The debug
-          // panel/copy-button below is still gated on showRawDebug —
-          // only the fetch itself was ever debug-only, and that's what
-          // changed.
-          if (staffFromSchedTime){
-            fetchStaffBoardComparison(staffFromQueryCrs, staffFromFilterCrs, staffFromFilterType, staffFromBoardType, staffFromSchedTime, freshService.sdd)
-              .then(result => {
-                const wanted = extractStaffLocationFields(result.raw, result.match, train.fromLoc);
-                lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, ...result, wanted, error: null };
-                updateStaffDebugPanel();
-                if (result.match){
-                  staffPlatformOverrides = buildStaffPlatformOverrides(result.raw, result.match);
-                  staffLiveStatusOverrides = buildStaffLiveStatusOverrides(result.raw, result.match);
-                  rebuildDisplay();
-                }
-              })
-              .catch(err => {
-                lastStaffDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, error: err.message };
-                updateStaffDebugPanel();
-                // staffPlatformOverrides deliberately left untouched here
-                // — see its declaration above for why a transient failure
-                // shouldn't blank out platforms already known.
-              });
-          }
+          refreshStaffPlatformData(freshService);
         }
         if (serviceId && train.toLoc && train.toLoc !== train.fromLoc){
           // Always 'arr' — the tracked-to station is by definition where
