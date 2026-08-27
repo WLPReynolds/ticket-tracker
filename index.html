@@ -1237,7 +1237,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-27.21:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-27.21:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -7321,6 +7321,21 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
   let knownOverallDelay = 0; // the most reliable delay figure we have, in minutes — used both for the summary headline and to infer real times for passed points Darwin only gave a generic "On time" word for
   let anyReasonSuppressed = false; // true if a reason was hidden by the staleness heuristic or the repeat-dedup — drives the "Show all reasons" reveal link
   let journeyFinished = !!service.isCancelled; // true once there's genuinely nothing left to poll for — arrived at the booked destination, terminated early with everything remaining cancelled, or the whole service has been cancelled outright
+  // Index of whichever point atPlatformPoint below resolves to (last or
+  // afterLast), or -1 if neither. Added 2026-08-27 alongside the row
+  // loop's staffPlatformHere fix: the summary already reconciles "last"
+  // vs "afterLast" to pick the single most-current point (see
+  // atPlatformPoint's own comment below), but that reconciled answer
+  // used to live only inside this if-block, so the row loop had no way
+  // to see it and fell back to always checking lastPassedIdx's own row
+  // instead — letting the two disagree on which row is "AT PLATFORM"
+  // whenever afterLast turned out to be the more current one. Hoisted
+  // here so the row loop can check against this instead, making "which
+  // row gets the badge" and "what the banner calls current" the same
+  // answer by construction, the same principle the Wigan Wallgate fix
+  // already established one level up (a real position can only be
+  // claimed once).
+  let atPlatformPointIdx = -1;
   if (lastPassedIdx >= 0){
     const last = points[lastPassedIdx];
     const status = describePointStatusRemembered(service.serviceID, last.crs || `idx-${lastPassedIdx}`, last.schedTime, last.liveTime, last.isCancelled);
@@ -7363,6 +7378,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     const afterLastDueMomentPassed = !!(afterLast && liveDates[lastPassedIdx + 1] && now >= liveDates[lastPassedIdx + 1]);
     const afterLastNotYetDepartedViaDarwin = !!(afterLast && afterLastDueMomentPassed && isGenuinelyUnconfirmedDelay(afterLast));
     const atPlatformPoint = (afterLastStaffPlatform || afterLastNotYetDepartedViaDarwin) ? afterLast : (lastStaffPlatformRaw ? last : null);
+    atPlatformPointIdx = (atPlatformPoint === afterLast) ? (lastPassedIdx + 1) : (atPlatformPoint === last ? lastPassedIdx : -1);
     const lastStaffPlatform = afterLastStaffPlatform || lastStaffPlatformRaw;
     // "Terminated early" — every remaining booked calling point has been
     // cancelled, meaning the train stops here and won't reach its real
@@ -7633,7 +7649,24 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // inline, which meant it was also the one place the new
       // staffDataAge staleness gate could have been missed if it had
       // stayed separate.
-      const staffPlatformHere = (i === lastPassedIdx) ? staffPlatformStatusFor(p.crs, staffLiveStatusOverrides, now, staffDataAge, staffOverrunLatch) : null;
+      //
+      // Checked against atPlatformPointIdx rather than lastPassedIdx
+      // directly (2026-08-27) — found live on a Wigan–Crewe service
+      // where Watford Junction's own Staff record still showed
+      // ataSpecified && !atdSpecified (no departure ever logged for it)
+      // while the train had clearly moved on to London Euston, whose
+      // own due-moment had already passed with nothing confirmed. The
+      // summary banner correctly named Euston as current (via
+      // atPlatformPoint's own last/afterLast reconciliation just above),
+      // but this check still only ever looked at lastPassedIdx's row —
+      // Watford — so it kept showing AT PLATFORM there regardless,
+      // directly contradicting the banner and Euston's own NOT YET
+      // ARRIVED pill. atPlatformPointIdx is that same reconciled answer,
+      // hoisted so this loop can check against it instead — the row
+      // that can claim AT PLATFORM is now, by construction, whichever
+      // one the banner also calls current, never a stale earlier point
+      // Staff simply hasn't logged a departure for yet.
+      const staffPlatformHere = (i === atPlatformPointIdx) ? staffPlatformStatusFor(p.crs, staffLiveStatusOverrides, now, staffDataAge, staffOverrunLatch) : null;
       const isAtPlatformViaStaff = !isFinalPoint && !!staffPlatformHere;
       const staffOverrun = isAtPlatformViaStaff && !!staffPlatformHere.overrun;
       // Fixes a real contradiction found live (2026-08-26): staffOverrun
