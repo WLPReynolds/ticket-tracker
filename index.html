@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-27.14:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-27.19:13'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1778,7 +1778,10 @@ function geofenceRadiusForCrs(crs){
   if (crs === 'WGN') return geofenceRadiusWigan;
   return DEFAULT_GEOFENCE_RADIUS_M; // defensive — shouldn't happen with the two configured stations
 }
-const LIKELY_TRAIN_CHECK_INTERVAL_MS = 2 * 60 * 1000; // how often to check while the app is open
+const LIKELY_TRAIN_CHECK_INTERVAL_MS = 2 * 60 * 1000; // baseline cadence while nowhere near a departure
+const LIKELY_TRAIN_FAST_CHECK_INTERVAL_MS = 30 * 1000; // tighter cadence right around a configured departure, where silent-confirm timing actually matters
+const LIKELY_TRAIN_FAST_WINDOW_BEFORE_MIN = 2;  // start the fast cadence this many minutes before a configured departure
+const LIKELY_TRAIN_FAST_WINDOW_AFTER_MIN = 10;  // ...and keep it up to this many minutes after, to cover a modestly delayed departure
 // Was 45 — wide enough that adjacent configured trains an hour apart
 // (e.g. 16:31/17:31) had overlapping windows, so simply being near the
 // station well before your actual train could bring an earlier one into
@@ -1795,7 +1798,9 @@ const LIKELY_ARRIVAL_WINDOW_FORWARD_MIN = 50; // arrival-side check: forward-onl
 // governed the *silent* write.
 const SILENT_CONFIRM_MAX_DIFF_MIN = 5;
 let likelyTrainSuggestion = null; // { dateKey, direction, trainKey, label } — transient, not persisted
-let likelyTrainCheckTimer = null;
+let likelyTrainCheckTimer = null;      // pending setTimeout handle, or null when nothing's scheduled right now
+let likelyTrainChecksActive = false;   // true from startLikelyTrainChecks() until stopLikelyTrainChecks()
+let likelyTrainCycleRunning = false;   // guards against an overlapping cycle if one run takes longer than expected
 let dismissedLikelyTrainKeys = new Set(); // avoids re-suggesting the same match repeatedly in one session
 // A passive, no-response-needed notice that the silent-confirm branch
 // above actually fired — the "no surprise, just quietly confirm it" path
@@ -5459,6 +5464,32 @@ async function checkLikelyArrival(){
   }
 }
 
+// Decides how soon the next cycle should run. The normal 2-minute cadence
+// is fine most of the time, but right around a configured departure — the
+// exact stretch where SILENT_CONFIRM_MAX_DIFF_MIN-based silent confirmation
+// can actually fire — a 2-minute gap can eat most of the 5-minute confirm
+// window before the next check even happens. Tightens to 30s just for that
+// stretch instead of for the whole 20/50-minute check window, to avoid the
+// extra geolocation/board-fetch cost the rest of the time. Only considers
+// directions not already confirmed today, same as the checks themselves —
+// no point polling fast for a direction there's nothing left to detect.
+function computeLikelyTrainCheckDelay(){
+  if (!railTrains || railTrains.length === 0) return LIKELY_TRAIN_CHECK_INTERVAL_MS;
+  const now = new Date();
+  const todayKeyLocal = fmtKey(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  for (const direction of ['AM', 'PM']){
+    if (confirmedTrains[todayKeyLocal] && confirmedTrains[todayKeyLocal][direction] !== undefined) continue;
+    const dirTrains = railTrains.filter(t => t.direction === direction);
+    const nearDeparture = dirTrains.some(t => {
+      const tMin = parseInt(t.time.slice(0,2),10)*60 + parseInt(t.time.slice(2,4),10);
+      return nowMinutes >= tMin - LIKELY_TRAIN_FAST_WINDOW_BEFORE_MIN && nowMinutes <= tMin + LIKELY_TRAIN_FAST_WINDOW_AFTER_MIN;
+    });
+    if (nearDeparture) return LIKELY_TRAIN_FAST_CHECK_INTERVAL_MS;
+  }
+  return LIKELY_TRAIN_CHECK_INTERVAL_MS;
+}
+
 // Runs the two checks sequentially, not concurrently — checkLikelyArrival
 // is meant to be a fallback that only gets a real turn once departure-side
 // detection has already had its own shot (and, via each function's own
@@ -5466,10 +5497,17 @@ async function checkLikelyArrival(){
 // other has succeeded). Firing both at once undermined that: no
 // guarantee departure detection had actually completed before arrival
 // detection also started, and no guard against a slow cycle overlapping
-// with the next timer tick. The in-flight guard below stops that too —
-// a cycle still running when the next 2-minute tick fires is skipped
+// with the next scheduled run. The in-flight guard below stops that too —
+// a cycle still running when the next run would otherwise fire is skipped
 // rather than allowed to overlap with it.
-let likelyTrainCycleRunning = false;
+//
+// Self-rescheduling setTimeout rather than a single setInterval, since
+// the delay needs to change from one cycle to the next: normally the
+// LIKELY_TRAIN_CHECK_INTERVAL_MS baseline, tightened to
+// LIKELY_TRAIN_FAST_CHECK_INTERVAL_MS via computeLikelyTrainCheckDelay()
+// whenever a configured, not-yet-confirmed departure is imminent — see
+// that function for why. Same pattern already used for the train-progress
+// screen's own adaptive polling.
 async function runLikelyTrainCycle(){
   if (likelyTrainCycleRunning) return;
   likelyTrainCycleRunning = true;
@@ -5477,15 +5515,21 @@ async function runLikelyTrainCycle(){
     await checkLikelyTrain();
     await checkLikelyArrival();
   }catch(e){ /* each check already handles its own failures internally — this is just a final safety net so a cycle failure can't leave the guard stuck on */ }
-  finally{ likelyTrainCycleRunning = false; }
+  finally{
+    likelyTrainCycleRunning = false;
+    if (likelyTrainChecksActive){
+      likelyTrainCheckTimer = setTimeout(runLikelyTrainCycle, computeLikelyTrainCheckDelay());
+    }
+  }
 }
 function startLikelyTrainChecks(){
-  if (likelyTrainCheckTimer) return;
+  if (likelyTrainChecksActive) return;
+  likelyTrainChecksActive = true;
   runLikelyTrainCycle();
-  likelyTrainCheckTimer = setInterval(runLikelyTrainCycle, LIKELY_TRAIN_CHECK_INTERVAL_MS);
 }
 function stopLikelyTrainChecks(){
-  if (likelyTrainCheckTimer){ clearInterval(likelyTrainCheckTimer); likelyTrainCheckTimer = null; }
+  likelyTrainChecksActive = false;
+  if (likelyTrainCheckTimer){ clearTimeout(likelyTrainCheckTimer); likelyTrainCheckTimer = null; }
 }
 
 function openConfirmTrain(){
