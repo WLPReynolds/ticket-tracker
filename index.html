@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-27.08:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-27.14:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6489,13 +6489,44 @@ function isoTimeToHHMM(iso){
 // passed with nothing confirmed since is worth surfacing), but it's a
 // prediction-based inference, not direct confirmation, and the pill
 // text should be read that way.
-function staffPlatformStatusFor(crs, staffLiveStatusOverrides, now, staffDataAge){
+// overrunLatch (2026-08-27) — a caller-supplied, cross-poll Set<crs>
+// that fixes a real flicker found live at Wolverhampton: Darwin's own
+// etd for a train still sitting at a platform is a moving prediction,
+// not a fixed fact, and it can get revised both later (pushing the
+// "now > etd" comparison back to false) and earlier again on a
+// following poll, purely as Darwin's estimate wobbles — with nothing
+// about ataSpecified/atdSpecified themselves ever changing. Read
+// literally each time, that wobble flipped the AT PLATFORM / NOT YET
+// DEPARTED pill back and forth on a train that never actually moved.
+// Once `overrun` has been genuinely true for a crs, the latch keeps it
+// true regardless of a later etd revision — the pill can only clear by
+// the ordinary route (atdSpecified finally true, or the crs ages out/
+// stops being ataSpecified), both of which already delete the crs from
+// the latch below. Passing null for overrunLatch (from any call site
+// that doesn't have one) reproduces the old, un-latched behaviour
+// exactly, so this is safe to leave optional.
+function staffPlatformStatusFor(crs, staffLiveStatusOverrides, now, staffDataAge, overrunLatch){
   if (!crs) return null;
-  if (!staffDataAge || (now - staffDataAge) > STAFF_DATA_MAX_AGE_MS) return null;
+  if (!staffDataAge || (now - staffDataAge) > STAFF_DATA_MAX_AGE_MS){
+    if (overrunLatch) overrunLatch.delete(crs);
+    return null;
+  }
   const s = staffLiveStatusOverrides[crs];
-  if (!s || !s.ataSpecified || s.atdSpecified) return null;
-  const etdDate = s.etd ? new Date(s.etd) : null;
-  return { overrun: etdDate ? now > etdDate : false };
+  if (!s || !s.ataSpecified || s.atdSpecified){
+    if (overrunLatch) overrunLatch.delete(crs);
+    return null;
+  }
+  // etdSpecified guard added alongside the latch: buildStaffLiveStatusOverrides
+  // stores match.etd even when Staff didn't actually specify it for this
+  // poll, so an unspecified/stale etd shouldn't be trusted as a real
+  // prediction to compare "now" against.
+  const etdDate = (s.etdSpecified && s.etd) ? new Date(s.etd) : null;
+  let overrun = etdDate ? now > etdDate : false;
+  if (overrunLatch){
+    if (overrun) overrunLatch.add(crs);
+    else if (overrunLatch.has(crs)) overrun = true;
+  }
+  return { overrun };
 }
 
 // Deliberately broader than staffPlatformStatusFor above — that one
@@ -6678,12 +6709,13 @@ function buildFormationDebugHtml(service, showRawDebug){
 ${escapeHtml(body)}</div>`;
 }
 
-function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge){
+function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge, staffOverrunLatch){
   const now = new Date();
   boardOverrides = boardOverrides || {};
   staffPlatformOverrides = staffPlatformOverrides || {};
   staffLiveStatusOverrides = staffLiveStatusOverrides || {};
   staffDataAge = staffDataAge || null;
+  staffOverrunLatch = staffOverrunLatch || null;
 
   // Applied to any point (before/here/after) whose crs has a fresher
   // result from a stationBoardForService lookup — that's the whole
@@ -7017,7 +7049,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
   // only ever needed for exactly the still-there window, not beyond it.
   while (lastPassedIdx >= 0 && (
     points[lastPassedIdx].isCancelled ||
-    (isGenuinelyUnconfirmedDelay(points[lastPassedIdx]) && !staffPlatformStatusFor(points[lastPassedIdx].crs, staffLiveStatusOverrides, now, staffDataAge))
+    (isGenuinelyUnconfirmedDelay(points[lastPassedIdx]) && !staffPlatformStatusFor(points[lastPassedIdx].crs, staffLiveStatusOverrides, now, staffDataAge, staffOverrunLatch))
   )){
     lastPassedIdx--;
   }
@@ -7069,7 +7101,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
   // fraction takes back over correctly from wherever it actually is.
   let fraction = 0;
   if (lastPassedIdx >= 0 && lastPassedIdx < points.length - 1 && !points[lastPassedIdx + 1].isCancelled){
-    const stillAtLastPassed = !!staffPlatformStatusFor(points[lastPassedIdx].crs, staffLiveStatusOverrides, now, staffDataAge);
+    const stillAtLastPassed = !!staffPlatformStatusFor(points[lastPassedIdx].crs, staffLiveStatusOverrides, now, staffDataAge, staffOverrunLatch);
     if (!stillAtLastPassed){
       const t1 = liveDates[lastPassedIdx], t2 = liveDates[lastPassedIdx + 1];
       if (t1 && t2 && t2 > t1){
@@ -7117,8 +7149,8 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     // NOT YET DEPARTED cycle. afterLast takes priority when both
     // somehow show it, since it's the more forward, more current
     // position.
-    const lastStaffPlatformRaw = staffPlatformStatusFor(last.crs, staffLiveStatusOverrides, now, staffDataAge);
-    const afterLastStaffPlatform = afterLast ? staffPlatformStatusFor(afterLast.crs, staffLiveStatusOverrides, now, staffDataAge) : null;
+    const lastStaffPlatformRaw = staffPlatformStatusFor(last.crs, staffLiveStatusOverrides, now, staffDataAge, staffOverrunLatch);
+    const afterLastStaffPlatform = afterLast ? staffPlatformStatusFor(afterLast.crs, staffLiveStatusOverrides, now, staffDataAge, staffOverrunLatch) : null;
     // Also recognises the original, pre-existing Darwin-only "not yet
     // departed" trigger for afterLast, not just Staff's — found live
     // (2026-08-26) on a later point in the same journey (Colwyn Bay):
@@ -7405,7 +7437,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // inline, which meant it was also the one place the new
       // staffDataAge staleness gate could have been missed if it had
       // stayed separate.
-      const staffPlatformHere = (i === lastPassedIdx) ? staffPlatformStatusFor(p.crs, staffLiveStatusOverrides, now, staffDataAge) : null;
+      const staffPlatformHere = (i === lastPassedIdx) ? staffPlatformStatusFor(p.crs, staffLiveStatusOverrides, now, staffDataAge, staffOverrunLatch) : null;
       const isAtPlatformViaStaff = !isFinalPoint && !!staffPlatformHere;
       const staffOverrun = isAtPlatformViaStaff && !!staffPlatformHere.overrun;
       // Fixes a real contradiction found live (2026-08-26): staffOverrun
@@ -7782,13 +7814,21 @@ function openTrainProgress(train, service){
   // pinning the walkback/fraction/pill/summary after the train had
   // genuinely moved on and Staff stopped confirming it either way.
   let staffDataAge = null;
+  // Cross-poll latch backing staffPlatformStatusFor's overrun flip-flop
+  // fix (2026-08-27) — lives here, not inside buildTrainProgress, so it
+  // persists across repeated buildTrainProgress calls for the same
+  // opened service (each poll rebuilds fresh, but this Set carries
+  // forward). Scoped per openTrainProgress instance, same as
+  // staffPlatformOverrides/staffLiveStatusOverrides/staffDataAge above,
+  // so it naturally starts empty again for a newly opened train.
+  let staffOverrunLatch = new Set();
   function buildStaffLiveStatusOverrides(raw, match){
     const overrides = {};
     if (!raw || !match) return overrides;
-    if (raw.crs) overrides[raw.crs] = { ataSpecified: !!match.ataSpecified, atdSpecified: !!match.atdSpecified, ata: match.ata || null, atd: match.atd || null, etd: match.etd || null };
+    if (raw.crs) overrides[raw.crs] = { ataSpecified: !!match.ataSpecified, atdSpecified: !!match.atdSpecified, ata: match.ata || null, atd: match.atd || null, etd: match.etd || null, etdSpecified: !!match.etdSpecified };
     const locs = Array.isArray(match.subsequentLocations) ? match.subsequentLocations : [];
     for (const loc of locs){
-      if (loc.crs) overrides[loc.crs] = { ataSpecified: !!loc.ataSpecified, atdSpecified: !!loc.atdSpecified, ata: loc.ata || null, atd: loc.atd || null, etd: loc.etd || null };
+      if (loc.crs) overrides[loc.crs] = { ataSpecified: !!loc.ataSpecified, atdSpecified: !!loc.atdSpecified, ata: loc.ata || null, atd: loc.atd || null, etd: loc.etd || null, etdSpecified: !!loc.etdSpecified };
     }
     return overrides;
   }
@@ -8044,7 +8084,7 @@ function openTrainProgress(train, service){
   // overlay markup) because the label below now needs to know whether
   // this station genuinely has its own departure, or whether the
   // tracked/searched station turned out to be an arrival-only point.
-  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge);
+  const initial = buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge, staffOverrunLatch);
   // A configured train's own .label is just its departure time (e.g.
   // "17:31") — fine for the compact board row it came from, but not
   // enough detail once it's the title of this screen, or sitting in the
@@ -8221,7 +8261,7 @@ function openTrainProgress(train, service){
   applyWeather(initial.weatherPoints, initial.lastPassedIdx, initial.fraction, renderGeneration);
 
   function rebuildDisplay(){
-    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge);
+    const rebuilt = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge, staffOverrunLatch);
     const rowsEl = overlay.querySelector('#train-progress-rows');
     const summaryEl = overlay.querySelector('#train-progress-summary');
     if (rowsEl) rowsEl.innerHTML = rebuilt.rowsHtml;
@@ -8363,7 +8403,7 @@ function openTrainProgress(train, service){
       if (!instanceActive) return;
       if (freshService){
         lastKnownService = freshService;
-        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge);
+        const fresh = buildTrainProgress(train, freshService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge, staffOverrunLatch);
         const rowsEl = overlay.querySelector('#train-progress-rows');
         const summaryEl = overlay.querySelector('#train-progress-summary');
         const pillEl = overlay.querySelector('#train-progress-reverse-pill');
@@ -8543,7 +8583,7 @@ function openTrainProgress(train, service){
       // point times compared against the real current clock — re-run it
       // against the last data we did get, so the blob keeps creeping
       // forward on a reasonable assumption rather than sitting frozen.
-      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge);
+      const stale = buildTrainProgress(train, lastKnownService, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge, staffOverrunLatch);
       const rowsEl = overlay.querySelector('#train-progress-rows');
       const summaryEl = overlay.querySelector('#train-progress-summary');
       const offlineBanner = overlay.querySelector('#train-progress-offline-banner');
