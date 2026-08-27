@@ -1181,7 +1181,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-26.21:48'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-27.08:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4230,7 +4230,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-26.21:48*
+*Last updated: v2026-08-27.08:41*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Christmas bunting variant** for the header.
@@ -7411,15 +7411,40 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // Fixes a real contradiction found live (2026-08-26): staffOverrun
       // firing the NOT YET DEPARTED pill while statusText underneath it
       // still said "On time" — genuinely confusing, since by definition
-      // staffOverrun means it's now running late by some amount. No
-      // specific minutes figure here (that would need continuous
-      // recalculation against "now" between polls, which nothing else
-      // in this row does either) — same plain "Delayed" wording/colour
-      // describePointStatus already uses elsewhere, rather than leaving
-      // the pre-existing, now-contradicted text in place.
+      // staffOverrun means it's now running late by some amount.
+      //
+      // Upgraded same day from a plain "Delayed" to a live minutes-late
+      // figure — Wayne pointed out the data to do this properly was
+      // already sitting right there (this row's own point has a real
+      // Staff-confirmed ata to work from) and asked for it, then asked
+      // for it to be terser: exactly the same plain "X min late" text
+      // and colour describePointStatus already uses for every other
+      // confirmed-late row, nothing extra appended — the AT
+      // PLATFORM/NOT YET DEPARTED pill already says "still there" on
+      // its own, so this text doesn't need to repeat it.
+      //
+      // Measured against pointDates[i] (the point's plain SCHEDULED
+      // time, already correctly midnight-safe — see its own
+      // declaration above) rather than building a second date-from-
+      // HH:MM conversion here — reusing the one that's already careful
+      // about day-rollover is safer than a second one that might get it
+      // subtly wrong. Recalculated fresh every render, so this grows on
+      // its own between polls purely from "now" moving forward — no new
+      // fetch needed, same reasoning as everywhere else Staff data
+      // already gets reused in this function.
       if (staffOverrun){
-        statusText = 'Delayed';
-        statusColor = '#ff8b7e';
+        const minutesLateNow = pointDates[i] ? Math.round((now - pointDates[i]) / 60000) : null;
+        if (minutesLateNow !== null && minutesLateNow > 0){
+          statusText = `${minutesLateNow} min late`;
+          statusColor = '#ff8b7e';
+        } else {
+          // pointDates[i] missing, or the schedule genuinely hasn't
+          // passed yet (etd earlier than schedule, a real if unusual
+          // case) — falls back to the plain word rather than showing a
+          // zero or negative figure that would look like a bug.
+          statusText = 'Delayed';
+          statusColor = '#ff8b7e';
+        }
       }
       const atPlatformPill = (isAtPlatformViaStaff && !staffOverrun)
         ? ` <span style="background:#2fa360; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">AT PLATFORM</span>`
