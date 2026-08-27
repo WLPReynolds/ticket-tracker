@@ -293,80 +293,47 @@
     opacity: 0.6;
   }
 
-  .flip-row{
-    display:flex;
-    justify-content:center;
-    align-items: baseline;
-    gap: 10px;
-    margin: 6px 0 18px;
-  }
-  .flip-tile{
-    width: 74px;
-    height: 96px;
-    background: linear-gradient(180deg, #2c3146, #1c1f2c);
-    border-radius: 8px;
+  .ticket-summary-row{
     display:flex;
     align-items:center;
-    justify-content:center;
-    font-size: 54px;
-    font-weight: 800;
-    color: var(--amber);
-    box-shadow: inset 0 0 0 1px var(--line), 0 6px 14px rgba(0,0,0,0.4);
-    position: relative;
+    justify-content:space-between;
+    gap: 10px;
+    margin: 4px 0 10px;
   }
-  .flip-tile::after{
-    content:"";
-    position:absolute; left:0; right:0; top:50%;
-    height:1px;
-    background: rgba(0,0,0,0.5);
-  }
-  .flip-of8{
-    display:flex; flex-direction:column; align-items:center;
-  }
-  .flip-of8 .num{
-    font-size: 40px;
-    font-weight: 300;
-    color: var(--ink-dim);
-  }
-  .flip-of8 .label{
-    font-size: 10px;
-    letter-spacing: 2px;
-    color: var(--ink-dim);
-    text-transform: uppercase;
-  }
-
   .punch-row{
     display:flex;
-    justify-content:center;
-    gap: 8px;
-    margin-bottom: 4px;
+    gap: 6px;
+    flex-wrap: nowrap;
   }
   .punch{
-    width: 26px; height: 26px;
+    width: 22px; height: 22px;
     border-radius: 50%;
     border: 2px solid var(--line);
     display:flex; align-items:center; justify-content:center;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--ink-dim);
     font-weight: 700;
     transition: all 0.2s;
+    flex-shrink: 0;
   }
   .punch.done{
     background: var(--amber);
     border-color: var(--amber);
     color: #14161f;
   }
-
-  .day-progress-label{
-    text-align:center;
-    font-size: 11px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    color: var(--ink-dim);
-    margin-bottom: 6px;
+  .ticket-count-label{
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink);
+    white-space: nowrap;
   }
+  .ticket-count-label .of8{
+    color: var(--ink-dim);
+    font-weight: 400;
+  }
+
   .day-progress-track{
-    height: 5px;
+    height: 4px;
     background: var(--tile);
     border-radius: 4px;
     overflow: hidden;
@@ -1237,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-27.21:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-27.22:03'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3572,16 +3539,12 @@ function render(){
 
     <div class="board-card">
       ${!isPhantomToday ? `
-      <div class="flip-row">
-        <div class="flip-tile">${todayCountDisplay}</div>
-        <div class="flip-of8">
-          <div class="num">/8</div>
+      <div class="ticket-summary-row">
+        <div class="punch-row">
+          ${punches.map((p,i)=>`<div class="punch ${p?'done':''}">${i+1}</div>`).join('')}
         </div>
+        <div class="ticket-count-label">${todayCountDisplay}<span class="of8">/8</span></div>
       </div>
-      <div class="punch-row">
-        ${punches.map((p,i)=>`<div class="punch ${p?'done':''}">${i+1}</div>`).join('')}
-      </div>
-      <div class="day-progress-label">Day ${beforePeriod ? 0 : todayState.daysElapsed} of 28</div>
       <div class="day-progress-track"><div class="day-progress-fill" style="width:${dayProgressPct}%"></div></div>
       ` : ''}
       ${statusHtml}
