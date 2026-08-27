@@ -42,6 +42,62 @@
     border-bottom: 1px solid var(--line);
     background: linear-gradient(180deg, var(--board-2), var(--board));
   }
+  .delay-repay-badge-wrap{
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .delay-repay-badge{
+    border-radius: 14px;
+    padding: 10px 16px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+    text-align: center;
+    min-width: 92px;
+  }
+  .delay-repay-badge.normal{
+    background: rgba(242,169,59,0.22);
+    color: var(--amber);
+  }
+  .delay-repay-badge.expired{
+    background: rgba(224,90,78,0.22);
+    color: var(--danger);
+  }
+  .delay-repay-badge-caption{
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0.9;
+    font-weight: 600;
+  }
+  .delay-repay-badge-line{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 19px;
+    white-space: nowrap;
+    font-weight: 700;
+    margin-top: 3px;
+  }
+  .delay-repay-badge-line svg{
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+  }
+  .delay-repay-badge-more{
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--danger);
+    opacity: 0.7;
+    text-align: center;
+    max-width: 140px;
+  }
   .bunting-row{
     display: flex;
     justify-content: center;
@@ -1181,7 +1237,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-27.19:13'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-27.21:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3097,10 +3153,85 @@ function countWorkingDaysUntil(from, to){
   return count;
 }
 
+// Small line-style SVG icons for the delay repay badge — kept inline rather
+// than pulling in an icon font, since the app otherwise relies on emoji and
+// these two need to look crisp at ~17px against a tinted background.
+const DELAY_REPAY_ICON_RECEIPT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12a1 1 0 0 1 1 1v18l-2.5-1.5L14 21l-2.5-1.5L9 21l-2.5-1.5L4 21V3a1 1 0 0 1 1-1z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="12" y2="15"/></svg>';
+const DELAY_REPAY_ICON_WARNING = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3z"/><line x1="12" y1="10" x2="12" y2="14.5"/><line x1="12" y1="17" x2="12" y2="17"/></svg>';
+
 function render(){
   const app = document.getElementById('app');
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const todayKey = fmtKey(today);
+
+  // Delay repay claim expiry — Avanti's 28-day window from date of travel.
+  // Stamped here (evaluated on every render) rather than on a timer, since
+  // the app has no background process; the next time Wayne opens it after
+  // the window lapses is when it flips to 'expired'. Fire-and-forget save —
+  // render() isn't async and this is low-stakes enough not to need to be.
+  let anyClaimJustExpired = false;
+  for (const dKey in delayClaims){
+    for (const dir in delayClaims[dKey]){
+      const c = delayClaims[dKey][dir];
+      if (c && c.status === 'started'){
+        const daysSinceTravel = Math.floor((today - parseKey(dKey)) / 86400000);
+        if (daysSinceTravel >= 28){
+          c.status = 'expired';
+          if (typeof c.expiredAcknowledged !== 'boolean') c.expiredAcknowledged = false;
+          anyClaimJustExpired = true;
+        }
+      }
+    }
+  }
+  if (anyClaimJustExpired) saveDelayClaims();
+
+  // Delay repay badge — see delay-repay-expiry-badge-spec.md. Expired mode
+  // (unacknowledged) always wins over normal mode; within a mode, AM+PM
+  // claims on the same date count as one entry, since openDayEditor opens
+  // by date, not by direction.
+  let delayRepayBadgeHtml = '';
+  {
+    const expiredByDate = new Map(); // dateKey -> true if any unacknowledged expired claim
+    const startedByDate = new Map(); // dateKey -> min days remaining across AM/PM
+    for (const dKey in delayClaims){
+      for (const dir in delayClaims[dKey]){
+        const c = delayClaims[dKey][dir];
+        if (!c) continue;
+        if (c.status === 'expired' && !c.expiredAcknowledged){
+          expiredByDate.set(dKey, true);
+        } else if (c.status === 'started'){
+          const daysRemaining = 28 - Math.floor((today - parseKey(dKey)) / 86400000);
+          const prev = startedByDate.has(dKey) ? startedByDate.get(dKey) : Infinity;
+          startedByDate.set(dKey, Math.min(prev, daysRemaining));
+        }
+      }
+    }
+
+    const expiredDates = Array.from(expiredByDate.keys());
+    const startedEntries = Array.from(startedByDate.entries()); // [dateKey, daysRemaining]
+
+    if (expiredDates.length > 0){
+      const remainingCount = expiredDates.length - 1 + startedEntries.length;
+      delayRepayBadgeHtml = `
+        <div class="delay-repay-badge-wrap">
+          <div class="delay-repay-badge expired" id="delay-repay-badge" data-mode="expired" data-date-key="${expiredDates[0]}">
+            <div class="delay-repay-badge-caption">Delay repay</div>
+            <div class="delay-repay-badge-line">${DELAY_REPAY_ICON_WARNING} Expired</div>
+          </div>
+          ${remainingCount > 0 ? `<div class="delay-repay-badge-more">${remainingCount} more claim${remainingCount === 1 ? '' : 's'} waiting</div>` : ''}
+        </div>`;
+    } else if (startedEntries.length > 0){
+      startedEntries.sort((a, b) => a[1] - b[1]);
+      const [soonestDateKey, daysRemaining] = startedEntries[0];
+      delayRepayBadgeHtml = `
+        <div class="delay-repay-badge-wrap">
+          <div class="delay-repay-badge normal" id="delay-repay-badge" data-mode="normal" data-date-key="${soonestDateKey}">
+            <div class="delay-repay-badge-caption">Delay repay</div>
+            <div class="delay-repay-badge-line">${DELAY_REPAY_ICON_RECEIPT} ${daysRemaining} Day${daysRemaining === 1 ? '' : 's'}</div>
+          </div>
+        </div>`;
+    }
+  }
   const rangeEnd = addDays(today, state.daysAhead);
   const states = computeStates(rangeEnd);
   const todayState = states[todayKey];
@@ -3418,6 +3549,7 @@ function render(){
   app.className = '';
   app.innerHTML = `
     <header class="top">
+      ${delayRepayBadgeHtml}
       ${isBuntingDay ? `
       <div class="bunting-row" title="Official bunting day, per gov.uk">
         <span class="bunting-flag" style="background:var(--amber);"></span>
@@ -3602,6 +3734,26 @@ function render(){
       }
     });
   });
+
+  const delayRepayBadgeEl = document.getElementById('delay-repay-badge');
+  if (delayRepayBadgeEl){
+    delayRepayBadgeEl.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const mode = delayRepayBadgeEl.dataset.mode;
+      const dateKey = delayRepayBadgeEl.dataset.dateKey;
+      if (!mode) return; // preview badges have no mode/dateKey — nothing to do
+      if (mode === 'expired'){
+        for (const dir in (delayClaims[dateKey] || {})){
+          const c = delayClaims[dateKey][dir];
+          if (c && c.status === 'expired') c.expiredAcknowledged = true;
+        }
+        await saveDelayClaims();
+        render();
+      } else {
+        openDayEditor(dateKey);
+      }
+    });
+  }
 
   document.getElementById('bottom-nav-more').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -8878,6 +9030,7 @@ function wireClaimHandlers(overlay, reopen){
           status: 'started',
           minutesLate: perf.delayMinutes,
           amount: computeDelayRepayAmount(perf.delayMinutes, dateKey),
+          expiredAcknowledged: false,
         };
       });
       await saveDelayClaims();
@@ -8918,11 +9071,15 @@ function openDelayClaimsManager(){
         <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate} min late — £${(e.claim.amount || 0).toFixed(2)}</div>
       </div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+        ${e.claim.status === 'expired' ? `
+        <span style="font-size:12px; color:var(--danger); font-weight:600; white-space:nowrap;">Expired</span>
+        ` : `
         <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:${e.claim.status==='confirmed' ? 'var(--good)' : 'var(--ink-dim)'}; cursor:pointer; white-space:nowrap;">
           <input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" ${e.claim.status==='confirmed'?'checked':''} style="width:15px; height:15px;" />
           Confirmed
         </label>
         <span class="claim-undo-link" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" style="font-size:11px; color:var(--ink-dim); text-decoration:underline; cursor:pointer;">Undo</span>
+        `}
       </div>
     </div>
   `).join('') : `<div class="sub" style="margin-top:0;">No claims started yet — tap a red delay entry on any day to begin one.</div>`;
