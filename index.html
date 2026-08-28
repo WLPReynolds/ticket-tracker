@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-28.18:59'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-28.19:06'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -9550,17 +9550,38 @@ function openAlternativeRoutesManager(cameFromSettings){
       </div>`;
   }
 
+  function stationStatusHtml(){
+    // renderMatches (inside createStationPicker) reads stationIndexCache
+    // live on every keystroke, not just at picker construction — so this
+    // status line is informational rather than gating anything, but
+    // without ever calling loadStationIndex() at all, the cache would
+    // simply never populate and typed station names would never resolve
+    // to anything (only an exact 3-letter code, committed on blur, would
+    // work at all).
+    if (stationIndexCache){
+      const date = stationIndexCache.fetchedAt ? new Date(stationIndexCache.fetchedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'unknown date';
+      return `${stationIndexCache.list.length.toLocaleString()} stations · updated ${date} — <span id="ar-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Refresh</span>`;
+    }
+    return `Loading station list… codes still work meanwhile (e.g. CRE, WGN).`;
+  }
+
   function render(){
     overlay.innerHTML = `
       <div class="modal">
         <h3>Emergency routes</h3>
         <div class="sub">Pre-define fallback journeys now, when calm, so the Emergency tab can check them live when disruption actually hits.</div>
+        <div class="sub" id="ar-station-status" style="font-size:11.5px; margin-bottom:12px;">${stationStatusHtml()}</div>
         <div id="ar-list">${draftRoutes.map((r, ri) => renderRoute(r, ri)).join('') || '<div class="sub">No routes yet.</div>'}</div>
         <div class="settings-link" id="ar-add-route" style="margin-top:6px; margin-bottom:16px;">+ Add route</div>
         <button class="save-btn" id="ar-save">Save</button>
         <div class="modal-close" id="ar-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
       </div>
     `;
+
+    const refreshLink = document.getElementById('ar-station-refresh-link');
+    if (refreshLink) refreshLink.addEventListener('click', () => {
+      loadStationIndex(true).then(() => { if (overlay.isConnected) render(); }).catch(() => { if (overlay.isConnected) render(); });
+    });
 
     // Wire a station picker into every leg's from/to placeholder.
     draftRoutes.forEach((route, ri) => {
@@ -9647,6 +9668,13 @@ function openAlternativeRoutesManager(cameFromSettings){
 
   document.body.appendChild(overlay);
   render();
+  // Kick off the load once, in the background — render() above already
+  // showed a usable screen (bare codes work immediately), and this
+  // re-renders on completion so name matching starts working without
+  // needing to close and reopen the screen.
+  if (!stationIndexCache){
+    loadStationIndex(false).then(() => { if (overlay.isConnected) render(); }).catch(() => { if (overlay.isConnected) render(); });
+  }
 }
 
 // Lists every day with a delay repay claim on record, most recent first,
