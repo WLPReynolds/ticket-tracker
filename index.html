@@ -5334,6 +5334,111 @@ async function fetchServiceDetails(serviceId){
   return r.data;
 }
 
+// Emergency Routes — the "Emergency" Live sub-tab's core check (see
+// emergency-routes-spec.md). Walks one route's legs in order, carrying
+// forward an "earliest departure time" cursor (starts as "now" for leg
+// 1), and returns a fully chained plan or however far it got before a
+// leg died.
+//
+// Per Wayne's steer: a dead leg — no candidate service at all, or the
+// only candidate has no determinable arrival time — kills the whole
+// route from that point on, whether it's the first leg or a later one.
+// Whatever board data *was* returned for the dead leg is kept for
+// display rather than discarded, so Wayne can judge for himself whether
+// it's a genuine gap or just outside Darwin's lookahead window.
+async function checkEmergencyRoute(route){
+  let cursor = new Date();
+  const legResults = [];
+  let status = 'complete';
+
+  for (const leg of route.legs){
+    let board;
+    try{
+      board = await fetchDebugBoard(leg.from, leg.to);
+    }catch(e){
+      legResults.push({ from: leg.from, fromName: leg.fromName, to: leg.to, toName: leg.toName, error: e.message, candidate: null, board: [] });
+      status = 'partial';
+      break;
+    }
+
+    // Soonest service departing this station at or after the cursor,
+    // that actually calls at `to` (guaranteed by fetchDebugBoard's own
+    // filterCrs) and isn't cancelled — a cancelled service isn't a real
+    // candidate no matter how soon it's timetabled.
+    let best = null, bestDate = null;
+    for (const s of board){
+      if (!s.std || s.isCancelled) continue;
+      const d = nextDateForTime(s.std, cursor);
+      if (!d) continue;
+      if (!bestDate || d.getTime() < bestDate.getTime()){ bestDate = d; best = s; }
+    }
+    if (!best){
+      legResults.push({ from: leg.from, fromName: leg.fromName, to: leg.to, toName: leg.toName, error: null, candidate: null, board });
+      status = 'partial';
+      break;
+    }
+
+    // GetServiceDetails for the chosen candidate, to read its actual
+    // (confirmed/estimated/scheduled) arrival time at `to` — reusing the
+    // same field-preference order (at > et > st) used everywhere else
+    // in the app that reads a calling point's time.
+    let arrivalStr = null;
+    try{
+      const details = await fetchServiceDetails(best.serviceID);
+      const cp = findCallingPointRaw(details, leg.to);
+      arrivalStr = cp ? (cp.at || cp.et || cp.st) : null;
+    }catch(e){
+      // GetServiceDetails failing doesn't invalidate the leg — the board
+      // already confirmed this service calls at `to`. Fall back to
+      // whatever the board entry itself carried for the destination
+      // (only present for an arrivals-style record), otherwise there's
+      // nothing to safely chain the next leg's cursor from.
+      arrivalStr = best.sta || best.eta || null;
+    }
+
+    const arrivalDate = arrivalStr ? nextDateForTime(arrivalStr, bestDate) : null;
+    legResults.push({
+      from: leg.from, fromName: leg.fromName, to: leg.to, toName: leg.toName,
+      error: null,
+      candidate: {
+        serviceId: best.serviceID,
+        std: best.std,
+        etd: best.etd || null,
+        platform: best.platform || null,
+        arrivalStr,
+      },
+      board: null,
+    });
+
+    if (!arrivalDate){
+      // Found a real, running service, but couldn't work out when it
+      // arrives at `to` — nothing safe to chain onward from, so this
+      // still counts as a dead end for the remaining legs even though
+      // this leg itself did resolve to a real train.
+      status = 'partial';
+      break;
+    }
+    // 10-minute minimum interchange buffer before searching the next leg.
+    cursor = new Date(arrivalDate.getTime() + 10 * 60 * 1000);
+  }
+
+  return { id: route.id, label: route.label, legs: legResults, status };
+}
+
+async function checkAllEmergencyRoutes(routes){
+  const results = [];
+  // Sequential, not parallel — each route's own legs are already
+  // inherently sequential (leg N+1 depends on leg N's resolved
+  // cursor), and running multiple routes' worth of Darwin calls
+  // concurrently adds nothing but risk of hitting the Worker's
+  // subrequest budget for no real speed benefit on an on-demand,
+  // manually-triggered check.
+  for (const route of routes){
+    results.push(await checkEmergencyRoute(route));
+  }
+  return results;
+}
+
 // Gets a one-off position without prompting unnecessarily — only called
 // when we're already inside a relevant time window, so the permission
 // prompt (if it appears at all) shows up with context, not on every
@@ -5381,6 +5486,38 @@ function closestDateForTime(hhmm, referenceDate){
     if (diff < bestDiff){ bestDiff = diff; best = candidate; }
   }
   return best;
+}
+
+// Unlike closestDateForTime (nearest in either direction — right for
+// "what's the sched time near this known moment"), Emergency Routes
+// leg-chaining needs strictly forward resolution: "the next occurrence
+// of this clock time at or after cursor" — e.g. a 00:12 service found
+// while cursor is 23:50 the evening before must resolve to *tomorrow's*
+// 00:12, never today's (which already passed). Accepts "HH:MM" (Darwin's
+// std/sta/et/at format) or plain "HHMM".
+function nextDateForTime(timeStr, cursor){
+  if (!timeStr) return null;
+  const clean = timeStr.replace(':', '');
+  let d = liveTimeToDate(clean, cursor);
+  if (!d) return null;
+  if (d.getTime() < cursor.getTime()) d = new Date(d.getTime() + 24*60*60*1000);
+  return d;
+}
+
+// Like findCallingPointSchedTime, but returns the whole raw calling
+// point object rather than just `st` — Emergency Routes leg-chaining
+// needs to prefer a confirmed actual (at) or live estimate (et) over
+// the bare schedule when working out a leg's real arrival time, same
+// preference order used everywhere else in the app.
+function findCallingPointRaw(service, crs){
+  if (!service || !crs) return null;
+  const lists = [service.previousCallingPoints, service.subsequentCallingPoints];
+  for (const list of lists){
+    const points = (list && list[0] && list[0].callingPoint) ? list[0].callingPoint : [];
+    const found = points.find(cp => cp.crs === crs);
+    if (found) return found;
+  }
+  return null;
 }
 
 // The core check: are you plausibly at the station right now, and is an
@@ -6012,6 +6149,7 @@ function openLiveScreen(initialSubTab){
       <div style="display:flex; gap:8px; margin-bottom:14px;">
         <button class="save-btn" id="live-subtab-yours" style="flex:1; margin:0;">My trains</button>
         <button class="save-btn" id="live-subtab-tracked" style="flex:1; margin:0;">Tracked</button>
+        ${emergencyTabVisible ? '<button class="save-btn" id="live-subtab-emergency" style="flex:1; margin:0;">Emergency</button>' : ''}
       </div>
       <div id="live-screen-body"></div>
       <div class="modal-close" id="live-screen-close-btn" style="margin-top:16px;">Close</div>
@@ -6022,6 +6160,12 @@ function openLiveScreen(initialSubTab){
   const bodyEl = document.getElementById('live-screen-body');
   const tabYoursBtn = document.getElementById('live-subtab-yours');
   const tabTrackedBtn = document.getElementById('live-subtab-tracked');
+  const tabEmergencyBtn = document.getElementById('live-subtab-emergency'); // null unless emergencyTabVisible
+
+  // Session-only, same reasoning as trackedErrors — cleared on every
+  // reopen of this screen, never persisted.
+  let emergencyResults = null;
+  let emergencyChecking = false;
 
   function styleTabs(){
     tabYoursBtn.style.background = activeSubTab === 'yours' ? 'var(--amber)' : 'var(--tile)';
@@ -6029,6 +6173,10 @@ function openLiveScreen(initialSubTab){
     tabTrackedBtn.style.background = activeSubTab === 'tracked' ? 'var(--amber)' : 'var(--tile)';
     tabTrackedBtn.style.color = activeSubTab === 'tracked' ? '#14161f' : 'var(--ink-dim)';
     tabTrackedBtn.textContent = trackedTrains.length ? `Tracked (${trackedTrains.length})` : 'Tracked';
+    if (tabEmergencyBtn){
+      tabEmergencyBtn.style.background = activeSubTab === 'emergency' ? 'var(--amber)' : 'var(--tile)';
+      tabEmergencyBtn.style.color = activeSubTab === 'emergency' ? '#14161f' : 'var(--ink-dim)';
+    }
   }
 
   // ---- "My trains" tab (your configured AM/PM services) ----
@@ -6340,15 +6488,84 @@ function openLiveScreen(initialSubTab){
     });
   }
 
+  // ---- "Emergency" tab (pre-defined fallback routes, checked live) ----
+  function legTimeLabel(leg){
+    if (leg.error) return `<span style="color:#ff8b7e;">${escapeHtml(leg.error)}</span>`;
+    if (!leg.candidate){
+      const boardNote = (leg.board && leg.board.length)
+        ? `${leg.board.length} service${leg.board.length === 1 ? '' : 's'} on the board, none usable`
+        : 'no services found';
+      return `<span style="color:#ff8b7e;">Dead end — ${boardNote}</span>`;
+    }
+    const c = leg.candidate;
+    const timeShown = (c.etd && c.etd !== 'On time') ? `${c.std} (now ${c.etd})` : c.std;
+    const platformText = c.platform ? ` · Plat ${c.platform}` : '';
+    const arrivalText = c.arrivalStr ? ` — due ${c.arrivalStr}` : '';
+    return `Catch the ${timeShown}${platformText} to ${escapeHtml(leg.toName || leg.to)}${arrivalText}`;
+  }
+
+  function routeCardHtml(result){
+    const legsHtml = result.legs.map(leg => `<div class="rail-detail-row"><span>${escapeHtml(leg.fromName || leg.from)} → ${escapeHtml(leg.toName || leg.to)}</span></div><div class="sub" style="margin:-4px 0 8px 0;">${legTimeLabel(leg)}</div>`).join('');
+    const statusBadge = result.status === 'complete'
+      ? '<span style="color:var(--good); font-weight:600;">Full plan</span>'
+      : '<span style="color:#ff8b7e; font-weight:600;">Partial — route dead beyond this point</span>';
+    return `
+      <div class="rail-detail-row" style="display:block; padding:12px; margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <strong>${escapeHtml(result.label || 'Untitled route')}</strong>
+          ${statusBadge}
+        </div>
+        ${legsHtml}
+      </div>`;
+  }
+
+  async function runEmergencyCheck(){
+    if (emergencyChecking) return;
+    emergencyChecking = true;
+    renderEmergencyTab();
+    try{
+      emergencyResults = await checkAllEmergencyRoutes(alternativeRoutes);
+    }catch(e){
+      emergencyResults = [];
+    }
+    emergencyChecking = false;
+    if (activeSubTab === 'emergency' && overlay.isConnected) renderEmergencyTab();
+  }
+
+  function renderEmergencyTab(){
+    if (!alternativeRoutes.length){
+      bodyEl.innerHTML = `<div class="sub">No emergency routes configured yet. Add some in Settings → Emergency routes, while things are calm.</div>`;
+      return;
+    }
+    if (emergencyChecking){
+      bodyEl.innerHTML = `<div class="sub" id="emergency-status">Checking ${alternativeRoutes.length} route${alternativeRoutes.length === 1 ? '' : 's'}…</div>`;
+      return;
+    }
+    const resultsHtml = emergencyResults ? emergencyResults.map(routeCardHtml).join('') : '';
+    bodyEl.innerHTML = `
+      <button class="save-btn" id="emergency-recheck-btn" style="margin-bottom:14px;">${emergencyResults ? 'Recheck' : 'Check now'}</button>
+      <div id="emergency-results">${resultsHtml}</div>
+    `;
+    document.getElementById('emergency-recheck-btn').addEventListener('click', runEmergencyCheck);
+    // Opening the tab runs the check automatically — this only fires
+    // once per screen-open (emergencyResults is session-only, cleared
+    // whenever the Live screen is reopened), matching the spec's
+    // "triggered manually — opening the tab runs the check" behaviour
+    // while still leaving Recheck available for a manual refresh.
+    if (!emergencyResults) runEmergencyCheck();
+  }
+
   function switchTab(tab){
     activeSubTab = tab;
     styleTabs();
     if (tab === 'yours') renderYoursTab();
+    else if (tab === 'emergency') renderEmergencyTab();
     else renderTrackedTab();
   }
 
   tabYoursBtn.addEventListener('click', () => switchTab('yours'));
   tabTrackedBtn.addEventListener('click', () => switchTab('tracked'));
+  if (tabEmergencyBtn) tabEmergencyBtn.addEventListener('click', () => switchTab('emergency'));
   styleTabs();
   switchTab(activeSubTab);
 
