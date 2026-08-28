@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-28.06:26'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-28.18:06'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1768,6 +1768,18 @@ let trackedTrains = []; // [{ serviceId, label, fromLoc, addedAt }]
 const TRACKED_TRAIN_MAX_AGE_MS = 6 * 60 * 60 * 1000; // stop tracking after 6 hours regardless — a journey this long has almost certainly finished
 const TRACKED_TRAIN_MAX = 5; // matches the cap enforced when a train is opened (see openTrainProgress) — kept in one place so the "Track a train" flow can check it before adding, rather than only finding out after something's already been silently dropped
 
+// Emergency Routes — pre-defined fallback journeys (authored in Settings,
+// calm), checked live on the "Emergency" Live sub-tab when disruption
+// actually hits. Each route is a manually-authored chain of legs; see
+// emergency-routes-spec.md for the full design.
+// [{ id, label, legs: [{ from, fromName, to, toName }] }]
+let alternativeRoutes = [];
+// Off by default and deliberately not tied to whether any routes are
+// configured — this is a "only show this when it's actually useful"
+// switch, tapped on when disruption hits and (per Wayne's steer) left
+// off the rest of the time, not an auto-derived visibility state.
+let emergencyTabVisible = false;
+
 // "I think you're on this train" detection
 const DEFAULT_GEOFENCE_RADIUS_M = 500; // original single value, informed by real field-test readings — now just the starting point for both stations, and a defensive fallback for an unrecognised station code
 // Sane bounds for either station's radius, shared by the settings editor
@@ -1936,6 +1948,14 @@ async function loadData(){
     const we = localStorage.getItem('weather-enabled');
     weatherEnabled = we ? JSON.parse(we) : true;
   }catch(e){ weatherEnabled = true; }
+  try{
+    const ar = localStorage.getItem('alternative-routes');
+    alternativeRoutes = ar ? JSON.parse(ar) : [];
+  }catch(e){ alternativeRoutes = []; }
+  try{
+    const etv = localStorage.getItem('emergency-tab-visible');
+    emergencyTabVisible = etv ? JSON.parse(etv) : false;
+  }catch(e){ emergencyTabVisible = false; }
   try{
     const dbe = localStorage.getItem('drive-backup-enabled');
     driveBackupEnabled = dbe ? JSON.parse(dbe) : false;
@@ -2164,6 +2184,14 @@ async function saveDebugMode(){
 }
 async function saveWeatherEnabled(){
   try{ localStorage.setItem('weather-enabled', JSON.stringify(weatherEnabled)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveAlternativeRoutes(){
+  try{ localStorage.setItem('alternative-routes', JSON.stringify(alternativeRoutes)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveEmergencyTabVisible(){
+  try{ localStorage.setItem('emergency-tab-visible', JSON.stringify(emergencyTabVisible)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveDriveBackupEnabled(){
@@ -4413,6 +4441,7 @@ const SETTINGS_ICONS = {
   bug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="10" rx="4"/><path d="M12 8V5M8 11H4M20 11h-4M9 6 7.5 4.5M15 6l1.5-1.5M8 18l-2 2M16 18l2 2M9 13h6"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
   geo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-7.5 7-12a7 7 0 1 0-14 0c0 4.5 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>',
+  warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
 };
 
 function openSettingsMenu(){
@@ -4444,6 +4473,8 @@ function openSettingsMenu(){
         <div class="settings-grid-item${paydayVisible ? ' active' : ''}" id="settings-payday-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Payday card</span><span class="status-label">${paydayVisible ? 'Visible' : 'Hidden'}</span></div>
         <div class="settings-grid-item${parkingSavingsVisible ? ' active' : ''}" id="settings-parking-savings-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Savings card</span><span class="status-label">${parkingSavingsVisible ? 'Visible' : 'Hidden'}</span></div>
         <div class="settings-grid-item${spendingVisible ? ' active' : ''}" id="settings-spending-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Spending card</span><span class="status-label">${spendingVisible ? 'Visible' : 'Hidden'}</span></div>
+        <div class="settings-grid-item" id="settings-emergency-routes-link">${SETTINGS_ICONS.warning}<span class="cat-label">Emergency routes</span></div>
+        <div class="settings-grid-item${emergencyTabVisible ? ' active' : ''}" id="settings-emergency-tab-link">${SETTINGS_ICONS.warning}<span class="cat-label">Emergency tab</span><span class="status-label">${emergencyTabVisible ? 'Shown' : 'Hidden'}</span></div>
       </div>
       <div class="modal-close" id="settings-close-btn" style="margin-top:20px;">Close</div>
     </div>
@@ -4474,6 +4505,12 @@ function openSettingsMenu(){
     weatherEnabled = !weatherEnabled;
     await saveWeatherEnabled();
     toggleStatus('settings-weather-link', weatherEnabled, weatherEnabled ? 'On' : 'Off');
+  });
+  document.getElementById('settings-emergency-routes-link').addEventListener('click', () => { close(); openAlternativeRoutesManager(true); });
+  document.getElementById('settings-emergency-tab-link').addEventListener('click', async () => {
+    emergencyTabVisible = !emergencyTabVisible;
+    await saveEmergencyTabVisible();
+    toggleStatus('settings-emergency-tab-link', emergencyTabVisible, emergencyTabVisible ? 'Shown' : 'Hidden');
   });
   document.getElementById('settings-debug-link').addEventListener('click', async () => {
     debugModeEnabled = !debugModeEnabled;
@@ -5003,8 +5040,9 @@ function openDayReturnPriceEditor(){
 // of this ever needs to change, the messaging around what a backup
 // contains needs updating alongside it, not just this list.
 const BACKUP_KEYS = [
-  'bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
+  'alternative-routes','bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
   'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id',
+  'emergency-tab-visible',
   'gcal-enabled','gcal-event-id','gcal-pending-sync',
   'geofence-crewe-matches-wigan','geofence-radius-crewe','geofence-radius-wigan','geofence-wigan-matches-crewe',
   'parked-days','parking-savings-snapshots',
@@ -9160,6 +9198,140 @@ function wireClaimHandlers(overlay, reopen){
       reopen();
     });
   });
+}
+
+// Author pre-defined fallback routes for the "Emergency" Live sub-tab
+// (see emergency-routes-spec.md). Edits a private draft — Save/Cancel
+// work the same way as openRailConfig above, so nothing here touches
+// the live alternativeRoutes list until Save is actually pressed.
+// Both from/to code AND name are captured at authoring time via
+// createStationPicker, so display never depends on stationIndexCache
+// being loaded later.
+function openAlternativeRoutesManager(cameFromSettings){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  let draftRoutes = alternativeRoutes.map(r => ({ ...r, legs: r.legs.map(l => ({ ...l })) }));
+  // Station pickers are live components with their own internal state,
+  // not plain inputs — re-created on every render() call, so their
+  // onChange handlers always close over the current draftRoutes/render
+  // rather than a stale copy from an earlier render.
+  function renderRoute(route, ri){
+    const legRows = route.legs.map((leg, li) => `
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+        <span style="color:var(--ink-dim); font-size:12px; width:14px;">${li + 1}</span>
+        <div id="ar-${ri}-${li}-from" style="flex:1;"></div>
+        <span style="color:var(--ink-dim);">→</span>
+        <div id="ar-${ri}-${li}-to" style="flex:1;"></div>
+        <span class="modal-close" data-remove-leg data-ri="${ri}" data-li="${li}" style="margin:0; font-size:12px;">✕</span>
+      </div>`).join('');
+    return `
+      <div class="rail-detail-row" style="display:block; padding:12px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+          <input type="text" class="ar-label-input" data-ri="${ri}" value="${escapeHtml(route.label || '')}" placeholder="Route label (e.g. Via Liverpool)"
+            style="flex:1; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); box-sizing:border-box;" />
+          <span class="modal-close" data-remove-route data-ri="${ri}" style="margin:0; font-size:13px;">Remove route</span>
+        </div>
+        ${route.legs.length ? legRows : '<div class="sub" style="margin-bottom:8px;">No legs yet — add at least one.</div>'}
+        <div class="settings-link" data-add-leg data-ri="${ri}" style="margin-top:2px;">+ Add leg</div>
+      </div>`;
+  }
+
+  function render(){
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3>Emergency routes</h3>
+        <div class="sub">Pre-define fallback journeys now, when calm, so the Emergency tab can check them live when disruption actually hits.</div>
+        <div id="ar-list">${draftRoutes.map((r, ri) => renderRoute(r, ri)).join('') || '<div class="sub">No routes yet.</div>'}</div>
+        <div class="settings-link" id="ar-add-route" style="margin-top:6px; margin-bottom:16px;">+ Add route</div>
+        <button class="save-btn" id="ar-save">Save</button>
+        <div class="modal-close" id="ar-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
+      </div>
+    `;
+
+    // Wire a station picker into every leg's from/to placeholder.
+    draftRoutes.forEach((route, ri) => {
+      route.legs.forEach((leg, li) => {
+        const fromPicker = createStationPicker({
+          placeholder: 'From',
+          initialCode: leg.from,
+          initialName: leg.fromName,
+          onChange: (code, name) => { leg.from = code; leg.fromName = name; }
+        });
+        const toPicker = createStationPicker({
+          placeholder: 'To',
+          initialCode: leg.to,
+          initialName: leg.toName,
+          onChange: (code, name) => { leg.to = code; leg.toName = name; }
+        });
+        document.getElementById(`ar-${ri}-${li}-from`).appendChild(fromPicker.el);
+        document.getElementById(`ar-${ri}-${li}-to`).appendChild(toPicker.el);
+      });
+    });
+
+    overlay.querySelectorAll('[data-add-leg]').forEach(el => {
+      el.addEventListener('click', () => {
+        const ri = Number(el.dataset.ri);
+        draftRoutes[ri].legs.push({ from: null, fromName: null, to: null, toName: null });
+        render();
+      });
+    });
+    overlay.querySelectorAll('[data-remove-leg]').forEach(el => {
+      el.addEventListener('click', () => {
+        const ri = Number(el.dataset.ri), li = Number(el.dataset.li);
+        draftRoutes[ri].legs.splice(li, 1);
+        render();
+      });
+    });
+    overlay.querySelectorAll('[data-remove-route]').forEach(el => {
+      el.addEventListener('click', () => {
+        // Read every label field back into the draft before the row
+        // that's about to disappear takes its sibling inputs' DOM state
+        // with it — otherwise unrelated in-flight label edits made just
+        // before tapping Remove would be lost on the next render.
+        syncLabelsFromInputs();
+        const ri = Number(el.dataset.ri);
+        draftRoutes.splice(ri, 1);
+        render();
+      });
+    });
+    document.getElementById('ar-add-route').addEventListener('click', () => {
+      syncLabelsFromInputs();
+      draftRoutes.push({ id: `route-${Date.now()}`, label: '', legs: [] });
+      render();
+    });
+
+    document.getElementById('ar-save').addEventListener('click', async () => {
+      syncLabelsFromInputs();
+      // A route with no legs, or a leg missing a from/to, can't ever be
+      // checked — drop those rather than saving something the Emergency
+      // tab would just fail to make sense of later.
+      alternativeRoutes = draftRoutes
+        .map(r => ({ ...r, legs: r.legs.filter(l => l.from && l.to) }))
+        .filter(r => r.legs.length > 0);
+      await saveAlternativeRoutes();
+      overlay.remove();
+      if (cameFromSettings) openSettingsMenu();
+    });
+    document.getElementById('ar-close').addEventListener('click', () => {
+      overlay.remove();
+      if (cameFromSettings) openSettingsMenu();
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay){
+        overlay.remove();
+        if (cameFromSettings) openSettingsMenu();
+      }
+    });
+  }
+
+  function syncLabelsFromInputs(){
+    overlay.querySelectorAll('.ar-label-input').forEach(input => {
+      const route = draftRoutes[Number(input.dataset.ri)];
+      if (route) route.label = input.value;
+    });
+  }
+
+  render();
 }
 
 // Lists every day with a delay repay claim on record, most recent first,
