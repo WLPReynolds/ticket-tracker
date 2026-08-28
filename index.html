@@ -6504,11 +6504,17 @@ function openLiveScreen(initialSubTab){
     return `Catch the ${timeShown}${platformText} to ${escapeHtml(leg.toName || leg.to)}${arrivalText}`;
   }
 
-  function routeCardHtml(result){
+  function routeCardHtml(result, ri){
     const legsHtml = result.legs.map(leg => `<div class="rail-detail-row"><span>${escapeHtml(leg.fromName || leg.from)} → ${escapeHtml(leg.toName || leg.to)}</span></div><div class="sub" style="margin:-4px 0 8px 0;">${legTimeLabel(leg)}</div>`).join('');
     const statusBadge = result.status === 'complete'
       ? '<span style="color:var(--good); font-weight:600;">Full plan</span>'
       : '<span style="color:#ff8b7e; font-weight:600;">Partial — route dead beyond this point</span>';
+    // Add to Tracked only offered once a full chained plan exists — a
+    // partial/dead route has nothing complete enough to hand off to the
+    // tracking flow.
+    const addBtn = result.status === 'complete'
+      ? `<div class="settings-link" data-add-route-idx="${ri}" style="margin-top:4px;">Add to Tracked</div>`
+      : '';
     return `
       <div class="rail-detail-row" style="display:block; padding:12px; margin-bottom:10px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -6516,7 +6522,95 @@ function openLiveScreen(initialSubTab){
           ${statusBadge}
         </div>
         ${legsHtml}
+        ${addBtn}
       </div>`;
+  }
+
+  // Commits already-capacity-checked legs into trackedTrains, reusing
+  // the exact same upsert-by-serviceId shape as the block inside
+  // openTrainProgress (preserve addedAt for an already-tracked service,
+  // otherwise stamp it fresh) — but deliberately WITHOUT that block's
+  // trailing slice(0, TRACKED_TRAIN_MAX). Capacity here is guaranteed by
+  // the caller (either there was already room, or the picker below freed
+  // enough of it), so silently evicting the oldest entries would be
+  // wrong — it could drop something the picker step just decided to keep.
+  function commitEmergencyLegsToTracked(legs){
+    for (const leg of legs){
+      const existing = trackedTrains.find(t => t.serviceId === leg.serviceId);
+      const addedAt = existing ? existing.addedAt : Date.now();
+      trackedTrains = trackedTrains.filter(t => t.serviceId !== leg.serviceId);
+      trackedTrains.unshift({ serviceId: leg.serviceId, label: leg.label, fromLoc: leg.fromLoc, toLoc: leg.toLoc, addedAt });
+    }
+    saveTrackedTrains();
+  }
+
+  // A short pick-what-to-drop confirmation, only shown when adding this
+  // route's legs would exceed TRACKED_TRAIN_MAX. Requires selecting at
+  // least `overflow` currently-tracked trains before Confirm is enabled
+  // — per the spec, this never self-prunes by just dropping the oldest.
+  function openEmergencyCapacityPicker(overflow, legsToAdd){
+    const pickerOverlay = document.createElement('div');
+    pickerOverlay.className = 'modal-overlay';
+    const selected = new Set();
+
+    function render(){
+      const rows = trackedTrains.map((t, i) => `
+        <div class="rail-detail-row" style="display:flex; align-items:center; gap:10px;">
+          <input type="checkbox" class="emergency-drop-checkbox" data-idx="${i}" ${selected.has(i) ? 'checked' : ''} style="width:16px; height:16px;" />
+          <span>${escapeHtml(t.label)}</span>
+        </div>`).join('');
+      const enoughSelected = selected.size >= overflow;
+      pickerOverlay.innerHTML = `
+        <div class="modal">
+          <h3>Make room to track this route</h3>
+          <div class="sub">Adding this route needs ${legsToAdd.length} tracked train${legsToAdd.length === 1 ? '' : 's'}, but you're already at the ${TRACKED_TRAIN_MAX}-train limit. Choose at least ${overflow} to remove.</div>
+          <div id="emergency-drop-list">${rows}</div>
+          <button class="save-btn" id="emergency-drop-confirm" ${enoughSelected ? '' : 'disabled'} style="opacity:${enoughSelected ? '1' : '0.5'};">Remove selected & add route</button>
+          <div class="modal-close" id="emergency-drop-cancel">Cancel</div>
+        </div>
+      `;
+      pickerOverlay.querySelectorAll('.emergency-drop-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const idx = Number(cb.dataset.idx);
+          if (cb.checked) selected.add(idx); else selected.delete(idx);
+          render();
+        });
+      });
+      document.getElementById('emergency-drop-confirm').addEventListener('click', () => {
+        if (!enoughSelected) return;
+        trackedTrains = trackedTrains.filter((t, i) => !selected.has(i));
+        commitEmergencyLegsToTracked(legsToAdd);
+        pickerOverlay.remove();
+        renderEmergencyTab();
+      });
+      document.getElementById('emergency-drop-cancel').addEventListener('click', () => pickerOverlay.remove());
+      pickerOverlay.addEventListener('click', (e) => { if (e.target === pickerOverlay) pickerOverlay.remove(); });
+    }
+    render();
+    document.body.appendChild(pickerOverlay);
+  }
+
+  function handleAddRouteToTracked(result){
+    const legsToAdd = result.legs
+      .filter(leg => leg.candidate)
+      .map(leg => ({
+        serviceId: leg.candidate.serviceId,
+        label: `${leg.candidate.std} ${leg.fromName || leg.from}→${leg.toName || leg.to}`,
+        fromLoc: leg.from,
+        toLoc: leg.to,
+      }));
+    if (!legsToAdd.length) return;
+    // Legs whose service is already tracked are refreshed in place by
+    // commitEmergencyLegsToTracked, not added again — they don't cost a
+    // slot, so only the genuinely new ones count against the cap.
+    const newCount = legsToAdd.filter(l => !trackedTrains.some(t => t.serviceId === l.serviceId)).length;
+    const overflow = (trackedTrains.length + newCount) - TRACKED_TRAIN_MAX;
+    if (overflow > 0){
+      openEmergencyCapacityPicker(overflow, legsToAdd);
+    } else {
+      commitEmergencyLegsToTracked(legsToAdd);
+      renderEmergencyTab();
+    }
   }
 
   async function runEmergencyCheck(){
@@ -6541,12 +6635,15 @@ function openLiveScreen(initialSubTab){
       bodyEl.innerHTML = `<div class="sub" id="emergency-status">Checking ${alternativeRoutes.length} route${alternativeRoutes.length === 1 ? '' : 's'}…</div>`;
       return;
     }
-    const resultsHtml = emergencyResults ? emergencyResults.map(routeCardHtml).join('') : '';
+    const resultsHtml = emergencyResults ? emergencyResults.map((r, ri) => routeCardHtml(r, ri)).join('') : '';
     bodyEl.innerHTML = `
       <button class="save-btn" id="emergency-recheck-btn" style="margin-bottom:14px;">${emergencyResults ? 'Recheck' : 'Check now'}</button>
       <div id="emergency-results">${resultsHtml}</div>
     `;
     document.getElementById('emergency-recheck-btn').addEventListener('click', runEmergencyCheck);
+    bodyEl.querySelectorAll('[data-add-route-idx]').forEach(el => {
+      el.addEventListener('click', () => handleAddRouteToTracked(emergencyResults[Number(el.dataset.addRouteIdx)]));
+    });
     // Opening the tab runs the check automatically — this only fires
     // once per screen-open (emergencyResults is session-only, cleared
     // whenever the Live screen is reopened), matching the spec's
