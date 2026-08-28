@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-28.19:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-28.19:56'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5350,6 +5350,19 @@ async function checkEmergencyRoute(route){
   let cursor = new Date();
   const legResults = [];
   let status = 'complete';
+  // nextDateForTime resolves to "the next occurrence of this clock time
+  // at or after cursor" — correct and necessary for a genuine midnight
+  // crossing (a 00:12 service really is tomorrow if cursor is 23:50
+  // tonight), but with no upper bound it will just as happily resolve a
+  // service that simply isn't on the board within any useful lookahead
+  // by rolling forward a full 24 hours — e.g. treating "19:40" as
+  // tomorrow's 19:40 when cursor is already past today's 19:40. Nothing
+  // in the UI shows a date, so that reads as a viable same-evening leg
+  // when it's actually a plan spanning two calendar days. Bounding the
+  // search to a few hours ahead means a leg that can't be filled within
+  // a sane emergency-response window is correctly reported as a dead
+  // end instead.
+  const MAX_LEG_LOOKAHEAD_MS = 3 * 60 * 60 * 1000;
 
   for (const leg of route.legs){
     let board;
@@ -5362,14 +5375,16 @@ async function checkEmergencyRoute(route){
     }
 
     // Soonest service departing this station at or after the cursor,
-    // that actually calls at `to` (guaranteed by fetchDebugBoard's own
-    // filterCrs) and isn't cancelled — a cancelled service isn't a real
-    // candidate no matter how soon it's timetabled.
+    // within MAX_LEG_LOOKAHEAD_MS, that actually calls at `to`
+    // (guaranteed by fetchDebugBoard's own filterCrs) and isn't
+    // cancelled — a cancelled service isn't a real candidate no matter
+    // how soon it's timetabled.
     let best = null, bestDate = null;
     for (const s of board){
       if (!s.std || s.isCancelled) continue;
       const d = nextDateForTime(s.std, cursor);
       if (!d) continue;
+      if (d.getTime() - cursor.getTime() > MAX_LEG_LOOKAHEAD_MS) continue;
       if (!bestDate || d.getTime() < bestDate.getTime()){ bestDate = d; best = s; }
     }
     if (!best){
@@ -6545,7 +6560,14 @@ function openLiveScreen(initialSubTab){
   }
 
   function routeCardHtml(result, ri){
-    const legsHtml = result.legs.map(leg => `<div class="rail-detail-row"><span>${escapeHtml(leg.fromName || leg.from)} → ${escapeHtml(leg.toName || leg.to)}</span></div><div class="sub" style="margin:-4px 0 8px 0;">${legTimeLabel(leg)}</div>`).join('');
+    const legsHtml = result.legs.map((leg, li) => {
+      const isLast = li === result.legs.length - 1;
+      return `
+        <div style="padding:8px 0; ${isLast ? '' : 'border-bottom:1px solid var(--line);'}">
+          <div>${escapeHtml(leg.fromName || leg.from)} → ${escapeHtml(leg.toName || leg.to)}</div>
+          <div class="sub" style="margin-top:3px;">${legTimeLabel(leg)}</div>
+        </div>`;
+    }).join('');
     const statusBadge = result.status === 'complete'
       ? '<span style="color:var(--good); font-weight:600;">Full plan</span>'
       : '<span style="color:#ff8b7e; font-weight:600;">Partial — route dead beyond this point</span>';
