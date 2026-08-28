@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-28.19:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-28.19:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5379,10 +5379,8 @@ async function checkEmergencyRoute(route){
     }
 
     // GetServiceDetails for the chosen candidate, to read its actual
-    // (confirmed/estimated/scheduled) arrival time at `to` — reusing the
-    // same field-preference order (at > et > st) used everywhere else
-    // in the app that reads a calling point's time. Retried once on a
-    // transient failure (network blip, Worker rate-limit — the same
+    // (confirmed/estimated/scheduled) arrival time at `to`. Retried once
+    // on a transient failure (network blip, Worker rate-limit — the same
     // "transient" flag fetchServiceDetails already sets elsewhere)
     // before giving up, since losing an otherwise-viable candidate to a
     // single dropped request is a worse outcome than one extra request.
@@ -5392,7 +5390,7 @@ async function checkEmergencyRoute(route){
       try{
         const details = await fetchServiceDetails(best.serviceID);
         const cp = findCallingPointRaw(details, leg.to);
-        arrivalStr = cp ? (cp.at || cp.et || cp.st) : null;
+        arrivalStr = resolveCallingPointClockTime(cp);
         detailsFailed = false;
         break;
       }catch(e){
@@ -5541,6 +5539,23 @@ function findCallingPointRaw(service, crs){
     if (found) return found;
   }
   return null;
+}
+
+// Resolves a calling point to an actual, parseable clock-time string —
+// distinct from findCallingPointRaw's plain at/et/st object, because
+// Darwin's own "et" convention can legitimately BE the literal text
+// "On time" instead of a clock time whenever a service isn't delayed
+// (the exact same convention already special-cased for etd/display
+// purposes elsewhere in this file, e.g. legTimeLabel's `c.etd !== 'On
+// time'` check). Reading et blindly as a time string previously broke
+// Emergency Routes leg-chaining: "On time" doesn't parse into a Date,
+// so the whole chain died right there. A confirmed actual (at) is
+// always a genuine time and never needs this treatment; only et does.
+function resolveCallingPointClockTime(cp){
+  if (!cp) return null;
+  if (cp.at) return cp.at;
+  if (cp.et && cp.et !== 'On time') return cp.et;
+  return cp.st || null;
 }
 
 // The core check: are you plausibly at the station right now, and is an
