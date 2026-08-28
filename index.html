@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-28.19:06'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-28.19:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5381,20 +5381,37 @@ async function checkEmergencyRoute(route){
     // GetServiceDetails for the chosen candidate, to read its actual
     // (confirmed/estimated/scheduled) arrival time at `to` — reusing the
     // same field-preference order (at > et > st) used everywhere else
-    // in the app that reads a calling point's time.
+    // in the app that reads a calling point's time. Retried once on a
+    // transient failure (network blip, Worker rate-limit — the same
+    // "transient" flag fetchServiceDetails already sets elsewhere)
+    // before giving up, since losing an otherwise-viable candidate to a
+    // single dropped request is a worse outcome than one extra request.
     let arrivalStr = null;
-    try{
-      const details = await fetchServiceDetails(best.serviceID);
-      const cp = findCallingPointRaw(details, leg.to);
-      arrivalStr = cp ? (cp.at || cp.et || cp.st) : null;
-    }catch(e){
-      // GetServiceDetails failing doesn't invalidate the leg — the board
-      // already confirmed this service calls at `to`. Fall back to
-      // whatever the board entry itself carried for the destination
-      // (only present for an arrivals-style record), otherwise there's
-      // nothing to safely chain the next leg's cursor from.
-      arrivalStr = best.sta || best.eta || null;
+    let detailsFailed = false;
+    for (let attempt = 0; attempt < 2; attempt++){
+      try{
+        const details = await fetchServiceDetails(best.serviceID);
+        const cp = findCallingPointRaw(details, leg.to);
+        arrivalStr = cp ? (cp.at || cp.et || cp.st) : null;
+        detailsFailed = false;
+        break;
+      }catch(e){
+        detailsFailed = true;
+        if (!e.transient) break; // a definitive answer from Darwin — retrying won't change it
+      }
     }
+    // NOTE: there is deliberately no fallback here to any field on
+    // `best` itself (e.g. best.sta/best.eta) — those describe arrival
+    // AT `leg.from` (the board station just queried), not at `leg.to`
+    // (the leg's destination, further down this service's calling
+    // points). An earlier version of this code read best.sta/best.eta
+    // as if it were the destination's arrival time, which — for a
+    // service also shown as on-time arriving at its OWN board station —
+    // could literally be the string "On time" rather than a clock time,
+    // silently killing the whole chain from that point on. If
+    // GetServiceDetails can't be reached at all, there's genuinely no
+    // other place in this response to read the destination's arrival
+    // time from.
 
     const arrivalDate = arrivalStr ? nextDateForTime(arrivalStr, bestDate) : null;
     legResults.push({
@@ -5406,6 +5423,12 @@ async function checkEmergencyRoute(route){
         etd: best.etd || null,
         platform: best.platform || null,
         arrivalStr,
+        // Distinguishes "found a real train but couldn't confirm its
+        // arrival time" from "found a real train and everything's
+        // fine" — both leave arrivalStr null-ish downstream today, but
+        // this lets the UI say which actually happened rather than
+        // just silently dropping the "due" text either way.
+        arrivalLookupFailed: detailsFailed,
       },
       board: null,
     });
@@ -6500,7 +6523,9 @@ function openLiveScreen(initialSubTab){
     const c = leg.candidate;
     const timeShown = (c.etd && c.etd !== 'On time') ? `${c.std} (now ${c.etd})` : c.std;
     const platformText = c.platform ? ` · Plat ${c.platform}` : '';
-    const arrivalText = c.arrivalStr ? ` — due ${c.arrivalStr}` : '';
+    const arrivalText = c.arrivalStr
+      ? ` — due ${c.arrivalStr}`
+      : (c.arrivalLookupFailed ? ' — arrival time unavailable, chain stops here' : '');
     return `Catch the ${timeShown}${platformText} to ${escapeHtml(leg.toName || leg.to)}${arrivalText}`;
   }
 
@@ -9580,7 +9605,7 @@ function openAlternativeRoutesManager(cameFromSettings){
 
     const refreshLink = document.getElementById('ar-station-refresh-link');
     if (refreshLink) refreshLink.addEventListener('click', () => {
-      loadStationIndex(true).then(() => { if (overlay.isConnected) render(); }).catch(() => { if (overlay.isConnected) render(); });
+      loadStationIndex(true).then(() => { if (overlay.isConnected){ syncLabelsFromInputs(); render(); } }).catch(() => { if (overlay.isConnected){ syncLabelsFromInputs(); render(); } });
     });
 
     // Wire a station picker into every leg's from/to placeholder.
@@ -9605,6 +9630,7 @@ function openAlternativeRoutesManager(cameFromSettings){
 
     overlay.querySelectorAll('[data-add-leg]').forEach(el => {
       el.addEventListener('click', () => {
+        syncLabelsFromInputs();
         const ri = Number(el.dataset.ri);
         draftRoutes[ri].legs.push({ from: null, fromName: null, to: null, toName: null });
         render();
@@ -9612,6 +9638,7 @@ function openAlternativeRoutesManager(cameFromSettings){
     });
     overlay.querySelectorAll('[data-remove-leg]').forEach(el => {
       el.addEventListener('click', () => {
+        syncLabelsFromInputs();
         const ri = Number(el.dataset.ri), li = Number(el.dataset.li);
         draftRoutes[ri].legs.splice(li, 1);
         render();
@@ -9673,7 +9700,7 @@ function openAlternativeRoutesManager(cameFromSettings){
   // re-renders on completion so name matching starts working without
   // needing to close and reopen the screen.
   if (!stationIndexCache){
-    loadStationIndex(false).then(() => { if (overlay.isConnected) render(); }).catch(() => { if (overlay.isConnected) render(); });
+    loadStationIndex(false).then(() => { if (overlay.isConnected){ syncLabelsFromInputs(); render(); } }).catch(() => { if (overlay.isConnected){ syncLabelsFromInputs(); render(); } });
   }
 }
 
