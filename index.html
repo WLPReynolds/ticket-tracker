@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-27.22:03'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-28.06:26'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -8354,6 +8354,7 @@ function openTrainProgress(train, service){
       </div>
       <div id="train-progress-reverse-pill">${service.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : ''}</div>
       <div class="sub">An estimate based on calling-point times.${debugModeEnabled ? ` <span id="raw-debug-toggle" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Show raw data</span>` : ''}</div>
+      <div id="debug-capture-wrap" style="${debugModeEnabled ? '' : 'display:none;'} font-family:monospace; font-size:11px; color:#6a7a8a; border:1px dashed var(--line); border-radius:6px; padding:8px; margin-bottom:10px;"></div>
       <div id="train-progress-refresh-bar-wrap" style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
         <div id="train-progress-refresh-fill" style="height:100%; width:0%; background:var(--amber);"></div>
       </div>
@@ -8487,6 +8488,123 @@ function openTrainProgress(train, service){
       showAllReasons = !showAllReasons;
       rebuildDisplay();
     });
+  }
+
+  // Debug-mode-only automated capture (2026-08-28) — lets a recording
+  // session be started on Cloudflare (a Durable Object polling
+  // GetServiceDetails server-side, no PWA needed to stay open) for
+  // exactly the service currently open on this screen. Only wired up at
+  // all when debugModeEnabled, matching every other debug-only affordance
+  // on this screen (raw data toggle, board/staff debug panels).
+  let debugCapturePollTimer = null;
+  if (debugModeEnabled && serviceId){
+    initDebugCapturePanel(overlay, serviceId, train.fromLoc || null);
+  }
+  function stopDebugCapturePolling(){
+    if (debugCapturePollTimer){ clearInterval(debugCapturePollTimer); debugCapturePollTimer = null; }
+  }
+  function initDebugCapturePanel(overlayEl, svcId, originCrs){
+    const wrap = overlayEl.querySelector('#debug-capture-wrap');
+    if (!wrap) return;
+
+    let currentSessionId = null;
+
+    function render(state){
+      if (state === 'idle'){
+        wrap.innerHTML = `<span id="debug-capture-start" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:#8fb3c9;">Start recording (debug capture)</span>`;
+        const startBtn = wrap.querySelector('#debug-capture-start');
+        if (startBtn) startBtn.addEventListener('click', startSession);
+        return;
+      }
+      if (state === 'starting'){
+        wrap.textContent = 'Starting recording…';
+        return;
+      }
+    }
+
+    function renderSession(meta){
+      if (!meta){ render('idle'); return; }
+      const statusWord = meta.status === 'recording' ? '● recording' : `stopped (${meta.stoppedReason || 'unknown'})`;
+      wrap.innerHTML = `
+        <div>${escapeHtml(statusWord)} — ${meta.snapshotCount || 0} snapshot${meta.snapshotCount === 1 ? '' : 's'}</div>
+        <div style="margin-top:4px; display:flex; gap:14px;">
+          ${meta.status === 'recording' ? `<span id="debug-capture-stop" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Stop</span>` : ''}
+          <span id="debug-capture-copy" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Copy JSON</span>
+          <span id="debug-capture-clear" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:#ff8b7e;">Clear</span>
+        </div>
+      `;
+      const stopBtn = wrap.querySelector('#debug-capture-stop');
+      if (stopBtn) stopBtn.addEventListener('click', stopSession);
+      const copyBtn = wrap.querySelector('#debug-capture-copy');
+      if (copyBtn) copyBtn.addEventListener('click', copySession);
+      const clearBtn = wrap.querySelector('#debug-capture-clear');
+      if (clearBtn) clearBtn.addEventListener('click', clearSession);
+    }
+
+    async function startSession(){
+      render('starting');
+      try{
+        const resp = await fetch(`${DARWIN_WORKER_URL}/api/debug-capture/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serviceId: svcId, crs: originCrs })
+        });
+        if (!resp.ok) throw new Error(`status ${resp.status}`);
+        const { id, meta } = await resp.json();
+        currentSessionId = id;
+        renderSession(meta);
+        stopDebugCapturePolling();
+        // Polls this screen's own view of the session, separate from the
+        // Worker's own alarm-driven polling of Darwin — this is purely
+        // "refresh what the button shows", every 30s while this screen
+        // is open, so the snapshot count and status visibly update
+        // without needing to close and reopen Live Progress.
+        debugCapturePollTimer = setInterval(refreshSession, 30000);
+      }catch(e){
+        wrap.textContent = `Couldn't start recording — ${e.message}`;
+      }
+    }
+
+    async function refreshSession(){
+      if (!currentSessionId) return;
+      try{
+        const resp = await fetch(`${DARWIN_WORKER_URL}/api/debug-capture/${currentSessionId}`);
+        if (!resp.ok) return;
+        const { meta } = await resp.json();
+        renderSession(meta);
+        if (meta && meta.status !== 'recording') stopDebugCapturePolling();
+      }catch(e){ /* transient — next 30s poll will retry */ }
+    }
+
+    async function stopSession(){
+      if (!currentSessionId) return;
+      try{
+        const resp = await fetch(`${DARWIN_WORKER_URL}/api/debug-capture/${currentSessionId}/stop`, { method: 'POST' });
+        if (resp.ok) renderSession(await resp.json());
+      }catch(e){ /* ignore — user can retry */ }
+      stopDebugCapturePolling();
+    }
+
+    async function copySession(){
+      if (!currentSessionId) return;
+      try{
+        const resp = await fetch(`${DARWIN_WORKER_URL}/api/debug-capture/${currentSessionId}`);
+        const bundle = await resp.json();
+        await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+      }catch(e){ /* clipboard permissions or network — no toast infra here, silently no-op */ }
+    }
+
+    async function clearSession(){
+      if (!currentSessionId) return;
+      try{
+        await fetch(`${DARWIN_WORKER_URL}/api/debug-capture/${currentSessionId}`, { method: 'DELETE' });
+      }catch(e){ /* best-effort */ }
+      currentSessionId = null;
+      stopDebugCapturePolling();
+      render('idle');
+    }
+
+    render('idle');
   }
 
   // Kicks off (or restarts) a smooth CSS fill from 0 to 100% over the
@@ -8828,6 +8946,7 @@ function openTrainProgress(train, service){
   function closeAndStopRefresh(silent){
     instanceActive = false;
     if (refreshTimer){ clearTimeout(refreshTimer); refreshTimer = null; }
+    stopDebugCapturePolling();
     document.removeEventListener('visibilitychange', onVisible);
     if (overlay.isConnected) overlay.remove();
     if (activeTrainProgressCleanup === forceClose) activeTrainProgressCleanup = null;
