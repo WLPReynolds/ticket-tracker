@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-28.19:56'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-28.21:07'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6653,6 +6653,16 @@ function openLiveScreen(initialSubTab){
   }
 
   function handleAddRouteToTracked(result){
+    // TRACKED_TRAIN_MAX_AGE_MS is normally enforced once, at app load —
+    // fine for a session that gets reloaded regularly, but Emergency
+    // Routes is specifically for a PWA left open through a live,
+    // possibly hours-long disruption. Re-pruning here means a genuinely
+    // expired entry from earlier in that same session can't wrongly
+    // count against the cap or show up as a removal option in the
+    // capacity picker below.
+    const now = Date.now();
+    trackedTrains = trackedTrains.filter(t => (now - t.addedAt) < TRACKED_TRAIN_MAX_AGE_MS);
+
     const legsToAdd = result.legs
       .filter(leg => leg.candidate)
       .map(leg => ({
