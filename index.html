@@ -109,6 +109,32 @@
     height: 12px;
     clip-path: polygon(0 0, 100% 0, 50% 100%);
   }
+  .christmas-header{
+    padding-bottom: 8px;
+  }
+  .christmas-lights{
+    display: block;
+    width: 100%;
+    height: 22px;
+  }
+  .christmas-lights circle{
+    filter: drop-shadow(0 0 4px currentColor);
+  }
+  .christmas-lights circle:nth-child(2){ color:#e0524a; }
+  .christmas-lights circle:nth-child(3){ color:#3f9e5c; }
+  .christmas-lights circle:nth-child(4){ color:#d4af37; }
+  .christmas-lights circle:nth-child(5){ color:#3f7fd8; }
+  .christmas-lights circle:nth-child(6){ color:#e0524a; }
+  .christmas-lights circle:nth-child(7){ color:#3f9e5c; }
+  .christmas-lights circle:nth-child(8){ color:#d4af37; }
+  .christmas-lights circle:nth-child(9){ color:#3f7fd8; }
+  .christmas-lights circle:nth-child(10){ color:#e0524a; }
+  .christmas-icons{
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    margin-top: 6px;
+  }
   .menu-dropdown{
     position: fixed;
     bottom: calc(74px + env(safe-area-inset-bottom));
@@ -1204,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-29.21:52'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-29.22:19'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3264,14 +3290,20 @@ function render(){
   // Good Friday, for instance, gets false). No functional purpose, just a
   // small decorative flourish on days it applies.
   let isBuntingDay = false;
+  let isChristmasBunting = false;
   try{
     const cachedHolidays = localStorage.getItem('bank-holidays-cache');
     if (cachedHolidays){
       const holidayEvents = JSON.parse(cachedHolidays);
       const todayEvent = holidayEvents.find(ev => ev.date === todayKey);
       isBuntingDay = !!(todayEvent && todayEvent.bunting);
+      // Backlog #2 — a Christmas-specific variant of the generic bunting
+      // flourish above: matched by title rather than a hardcoded 25/26 Dec,
+      // so it still lines up correctly if gov.uk ever shifts the observed
+      // date (e.g. Christmas Day falling on a weekend).
+      isChristmasBunting = isBuntingDay && !!(todayEvent.title && /christmas|boxing/i.test(todayEvent.title));
     }
-  }catch(e){ isBuntingDay = false; }
+  }catch(e){ isBuntingDay = false; isChristmasBunting = false; }
   const beforePeriod = !todayState;
 
   // Hamburger menu items, built as a weighted list so ordering is
@@ -3571,7 +3603,26 @@ function render(){
   app.innerHTML = `
     <header class="top">
       ${delayRepayBadgeHtml}
-      ${isBuntingDay ? `
+      ${isChristmasBunting ? `
+      <div class="christmas-header" title="Merry Christmas, per gov.uk's bunting flag">
+        <svg class="christmas-lights" viewBox="0 0 268 22" preserveAspectRatio="none">
+          <path d="M4 4 Q 34 20 64 4 T 124 4 T 184 4 T 244 4" stroke="#3a3d2a" stroke-width="1.5" fill="none"/>
+          <circle cx="4" cy="4" r="4" fill="#e0524a"/>
+          <circle cx="34" cy="15" r="4" fill="#3f9e5c"/>
+          <circle cx="64" cy="4" r="4" fill="#d4af37"/>
+          <circle cx="94" cy="15" r="4" fill="#3f7fd8"/>
+          <circle cx="124" cy="4" r="4" fill="#e0524a"/>
+          <circle cx="154" cy="15" r="4" fill="#3f9e5c"/>
+          <circle cx="184" cy="4" r="4" fill="#d4af37"/>
+          <circle cx="214" cy="15" r="4" fill="#3f7fd8"/>
+          <circle cx="244" cy="4" r="4" fill="#e0524a"/>
+        </svg>
+        <div class="christmas-icons">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M5 20c0-5 3-9 7-9s7 4 7 9" stroke="#e0524a" stroke-width="1.8" stroke-linecap="round"/><circle cx="19" cy="10" r="2.4" fill="#f4f2ea"/><path d="M4 20h16" stroke="#f4f2ea" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M6 20l1-7c0-3 2-6 5-6s5 3 5 6l1 7" stroke="#a9835c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 7l-2-4M15 7l2-4" stroke="#a9835c" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="1.4" fill="#e0524a"/></svg>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><rect x="4" y="9" width="16" height="11" rx="1.5" stroke="#3f9e5c" stroke-width="1.8"/><path d="M4 13h16M12 9v11" stroke="#d4af37" stroke-width="1.8"/><path d="M8 9c0-3 2-4 4-4s4 1 4 4" stroke="#3f9e5c" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+      </div>` : isBuntingDay ? `
       <div class="bunting-row" title="Official bunting day, per gov.uk">
         <span class="bunting-flag" style="background:var(--amber);"></span>
         <span class="bunting-flag" style="background:#7fc9e8;"></span>
@@ -4404,23 +4455,30 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-08-27.08:41*
+*Last updated: v2026-08-29.22:19*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
-2. **Christmas bunting variant** for the header.
-3. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
-4. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon. Per-station geofence radius must not be baked into the watch build the way coordinates are (a one-time copy is fine for those, since they don't change) — radius gets retuned in practice (500m→185m for Wigan on real data within one session) and a compiled-in value would need a watch rebuild every time. Instead: PWA pushes \`geofenceRadiusCrewe\`/\`geofenceRadiusWigan\` to the Worker's KV whenever Settings saves them; the Worker holds that value with no logic of its own; the watch reads it via a small GET endpoint to register its \`GeofencingClient\` radius, rather than having one compiled in. The PWA's own geofence check keeps reading straight from its own localStorage as now — this is a one-way broadcast out to the watch, not a round-trip the PWA depends on.
-5. **Costs as one combined form** — currently a further list of two links (parking cost, day return price) rather than a single screen. Last remaining piece of the old Settings UI polish item — icon grid and in-place Back navigation are both done now.
-6. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
-7. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
-8. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
-9. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
-10. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
-11. **Destination picker for search-tracked (non-configured) trains** — the tracked-to-station platform/atd-ata accuracy check (built for Crewe) only ever fires for one of the five hardcoded \`railTrains\` routes, because it's keyed entirely off \`train.toLoc\`, and that's only ever set for those. A train tracked from a station search (e.g. Stockport → wherever) opens with just \`{ label, fromLoc, serviceId }\` — no destination captured anywhere, so every calling point past the origin misses out, not just the physical end of the journey. Fix: when tracking a searched train, let the user pick which calling point is their actual destination (defaulting to none), store it as \`toLoc\` on the tracked-train entry the same way a configured route already has one — the existing platform/notification logic should then apply with no further changes. Raised heading into the Christmas period, when off-usual-route journeys (e.g. into Manchester for shopping) are more likely than normal.
-12. **Watch item, not a bug: \`stationBoardForService\`'s same-minute tie-break hasn't been observed live yet** — the RID-numeric-prefix tie-break (used when two services share the same \`schedTime\` on a pure dep/arr board) is sound in design and its underlying premise (the numeric prefix is portable across board products, the trailing station tag isn't) is confirmed via real Cloudflare logs — but the tie-break logic itself triggering on a genuine same-minute collision hasn't been. No action needed: if it ever does trigger ambiguously, the Worker already logs up to 50 candidate services rather than guessing (\`stationBoardForService ambiguous match\` in Cloudflare's logs) — that log entry, whenever it first appears, is the real-world test case worth pulling and reviewing.
-13. **Remove the Staff (LDBSVWS) debug/comparison plumbing once it's no longer needed** — \`lastStaffDebugFrom\`/\`lastStaffDebugTo\`, \`formatStaffCompareLine\`, \`updateStaffDebugPanel\`, the \`#train-progress-staff-debug\` panel, and the "Copy raw JSON" button were all built purely to validate the Staff board against Darwin side-by-side (see \`staff-board-scoping.md\`), and are being kept around only so a real response can still be copied out for analysis while the AT PLATFORM and blob-position work is ongoing. The genuinely load-bearing pieces — \`fetchStaffBoardComparison\`, \`extractStaffLocationFields\`, \`findServiceOriginPoint\`, \`buildStaffPlatformOverrides\`, \`buildStaffLiveStatusOverrides\`, \`isoTimeToHHMM\`, and the override maps themselves — are NOT part of this cleanup and should stay; only the debug-display layer around them is temporary. Safe to remove once the Staff integration is settled and there's no further need to eyeball a live raw response.
-14. **Blob position: use Staff's junction/pass-points for smoother in-transit interpolation, not just the AT PLATFORM correction already built** — currently the blob's fraction between two calling points is one flat straight line, timed off just those two points' own liveDates; the Staff response already contains every junction/pass-point in between (e.g. WIGASJN, SPRBJN, GOLBRNJ — often only 1–3 minutes apart on the WCML) with their own etd/atd, which could place the blob far more precisely mid-gap. No new polling needed for this — the origin-anchored fetch already returns every pass-point on every regular refresh (60s normally, 20s on the final leg toward your own stop; see \`computeNextRefreshDelay\`), so whichever pass-points the most recent poll happened to confirm can just be used as they arrive, same permissive pattern as everything else — there's no discrete "did it pass yet" gate to design. The actual work: \`buildStaffPlatformOverrides\`/\`buildStaffLiveStatusOverrides\` both explicitly skip anything without a \`crs\` (i.e. every junction/pass-point, by design — correct for platforms and the AT PLATFORM badge, since those aren't real stations), so none of this timing is captured anywhere yet. Needs (a) a separate extraction keeping pass-points between two calling points, keyed by \`tiploc\`/array position rather than \`crs\` since they have none, and (b) interpolation logic that picks the fraction against whichever pass-point is most relevant to "now" within a gap, rather than the current flat line across the whole thing. Deliberately scoped as its own future piece, separate from the AT PLATFORM/overrun pin already shipped (2026-08-26) — that fix only stops the blob claiming progress that didn't happen while genuinely stationary; this would additionally sharpen it while genuinely moving.
+2. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
+3. **Wear OS watch companion** — Pixel Watch 4 has arrived, worth revisiting soon. Per-station geofence radius must not be baked into the watch build the way coordinates are (a one-time copy is fine for those, since they don't change) — radius gets retuned in practice (500m→185m for Wigan on real data within one session) and a compiled-in value would need a watch rebuild every time. Instead: PWA pushes \`geofenceRadiusCrewe\`/\`geofenceRadiusWigan\` to the Worker's KV whenever Settings saves them; the Worker holds that value with no logic of its own; the watch reads it via a small GET endpoint to register its \`GeofencingClient\` radius, rather than having one compiled in. The PWA's own geofence check keeps reading straight from its own localStorage as now — this is a one-way broadcast out to the watch, not a round-trip the PWA depends on.
+4. **Costs as one combined form** — currently a further list of two links (parking cost, day return price) rather than a single screen. Last remaining piece of the old Settings UI polish item — icon grid and in-place Back navigation are both done now.
+5. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
+6. **First-open-of-a-new-day reminder for an unrecorded travel day** — if yesterday was a genuine weekday, wasn't tagged as a non-travel day, and has no confirmed train for either direction, a soft/dismissible prompt (not a blocking one) on next open could catch a day that fell through every crack — no live detection, no manual entry either. Needs to reliably tell "forgot to log a real journey" apart from "forgot to tag an ordinary day off" before it's worth building.
+7. **Arrival-side "likely train" window doesn't account for midnight-crossing journeys** — confirmed via code review, not currently reproducible: the forward-window check compares bare minutes-since-midnight with no date awareness at all — the same general issue the "not yet departed/arrived" pill had, now fixed there but not here, since this is separate code (\`checkLikelyArrival\`'s own window check, not \`buildTrainProgress\`'s \`liveDates\`). Genuinely inert right now since none of the configured trains (07:27–18:31) go anywhere near midnight — worth fixing for robustness whenever this area's next touched, not urgent on its own.
+8. **Google Drive backup's "dirty" tracker only wraps \`localStorage.setItem\`, not \`removeItem\`** — a future \`removeItem\` call for real backed-up data would silently fail to mark the backup as needing to run again. Currently inert: checked every actual \`removeItem\` call in the file, and none of them are for data that should be triggering a backup in the first place. Worth wrapping for completeness whenever this area's next touched.
+9. **\`fares-proxy.js\` is CORS-restricted but not actually access-controlled** — like the other Workers before their own hardening pass, CORS only limits which *origin* a browser will let call it, not who can call it outside a browser entirely. Lower stakes than a write endpoint (this one's read-only, no personal data), but a stranger hitting it directly still burns against the upstream API quota. Simple caching and/or rate limiting would close this. Not urgent given the client only ever calls it once a year.
+10. **Destination picker for search-tracked (non-configured) trains** — the tracked-to-station platform/atd-ata accuracy check (built for Crewe) only ever fires for one of the five hardcoded \`railTrains\` routes, because it's keyed entirely off \`train.toLoc\`, and that's only ever set for those. A train tracked from a station search (e.g. Stockport → wherever) opens with just \`{ label, fromLoc, serviceId }\` — no destination captured anywhere, so every calling point past the origin misses out, not just the physical end of the journey. Fix: when tracking a searched train, let the user pick which calling point is their actual destination (defaulting to none), store it as \`toLoc\` on the tracked-train entry the same way a configured route already has one — the existing platform/notification logic should then apply with no further changes. Raised heading into the Christmas period, when off-usual-route journeys (e.g. into Manchester for shopping) are more likely than normal.
+11. **Watch item, not a bug: \`stationBoardForService\`'s same-minute tie-break hasn't been observed live yet** — the RID-numeric-prefix tie-break (used when two services share the same \`schedTime\` on a pure dep/arr board) is sound in design and its underlying premise (the numeric prefix is portable across board products, the trailing station tag isn't) is confirmed via real Cloudflare logs — but the tie-break logic itself triggering on a genuine same-minute collision hasn't been. No action needed: if it ever does trigger ambiguously, the Worker already logs up to 50 candidate services rather than guessing (\`stationBoardForService ambiguous match\` in Cloudflare's logs) — that log entry, whenever it first appears, is the real-world test case worth pulling and reviewing.
+12. **Remove the Staff (LDBSVWS) debug/comparison plumbing once it's no longer needed** — \`lastStaffDebugFrom\`/\`lastStaffDebugTo\`, \`formatStaffCompareLine\`, \`updateStaffDebugPanel\`, the \`#train-progress-staff-debug\` panel, and the "Copy raw JSON" button were all built purely to validate the Staff board against Darwin side-by-side (see \`staff-board-scoping.md\`), and are being kept around only so a real response can still be copied out for analysis while the AT PLATFORM and blob-position work is ongoing. The genuinely load-bearing pieces — \`fetchStaffBoardComparison\`, \`extractStaffLocationFields\`, \`findServiceOriginPoint\`, \`buildStaffPlatformOverrides\`, \`buildStaffLiveStatusOverrides\`, \`isoTimeToHHMM\`, and the override maps themselves — are NOT part of this cleanup and should stay; only the debug-display layer around them is temporary. Safe to remove once the Staff integration is settled and there's no further need to eyeball a live raw response.
+13. **Blob position: use Staff's junction/pass-points for smoother in-transit interpolation, not just the AT PLATFORM correction already built** — currently the blob's fraction between two calling points is one flat straight line, timed off just those two points' own liveDates; the Staff response already contains every junction/pass-point in between (e.g. WIGASJN, SPRBJN, GOLBRNJ — often only 1–3 minutes apart on the WCML) with their own etd/atd, which could place the blob far more precisely mid-gap. No new polling needed for this — the origin-anchored fetch already returns every pass-point on every regular refresh (60s normally, 20s on the final leg toward your own stop; see \`computeNextRefreshDelay\`), so whichever pass-points the most recent poll happened to confirm can just be used as they arrive, same permissive pattern as everything else — there's no discrete "did it pass yet" gate to design. The actual work: \`buildStaffPlatformOverrides\`/\`buildStaffLiveStatusOverrides\` both explicitly skip anything without a \`crs\` (i.e. every junction/pass-point, by design — correct for platforms and the AT PLATFORM badge, since those aren't real stations), so none of this timing is captured anywhere yet. Needs (a) a separate extraction keeping pass-points between two calling points, keyed by \`tiploc\`/array position rather than \`crs\` since they have none, and (b) interpolation logic that picks the fraction against whichever pass-point is most relevant to "now" within a gap, rather than the current flat line across the whole thing. Deliberately scoped as its own future piece, separate from the AT PLATFORM/overrun pin already shipped (2026-08-26) — that fix only stops the blob claiming progress that didn't happen while genuinely stationary; this would additionally sharpen it while genuinely moving.
 `;
+// Deliberately NOT listed above — these are easter eggs, and the whole
+// point is Wayne forgetting they exist and being surprised. Left as a
+// source-only note for future-Claude/Wayne rather than the in-app,
+// user-visible backlog: Christmas header (lights + Santa/reindeer/present
+// icons, matched by holiday title so it isn't pinned to hardcoded dates,
+// see isChristmasBunting), a floating ghost on Halloween, and firework
+// bursts on Bonfire Night (see runSeasonalEasterEgg and friends, near the
+// bottom of the file, just above the init() IIFE).
 
 function openHelpGuide(){
   const overlay = document.createElement('div');
@@ -11213,9 +11271,139 @@ function showToast(text){
   toastDismissTimer = setTimeout(dismiss, 4500);
 }
 
+// Easter eggs — purely decorative, never load-bearing. Appended straight to
+// document.body (not #app), so a subsequent render() call — which wipes and
+// rebuilds #app's innerHTML wholesale — can't cut an animation short partway
+// through. Runs once per app open (called once from init(), below), checked
+// against the device's local date. pointer-events:none throughout so these
+// never intercept a tap on the real UI underneath. Everything here is
+// wrapped so a failure can't break app startup.
+function runSeasonalEasterEgg(){
+  try{
+    const now = new Date();
+    const month = now.getMonth(); // 0-indexed
+    const date = now.getDate();
+    if (month === 9 && date === 31){ // Halloween
+      spawnHalloweenGhost();
+    } else if (month === 10 && date === 5){ // Bonfire Night
+      spawnBonfireFireworks();
+    }
+  }catch(e){ /* decorative only — swallow and move on */ }
+}
+
+function spawnHalloweenGhost(){
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const sizeW = Math.max(160, Math.min(260, vw * 0.5));
+  const sizeH = sizeW * 1.1;
+
+  const sides = ['top', 'bottom', 'left', 'right'];
+  const startSide = sides[Math.floor(Math.random() * 4)];
+  let endSide;
+  do{ endSide = sides[Math.floor(Math.random() * 4)]; } while (endSide === startSide);
+
+  // Keeps the ghost's start/end point away from the extreme corners of
+  // whichever edge it's crossing, so the drift reads as coming from a side
+  // rather than clipping awkwardly out of a corner.
+  function pointFor(side){
+    const margin = 0.15;
+    const rand = margin + Math.random() * (1 - 2 * margin);
+    switch (side){
+      case 'top': return { x: vw * rand - sizeW / 2, y: -sizeH };
+      case 'bottom': return { x: vw * rand - sizeW / 2, y: vh };
+      case 'left': return { x: -sizeW, y: vh * rand - sizeH / 2 };
+      default: return { x: vw, y: vh * rand - sizeH / 2 };
+    }
+  }
+
+  const start = pointFor(startSide);
+  const end = pointFor(endSide);
+
+  const ghost = document.createElement('div');
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.style.cssText = `position:fixed; top:0; left:0; width:${sizeW}px; height:${sizeH}px; pointer-events:none; z-index:99999; will-change:transform,opacity;`;
+  // Gradient fill fading from ~60% opacity at the top to near-0% at the
+  // tail, plus a slight blur on the whole shape — reads as a translucent
+  // wisp rather than a solid sprite. The container's own opacity is
+  // additionally animated in/out below, layering a fade on top of that.
+  ghost.innerHTML = `<svg viewBox="0 0 100 110" width="100%" height="100%">
+    <defs>
+      <linearGradient id="eeGhostFade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#f4f2ea" stop-opacity="0.62"/>
+        <stop offset="55%" stop-color="#f4f2ea" stop-opacity="0.42"/>
+        <stop offset="100%" stop-color="#f4f2ea" stop-opacity="0.06"/>
+      </linearGradient>
+      <filter id="eeGhostBlur" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="1.1"/>
+      </filter>
+    </defs>
+    <path d="M50 6 C22 6 8 28 8 55 L8 95 C8 100 14 101 17 97 L24 88 C26 85 30 85 32 88 L38 96 C40 99 44 99 46 96 L50 90 L54 96 C56 99 60 99 62 96 L68 88 C70 85 74 85 76 88 L83 97 C86 101 92 100 92 95 L92 55 C92 28 78 6 50 6 Z" fill="url(#eeGhostFade)" filter="url(#eeGhostBlur)"/>
+    <ellipse cx="36" cy="46" rx="5" ry="7" fill="#20222c" opacity="0.35"/>
+    <ellipse cx="64" cy="46" rx="5" ry="7" fill="#20222c" opacity="0.35"/>
+    <path d="M40 64 Q50 71 60 64" stroke="#20222c" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.3"/>
+  </svg>`;
+  document.body.appendChild(ghost);
+
+  const duration = 8000;
+  const anim = ghost.animate([
+    { transform: `translate(${start.x}px, ${start.y}px)`, opacity: 0 },
+    { opacity: 1, offset: 0.12 },
+    { opacity: 1, offset: 0.88 },
+    { transform: `translate(${end.x}px, ${end.y}px)`, opacity: 0 }
+  ], { duration, easing: 'ease-in-out', fill: 'forwards' });
+
+  const cleanup = () => { if (ghost.isConnected) ghost.remove(); };
+  anim.onfinish = cleanup;
+  setTimeout(cleanup, duration + 1000); // safety net if onfinish is ever missed (e.g. backgrounded mid-animation)
+}
+
+function spawnBonfireFireworks(){
+  const container = document.createElement('div');
+  container.setAttribute('aria-hidden', 'true');
+  container.style.cssText = 'position:fixed; inset:0; pointer-events:none; z-index:99999; overflow:hidden;';
+  document.body.appendChild(container);
+
+  const colors = ['#e0524a', '#f2a93b', '#3f9e5c', '#3f7fd8', '#d4af37', '#c77dd8'];
+  const burstCount = 5;
+  const totalDuration = 7500;
+
+  for (let i = 0; i < burstCount; i++){
+    const delay = Math.random() * 4000; // staggered across the first 4s, leaving room for the last burst to fully fade within the 7.5s total
+    setTimeout(() => spawnFireworkBurst(container, colors), delay);
+  }
+
+  setTimeout(() => { if (container.isConnected) container.remove(); }, totalDuration + 500);
+}
+
+function spawnFireworkBurst(container, colors){
+  if (!container.isConnected) return;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const cx = vw * (0.15 + Math.random() * 0.7);
+  const cy = vh * (0.12 + Math.random() * 0.5); // upper-middle of the screen, like a real firework
+  const color = colors[Math.floor(Math.random() * colors.length)];
+  const particleCount = 14;
+  const radius = 60 + Math.random() * 40;
+
+  for (let p = 0; p < particleCount; p++){
+    const angle = (p / particleCount) * Math.PI * 2;
+    const dx = Math.cos(angle) * radius;
+    const dy = Math.sin(angle) * radius;
+    const dot = document.createElement('div');
+    dot.style.cssText = `position:absolute; left:${cx}px; top:${cy}px; width:4px; height:4px; border-radius:50%; background:${color}; box-shadow:0 0 4px ${color};`;
+    container.appendChild(dot);
+    const anim = dot.animate([
+      { transform: 'translate(0,0)', opacity: 1 },
+      { transform: `translate(${dx}px, ${dy}px)`, opacity: 0 }
+    ], { duration: 1000 + Math.random() * 400, easing: 'ease-out', fill: 'forwards' });
+    const cleanup = () => { if (dot.isConnected) dot.remove(); };
+    anim.onfinish = cleanup;
+    setTimeout(cleanup, 1600);
+  }
+}
+
 (async function init(){
   await loadData();
   render();
+  runSeasonalEasterEgg();
   mountSilentConfirmBanner();
 
   // Check for bank holidays after the initial render so startup isn't
