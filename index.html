@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-29.21:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-29.21:52'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -10791,26 +10791,25 @@ function openROIDashboardView(){
     }
   }
 
-  // Section 2: Parking — total spent all-time, and total saved vs the
-  // configured daily estimate, run across the app's whole tracked
-  // history rather than a single pay period.
-  const parkingSpentTotal = Object.values(parkedDays).reduce((sum, v) => sum + (v || 0), 0);
-  const historyStartCandidates = [
-    ...Object.keys(comments || {}),
-    ...Object.keys(parkedDays || {}),
-    ...purchases.map(p => p.date)
-  ].filter(Boolean);
-  const earliestKey = historyStartCandidates.length ? historyStartCandidates.reduce((a, b) => a < b ? a : b) : fmtKey(today);
-  const historyStart = parseKey(earliestKey);
-  const parkingSavedTotal = computeExpenseSavingsForPeriod(historyStart, today, today, parkedDays, parkingCost);
-
-  // Sections 3 & 4 share the same rolling-12-months window: the first of
+  // Every section shares the same rolling-12-months window: the first of
   // the month, 11 months back, through today — e.g. run in August 2026,
   // that's September 2025 through August 2026 inclusive. Not a fixed
-  // calendar year; genuinely rolls forward with "today".
+  // calendar year; genuinely rolls forward with "today". Parking was
+  // originally scoped as all-time, but that produced a figure wildly out
+  // of proportion with everything else on the page (it accumulates one
+  // "would-have-cost-to-drive" estimate per workday for the app's entire
+  // tracked history, most of which was never actually a parking
+  // decision) — moved onto the same window as the rest of the dashboard
+  // for consistency and a sane number.
   const windowStart = new Date(today.getFullYear(), today.getMonth() - 11, 1);
   const windowStartKey = fmtKey(windowStart);
   const todayKey = fmtKey(today);
+
+  // Section: Parking — spent and saved, rolling 12 months.
+  const parkingSpentTotal = Object.keys(parkedDays)
+    .filter(k => k >= windowStartKey && k <= todayKey)
+    .reduce((sum, k) => sum + (parkedDays[k] || 0), 0);
+  const parkingSavedTotal = computeExpenseSavingsForPeriod(windowStart, today, today, parkedDays, parkingCost);
 
   const ticketSpendInWindow = purchases
     .filter(p => p.date >= windowStartKey && p.date <= todayKey)
@@ -10855,16 +10854,12 @@ function openROIDashboardView(){
         <h3>ROI dashboard</h3>
         <div class="sub" style="margin-bottom:0;">What the commute has actually cost and clawed back.</div>
       </div>
-      <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch;">
+      <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:0 18px;">
 
         <div class="rail-col-header">Delay repay</div>
         <div class="rail-detail-row"><span>Confirmed &amp; paid</span><span style="color:var(--amber); font-weight:600;">${money(claimedConfirmed)}</span></div>
         <div class="rail-detail-row"><span>Pending</span><span style="color:var(--amber); font-weight:600;">${money(claimedPending)}</span></div>
         <div class="rail-detail-row"><span>Expired / lost</span><span style="color:var(--amber); font-weight:600;">${money(claimedExpired)}</span></div>
-
-        <div class="rail-col-header">Parking</div>
-        <div class="rail-detail-row"><span>Total spent (all time)</span><span style="color:var(--amber); font-weight:600;">${money(parkingSpentTotal)}</span></div>
-        <div class="rail-detail-row"><span>Total saved (all time)</span><span style="color:var(--amber); font-weight:600;">${money(parkingSavedTotal)}</span></div>
 
         <div class="rail-col-header">ROI vs ticket spend (rolling 12 months)</div>
         <div class="rail-detail-row"><span>Claimed against spent</span><span style="color:var(--amber); font-weight:600;">${money(claimedConfirmedInWindow)} / ${money(ticketSpendInWindow)}</span></div>
@@ -10875,6 +10870,10 @@ function openROIDashboardView(){
         ${monthBuckets.map(b => `
           <div class="rail-detail-row"><span>${b.label}</span><span style="color:var(--amber); font-weight:600;">${money(b.total)}</span></div>
         `).join('')}
+
+        <div class="rail-col-header">Parking (rolling 12 months)</div>
+        <div class="rail-detail-row"><span>Total spent</span><span style="color:var(--amber); font-weight:600;">${money(parkingSpentTotal)}</span></div>
+        <div class="rail-detail-row"><span>Total saved</span><span style="color:var(--amber); font-weight:600;">${money(parkingSavedTotal)}</span></div>
 
       </div>
       <div class="modal-close" id="roi-dashboard-close-btn" style="margin:10px 18px; background:var(--board-2); border:1px solid var(--line); border-radius:10px; padding:10px; flex-shrink:0;">Close</div>
