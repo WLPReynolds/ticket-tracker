@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-29.20:11'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-29.21:16'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4253,6 +4253,14 @@ When you are within 500 metres of Crewe or Wigan station around your commute tim
 * **Delayed / Unexpected Train (Mismatch Prompt):** If an earlier or delayed train is leaving right when you arrive, a banner asks: **"Is this your train?"** Tapping **"Yes, that's me"** updates your confirmed train record.
 * **Automatic Silent Confirmation (Within 5 Minutes):** If you are at the station and your usual scheduled train is due to depart or arrive **within 5 minutes**, the app quietly confirms that train for you automatically — no manual tap required. A brief green banner appears at the top of the screen to let you know it has logged the journey. *(Note: If you arrive at the station more than 5 minutes before departure, the app holds off on auto-confirming until that 5-minute window opens, ensuring an early arrival doesn't lock in the wrong train prematurely).*
 
+### Emergency Routes
+For real disruption, not everyday delays:
+1. In **Settings → Emergency routes**, author fallback journeys while things are calm — each one is a chain of legs between stations (e.g. "Via Liverpool": Wigan North Western → Liverpool Lime Street → Crewe).
+2. Turn on **Settings → Emergency tab** when you actually want to see it. It's hidden by default so it doesn't clutter the Live screen day-to-day — this is a "only show this when it's actually useful" switch, not something that appears automatically.
+3. When disruption hits, open the **Emergency** tab on the Live screen. It checks every saved route live against Darwin and shows either a full chained plan or however far it gets before a leg dies, allowing a 5-minute minimum interchange buffer between legs.
+4. Routes are grouped and sorted for whichever direction you're travelling in — set your **Settings → Home & Work stations** once, and from 12:00 the routes that get you home sort first, before 12:00 the ones that get you to work do, in both cases soonest-arriving full plan at the top and any dead/partial route pushed to the bottom.
+5. Once a route resolves to a full plan, tap **Add to Tracked** to start following its actual trains — this respects your usual 5-train tracking limit and will ask which trains to drop rather than silently bumping anything.
+
 ---
 
 ## 4. Delay Repay & Claims
@@ -5498,8 +5506,12 @@ async function checkEmergencyRoute(route){
       status = 'partial';
       break;
     }
-    // 10-minute minimum interchange buffer before searching the next leg.
-    cursor = new Date(arrivalDate.getTime() + 10 * 60 * 1000);
+    // 5-minute minimum interchange buffer before searching the next leg
+    // — was 10, reduced after a real near-miss: a genuinely catchable
+    // Liverpool Lime Street connection (9 minutes after the previous
+    // leg's arrival) was being excluded by the old, more conservative
+    // figure.
+    cursor = new Date(arrivalDate.getTime() + 5 * 60 * 1000);
   }
 
   return { id: route.id, label: route.label, legs: legResults, status };
