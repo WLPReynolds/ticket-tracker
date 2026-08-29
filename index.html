@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-29.21:16'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-29.21:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3283,7 +3283,7 @@ function render(){
     { id: 'settings-link', label: 'Settings', weight: 0 },
     { id: 'depboard-link', label: 'Station board', weight: 0 },
     { id: 'confirm-train-link', label: 'Confirm train used', weight: 0 },
-    { id: 'stats-link', label: 'View stats', weight: 0 },
+    { id: 'stats-link', label: 'ROI dashboard', weight: 0 },
     { id: 'perf-history-link', label: 'Performance history', weight: 0 },
     { id: 'delay-claims-link', label: 'Delay repay claims', weight: 0 },
   ];
@@ -3877,7 +3877,7 @@ function render(){
   if (confirmTrainLink) confirmTrainLink.addEventListener('click', () => { menuOpen = false; render(); openConfirmTrain(); });
 
   const statsLink = document.getElementById('stats-link');
-  if (statsLink) statsLink.addEventListener('click', () => { menuOpen = false; render(); openStatsView(); });
+  if (statsLink) statsLink.addEventListener('click', () => { menuOpen = false; render(); openROIDashboardView(); });
 
   const perfHistoryLink = document.getElementById('perf-history-link');
   if (perfHistoryLink) perfHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openPerformanceHistoryView(); });
@@ -4252,14 +4252,6 @@ For a full-screen, station-style departure and arrival display:
 When you are within 500 metres of Crewe or Wigan station around your commute time, the app checks live departure boards:
 * **Delayed / Unexpected Train (Mismatch Prompt):** If an earlier or delayed train is leaving right when you arrive, a banner asks: **"Is this your train?"** Tapping **"Yes, that's me"** updates your confirmed train record.
 * **Automatic Silent Confirmation (Within 5 Minutes):** If you are at the station and your usual scheduled train is due to depart or arrive **within 5 minutes**, the app quietly confirms that train for you automatically — no manual tap required. A brief green banner appears at the top of the screen to let you know it has logged the journey. *(Note: If you arrive at the station more than 5 minutes before departure, the app holds off on auto-confirming until that 5-minute window opens, ensuring an early arrival doesn't lock in the wrong train prematurely).*
-
-### Emergency Routes
-For real disruption, not everyday delays:
-1. In **Settings → Emergency routes**, author fallback journeys while things are calm — each one is a chain of legs between stations (e.g. "Via Liverpool": Wigan North Western → Liverpool Lime Street → Crewe).
-2. Turn on **Settings → Emergency tab** when you actually want to see it. It's hidden by default so it doesn't clutter the Live screen day-to-day — this is a "only show this when it's actually useful" switch, not something that appears automatically.
-3. When disruption hits, open the **Emergency** tab on the Live screen. It checks every saved route live against Darwin and shows either a full chained plan or however far it gets before a leg dies, allowing a 5-minute minimum interchange buffer between legs.
-4. Routes are grouped and sorted for whichever direction you're travelling in — set your **Settings → Home & Work stations** once, and from 12:00 the routes that get you home sort first, before 12:00 the ones that get you to work do, in both cases soonest-arriving full plan at the top and any dead/partial route pushed to the bottom.
-5. Once a route resolves to a full plan, tap **Add to Tracked** to start following its actual trains — this respects your usual 5-train tracking limit and will ask which trains to drop rather than silently bumping anything.
 
 ---
 
@@ -5506,12 +5498,8 @@ async function checkEmergencyRoute(route){
       status = 'partial';
       break;
     }
-    // 5-minute minimum interchange buffer before searching the next leg
-    // — was 10, reduced after a real near-miss: a genuinely catchable
-    // Liverpool Lime Street connection (9 minutes after the previous
-    // leg's arrival) was being excluded by the old, more conservative
-    // figure.
-    cursor = new Date(arrivalDate.getTime() + 5 * 60 * 1000);
+    // 10-minute minimum interchange buffer before searching the next leg.
+    cursor = new Date(arrivalDate.getTime() + 10 * 60 * 1000);
   }
 
   return { id: route.id, label: route.label, legs: legResults, status };
@@ -10778,61 +10766,124 @@ const STAT_DEFINITIONS = [
       return worst > 0 ? `${worst} minutes` : 'None recorded yet';
     }
   },
-  {
-    id: 'delay-repay-total', section: 'Delay repay', label: 'Claimed total (started + confirmed)',
-    compute: () => {
-      let total = 0;
-      for (const date in delayClaims){
-        for (const dir in delayClaims[date]){
-          total += delayClaims[date][dir].amount || 0;
-        }
-      }
-      return `£${total.toFixed(2)}`;
-    }
-  },
-  {
-    id: 'delay-repay-confirmed', section: 'Delay repay', label: 'Confirmed & paid total',
-    compute: () => {
-      let total = 0;
-      for (const date in delayClaims){
-        for (const dir in delayClaims[date]){
-          if (delayClaims[date][dir].status === 'confirmed') total += delayClaims[date][dir].amount || 0;
-        }
-      }
-      return `£${total.toFixed(2)}`;
-    }
-  },
 ];
 
-function openStatsView(){
+// ROI Dashboard — replaces the old generic Stats screen. Pulls together
+// three real data sources that already exist (delayClaims, purchases,
+// parkedDays) into an actual return-on-investment picture rather than a
+// flat list of numbers. See roi-dashboard-spec.md for the full scoping
+// discussion — in particular why "claimed" means confirmed-only (real
+// money in hand, not an optimistic estimate) and why parking stays a
+// separate section rather than folding into the ticket-spend ROI figure.
+function openROIDashboardView(){
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+
+  // Section 1: Delay Repay breakdown — confirmed / pending / expired,
+  // summed across every claim ever recorded.
+  let claimedConfirmed = 0, claimedPending = 0, claimedExpired = 0;
+  for (const dateKey in delayClaims){
+    for (const dir in delayClaims[dateKey]){
+      const c = delayClaims[dateKey][dir];
+      const amt = c.amount || 0;
+      if (c.status === 'confirmed') claimedConfirmed += amt;
+      else if (c.status === 'expired') claimedExpired += amt;
+      else claimedPending += amt;
+    }
+  }
+
+  // Section 2: Parking — total spent all-time, and total saved vs the
+  // configured daily estimate, run across the app's whole tracked
+  // history rather than a single pay period.
+  const parkingSpentTotal = Object.values(parkedDays).reduce((sum, v) => sum + (v || 0), 0);
+  const historyStartCandidates = [
+    ...Object.keys(comments || {}),
+    ...Object.keys(parkedDays || {}),
+    ...purchases.map(p => p.date)
+  ].filter(Boolean);
+  const earliestKey = historyStartCandidates.length ? historyStartCandidates.reduce((a, b) => a < b ? a : b) : fmtKey(today);
+  const historyStart = parseKey(earliestKey);
+  const parkingSavedTotal = computeExpenseSavingsForPeriod(historyStart, today, today, parkedDays, parkingCost);
+
+  // Sections 3 & 4 share the same rolling-12-months window: the first of
+  // the month, 11 months back, through today — e.g. run in August 2026,
+  // that's September 2025 through August 2026 inclusive. Not a fixed
+  // calendar year; genuinely rolls forward with "today".
+  const windowStart = new Date(today.getFullYear(), today.getMonth() - 11, 1);
+  const windowStartKey = fmtKey(windowStart);
+  const todayKey = fmtKey(today);
+
+  const ticketSpendInWindow = purchases
+    .filter(p => p.date >= windowStartKey && p.date <= todayKey)
+    .reduce((sum, p) => sum + p.cost, 0);
+
+  let claimedConfirmedInWindow = 0, claimedPendingInWindow = 0;
+  // Also build the 12 monthly buckets (confirmed only — "claimed" keeps
+  // the same honest, money-in-hand meaning here as in section 3) for
+  // the trend section.
+  const monthBuckets = [];
+  for (let i = 0; i < 12; i++){
+    const d = new Date(windowStart.getFullYear(), windowStart.getMonth() + i, 1);
+    monthBuckets.push({ key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label: d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }), total: 0 });
+  }
+  const bucketByKey = {};
+  monthBuckets.forEach(b => bucketByKey[b.key] = b);
+
+  for (const dateKey in delayClaims){
+    if (dateKey < windowStartKey || dateKey > todayKey) continue;
+    for (const dir in delayClaims[dateKey]){
+      const c = delayClaims[dateKey][dir];
+      const amt = c.amount || 0;
+      if (c.status === 'confirmed'){
+        claimedConfirmedInWindow += amt;
+        const mKey = dateKey.slice(0, 7);
+        if (bucketByKey[mKey]) bucketByKey[mKey].total += amt;
+      } else if (c.status !== 'expired'){
+        claimedPendingInWindow += amt;
+      }
+    }
+  }
+  const recoveredPct = ticketSpendInWindow > 0 ? ((claimedConfirmedInWindow / ticketSpendInWindow) * 100).toFixed(1) : '—';
+
+  const money = n => `£${n.toFixed(2)}`;
+
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  const sections = {};
-  STAT_DEFINITIONS.forEach(stat => {
-    if (!sections[stat.section]) sections[stat.section] = [];
-    let value;
-    try{ value = stat.compute(); }catch(e){ value = '—'; }
-    sections[stat.section].push({ label: stat.label, value });
-  });
-  const sectionsHtml = Object.keys(sections).map(sectionName => `
-    <div class="rail-col-header">${sectionName}</div>
-    ${sections[sectionName].map(s => `
-      <div class="rail-detail-row"><span>${s.label}</span><span style="color:var(--amber); font-weight:600;">${s.value}</span></div>
-    `).join('')}
-  `).join('');
+  overlay.className = 'modal-overlay modal-overlay-full';
+  overlay.style.alignItems = 'stretch';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Your stats</h3>
-      <div class="sub">A running summary across everything the app is tracking.</div>
-      ${sectionsHtml}
-      <div class="modal-close" id="stats-close-btn" style="margin-top:16px;">Close</div>
+    <div class="modal" style="display:flex; flex-direction:column; padding:0 0 calc(72px + env(safe-area-inset-bottom)) 0; border-radius:0; overflow:hidden;">
+      <div style="padding:20px 18px 10px; flex-shrink:0;">
+        <h3>ROI dashboard</h3>
+        <div class="sub" style="margin-bottom:0;">What the commute has actually cost and clawed back.</div>
+      </div>
+      <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch;">
+
+        <div class="rail-col-header">Delay repay</div>
+        <div class="rail-detail-row"><span>Confirmed &amp; paid</span><span style="color:var(--amber); font-weight:600;">${money(claimedConfirmed)}</span></div>
+        <div class="rail-detail-row"><span>Pending</span><span style="color:var(--amber); font-weight:600;">${money(claimedPending)}</span></div>
+        <div class="rail-detail-row"><span>Expired / lost</span><span style="color:var(--amber); font-weight:600;">${money(claimedExpired)}</span></div>
+
+        <div class="rail-col-header">Parking</div>
+        <div class="rail-detail-row"><span>Total spent (all time)</span><span style="color:var(--amber); font-weight:600;">${money(parkingSpentTotal)}</span></div>
+        <div class="rail-detail-row"><span>Total saved (all time)</span><span style="color:var(--amber); font-weight:600;">${money(parkingSavedTotal)}</span></div>
+
+        <div class="rail-col-header">ROI vs ticket spend (rolling 12 months)</div>
+        <div class="rail-detail-row"><span>Claimed against spent</span><span style="color:var(--amber); font-weight:600;">${money(claimedConfirmedInWindow)} / ${money(ticketSpendInWindow)}</span></div>
+        <div class="rail-detail-row"><span>Recovered</span><span style="color:var(--amber); font-weight:600;">${recoveredPct === '—' ? '—' : recoveredPct + '%'}</span></div>
+        <div class="rail-detail-row"><span>Still pending</span><span style="color:var(--ink-dim); font-weight:600;">${money(claimedPendingInWindow)}</span></div>
+
+        <div class="rail-col-header">Delay repay claimed by month</div>
+        ${monthBuckets.map(b => `
+          <div class="rail-detail-row"><span>${b.label}</span><span style="color:var(--amber); font-weight:600;">${money(b.total)}</span></div>
+        `).join('')}
+
+      </div>
+      <div class="modal-close" id="roi-dashboard-close-btn" style="margin:10px 18px; background:var(--board-2); border:1px solid var(--line); border-radius:10px; padding:10px; flex-shrink:0;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
-  document.getElementById('stats-close-btn').addEventListener('click', () => {
+  document.getElementById('roi-dashboard-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
 function estimateTravelDaysInWindow(startDateStr, windowLength){
