@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-28.21:07'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-29.18:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1780,6 +1780,16 @@ let alternativeRoutes = [];
 // off the rest of the time, not an auto-derived visibility state.
 let emergencyTabVisible = false;
 
+// Home/Work stations — used to work out each Emergency route's "direction"
+// (does it end at Home, or at Work?) for AM/PM grouping and sorting on the
+// Emergency tab. Defaulting to Crewe/Wigan North Western preserves
+// Wayne's existing behaviour with zero setup required, while making the
+// app's core CRE/WGN assumption a configurable setting rather than a
+// hardcoded one — relevant if this is ever distributed more widely
+// (e.g. via Google Play) to someone with a different commute.
+let homeStation = { code: 'CRE', name: 'Crewe' };
+let workStation = { code: 'WGN', name: 'Wigan North Western' };
+
 // "I think you're on this train" detection
 const DEFAULT_GEOFENCE_RADIUS_M = 500; // original single value, informed by real field-test readings — now just the starting point for both stations, and a defensive fallback for an unrecognised station code
 // Sane bounds for either station's radius, shared by the settings editor
@@ -1956,6 +1966,14 @@ async function loadData(){
     const etv = localStorage.getItem('emergency-tab-visible');
     emergencyTabVisible = etv ? JSON.parse(etv) : false;
   }catch(e){ emergencyTabVisible = false; }
+  try{
+    const hs = localStorage.getItem('home-station');
+    homeStation = hs ? JSON.parse(hs) : { code: 'CRE', name: 'Crewe' };
+  }catch(e){ homeStation = { code: 'CRE', name: 'Crewe' }; }
+  try{
+    const ws = localStorage.getItem('work-station');
+    workStation = ws ? JSON.parse(ws) : { code: 'WGN', name: 'Wigan North Western' };
+  }catch(e){ workStation = { code: 'WGN', name: 'Wigan North Western' }; }
   try{
     const dbe = localStorage.getItem('drive-backup-enabled');
     driveBackupEnabled = dbe ? JSON.parse(dbe) : false;
@@ -2192,6 +2210,14 @@ async function saveAlternativeRoutes(){
 }
 async function saveEmergencyTabVisible(){
   try{ localStorage.setItem('emergency-tab-visible', JSON.stringify(emergencyTabVisible)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveHomeStation(){
+  try{ localStorage.setItem('home-station', JSON.stringify(homeStation)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveWorkStation(){
+  try{ localStorage.setItem('work-station', JSON.stringify(workStation)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveDriveBackupEnabled(){
@@ -4475,6 +4501,7 @@ function openSettingsMenu(){
         <div class="settings-grid-item${spendingVisible ? ' active' : ''}" id="settings-spending-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Spending card</span><span class="status-label">${spendingVisible ? 'Visible' : 'Hidden'}</span></div>
         <div class="settings-grid-item" id="settings-emergency-routes-link">${SETTINGS_ICONS.warning}<span class="cat-label">Emergency routes</span></div>
         <div class="settings-grid-item${emergencyTabVisible ? ' active' : ''}" id="settings-emergency-tab-link">${SETTINGS_ICONS.warning}<span class="cat-label">Emergency tab</span><span class="status-label">${emergencyTabVisible ? 'Shown' : 'Hidden'}</span></div>
+        <div class="settings-grid-item" id="settings-home-work-link">${SETTINGS_ICONS.geo}<span class="cat-label">Home & Work stations</span><span class="status-label">${escapeHtml(homeStation.code)} / ${escapeHtml(workStation.code)}</span></div>
       </div>
       <div class="modal-close" id="settings-close-btn" style="margin-top:20px;">Close</div>
     </div>
@@ -4512,6 +4539,7 @@ function openSettingsMenu(){
     await saveEmergencyTabVisible();
     toggleStatus('settings-emergency-tab-link', emergencyTabVisible, emergencyTabVisible ? 'Shown' : 'Hidden');
   });
+  document.getElementById('settings-home-work-link').addEventListener('click', () => { close(); openHomeWorkStationsManager(); });
   document.getElementById('settings-debug-link').addEventListener('click', async () => {
     debugModeEnabled = !debugModeEnabled;
     await saveDebugMode();
@@ -5045,13 +5073,14 @@ const BACKUP_KEYS = [
   'emergency-tab-visible',
   'gcal-enabled','gcal-event-id','gcal-pending-sync',
   'geofence-crewe-matches-wigan','geofence-radius-crewe','geofence-radius-wigan','geofence-wigan-matches-crewe',
+  'home-station',
   'parked-days','parking-savings-snapshots',
   'payday-estimate-snapshots','poll-before-departure-min','poll-check-in-interval-min','preferred-google-email',
   'produce-claim-details-file','rail-perf-cache','rail-trains','smartcard-number',
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
   'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
   'ticket-period-start','ticket-purchases','ticket-seed-imported','ticket-travel-overrides',
-  'tickets-spent-card-dismissed','tracked-trains','weather-enabled'
+  'tickets-spent-card-dismissed','tracked-trains','weather-enabled','work-station'
 ];
 
 function exportBackup(){
@@ -5436,6 +5465,11 @@ async function checkEmergencyRoute(route){
         etd: best.etd || null,
         platform: best.platform || null,
         arrivalStr,
+        // A plain timestamp (not the Date itself) so the result stays
+        // simple to reason about — used by the Emergency tab to sort a
+        // completed route by how soon it actually gets Wayne home/to
+        // work, without needing to re-derive it from arrivalStr later.
+        arrivalTimestamp: arrivalDate ? arrivalDate.getTime() : null,
         // Distinguishes "found a real train but couldn't confirm its
         // arrival time" from "found a real train and everything's
         // fine" — both leave arrivalStr null-ish downstream today, but
@@ -6570,7 +6604,7 @@ function openLiveScreen(initialSubTab){
     }).join('');
     const statusBadge = result.status === 'complete'
       ? '<span style="color:var(--good); font-weight:600;">Full plan</span>'
-      : '<span style="color:#ff8b7e; font-weight:600;">Partial — route dead beyond this point</span>';
+      : '<span style="color:#ff8b7e; font-weight:600;">Partial</span>';
     // Add to Tracked only offered once a full chained plan exists — a
     // partial/dead route has nothing complete enough to hand off to the
     // tracking flow.
@@ -6685,6 +6719,50 @@ function openLiveScreen(initialSubTab){
     }
   }
 
+  // Works out whether a result's route currently matches "the direction
+  // I'm travelling right now" — before 12:00, that's routes that end at
+  // Work (the AM commute); from 12:00 on, routes that end at Home (the
+  // PM commute). Matched on each route's AUTHORED final destination
+  // (alternativeRoutes, not the possibly-truncated result.legs — a
+  // partial result's legs array stops wherever the chain died, which
+  // isn't necessarily the route's real intended destination) rather
+  // than its first leg's origin, since Wayne's own routes fan out from
+  // different nearby stations (e.g. Wigan Wallgate vs. Wigan North
+  // Western) that all still mean "going home" — matching on where a
+  // route ENDS is robust to that in a way matching on where it STARTS
+  // isn't.
+  function isPrimaryDirection(result){
+    const route = alternativeRoutes.find(r => r.id === result.id);
+    if (!route || !route.legs.length) return false;
+    const isPM = new Date().getHours() >= 12;
+    const targetCode = isPM ? homeStation.code : workStation.code;
+    return route.legs[route.legs.length - 1].to === targetCode;
+  }
+
+  // Sorted, not just grouped: primary-direction routes first, then
+  // within each group a complete plan sorts by how soon it actually
+  // arrives (earliest first), with any partial/dead route pushed to the
+  // bottom of its group regardless — a dead route has no real arrival
+  // time to sort by, and a "soonest" position would be misleading for
+  // something that doesn't get you all the way there.
+  function sortedEmergencyResults(){
+    if (!emergencyResults) return [];
+    const withMeta = emergencyResults.map((result, originalIndex) => {
+      const lastLeg = result.legs[result.legs.length - 1];
+      const arrivalTimestamp = (result.status === 'complete' && lastLeg && lastLeg.candidate)
+        ? lastLeg.candidate.arrivalTimestamp
+        : null;
+      return { result, originalIndex, primary: isPrimaryDirection(result), arrivalTimestamp };
+    });
+    withMeta.sort((a, b) => {
+      if (a.primary !== b.primary) return a.primary ? -1 : 1;
+      const aKey = a.arrivalTimestamp ?? Infinity;
+      const bKey = b.arrivalTimestamp ?? Infinity;
+      return aKey - bKey;
+    });
+    return withMeta;
+  }
+
   async function runEmergencyCheck(){
     if (emergencyChecking) return;
     emergencyChecking = true;
@@ -6707,7 +6785,8 @@ function openLiveScreen(initialSubTab){
       bodyEl.innerHTML = `<div class="sub" id="emergency-status">Checking ${alternativeRoutes.length} route${alternativeRoutes.length === 1 ? '' : 's'}…</div>`;
       return;
     }
-    const resultsHtml = emergencyResults ? emergencyResults.map((r, ri) => routeCardHtml(r, ri)).join('') : '';
+    const ordered = sortedEmergencyResults();
+    const resultsHtml = ordered.map(({ result, originalIndex }) => routeCardHtml(result, originalIndex)).join('');
     bodyEl.innerHTML = `
       <button class="save-btn" id="emergency-recheck-btn" style="margin-bottom:14px;">${emergencyResults ? 'Recheck' : 'Check now'}</button>
       <div id="emergency-results">${resultsHtml}</div>
@@ -9748,6 +9827,70 @@ function openAlternativeRoutesManager(cameFromSettings){
   // needing to close and reopen the screen.
   if (!stationIndexCache){
     loadStationIndex(false).then(() => { if (overlay.isConnected){ syncLabelsFromInputs(); render(); } }).catch(() => { if (overlay.isConnected){ syncLabelsFromInputs(); render(); } });
+  }
+}
+
+// Home/Work stations — the two ends of the commute, used to work out
+// each Emergency route's "direction" for AM/PM grouping and sorting on
+// the Emergency tab (see checkAllEmergencyRoutes's caller in
+// openLiveScreen). A small dedicated screen rather than an inline
+// Settings toggle, since it needs two full station pickers.
+function openHomeWorkStationsManager(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  let draftHome = { ...homeStation };
+  let draftWork = { ...workStation };
+
+  function stationStatusHtml(){
+    if (stationIndexCache){
+      const date = stationIndexCache.fetchedAt ? new Date(stationIndexCache.fetchedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'unknown date';
+      return `${stationIndexCache.list.length.toLocaleString()} stations · updated ${date}`;
+    }
+    return `Loading station list… codes still work meanwhile (e.g. CRE, WGN).`;
+  }
+
+  function render(){
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3>Home & Work stations</h3>
+        <div class="sub">Used to work out which Emergency routes get you home vs. to work, so the Emergency tab can group and sort them for whichever direction you're travelling in.</div>
+        <div class="sub" style="font-size:11.5px; margin-bottom:12px;">${stationStatusHtml()}</div>
+        <div class="rail-col-header" style="margin-bottom:4px;">Home station</div>
+        <div id="hw-home-picker" style="margin-bottom:14px;"></div>
+        <div class="rail-col-header" style="margin-bottom:4px;">Work station</div>
+        <div id="hw-work-picker" style="margin-bottom:18px;"></div>
+        <button class="save-btn" id="hw-save">Save</button>
+        <div class="modal-close" id="hw-close">Cancel</div>
+      </div>
+    `;
+    const homePicker = createStationPicker({
+      placeholder: 'Home station',
+      initialCode: draftHome.code,
+      initialName: draftHome.name,
+      onChange: (code, name) => { draftHome = { code, name }; }
+    });
+    const workPicker = createStationPicker({
+      placeholder: 'Work station',
+      initialCode: draftWork.code,
+      initialName: draftWork.name,
+      onChange: (code, name) => { draftWork = { code, name }; }
+    });
+    document.getElementById('hw-home-picker').appendChild(homePicker.el);
+    document.getElementById('hw-work-picker').appendChild(workPicker.el);
+
+    document.getElementById('hw-save').addEventListener('click', async () => {
+      if (draftHome.code) { homeStation = draftHome; await saveHomeStation(); }
+      if (draftWork.code) { workStation = draftWork; await saveWorkStation(); }
+      overlay.remove();
+    });
+    document.getElementById('hw-close').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  document.body.appendChild(overlay);
+  render();
+  if (!stationIndexCache){
+    loadStationIndex(false).then(() => { if (overlay.isConnected) render(); }).catch(() => { if (overlay.isConnected) render(); });
   }
 }
 
