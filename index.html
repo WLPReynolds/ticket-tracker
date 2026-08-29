@@ -1204,7 +1204,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-29.18:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-29.20:11'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5455,7 +5455,17 @@ async function checkEmergencyRoute(route){
     // other place in this response to read the destination's arrival
     // time from.
 
-    const arrivalDate = arrivalStr ? nextDateForTime(arrivalStr, bestDate) : null;
+    let arrivalDate = arrivalStr ? nextDateForTime(arrivalStr, bestDate) : null;
+    // Direct sanity check, independent of exactly which field-reading
+    // issue might cause it: an arrival can never be before its own
+    // departure. This has now been hit via three different underlying
+    // causes (a wrong fallback field, Darwin's own "On time" text, and
+    // findCallingPointRaw matching an earlier occurrence of the same
+    // station code) — rather than trust the next explanation to be the
+    // last one, treat an impossible result the same as "couldn't
+    // determine arrival" and stop the chain there instead of silently
+    // showing a nonsense time.
+    if (arrivalDate && arrivalDate.getTime() < bestDate.getTime()) arrivalDate = null;
     legResults.push({
       from: leg.from, fromName: leg.fromName, to: leg.to, toName: leg.toName,
       error: null,
@@ -5464,7 +5474,7 @@ async function checkEmergencyRoute(route){
         std: best.std,
         etd: best.etd || null,
         platform: best.platform || null,
-        arrivalStr,
+        arrivalStr: arrivalDate ? arrivalStr : null,
         // A plain timestamp (not the Date itself) so the result stays
         // simple to reason about — used by the Emergency tab to sort a
         // completed route by how soon it actually gets Wayne home/to
@@ -5475,7 +5485,7 @@ async function checkEmergencyRoute(route){
         // fine" — both leave arrivalStr null-ish downstream today, but
         // this lets the UI say which actually happened rather than
         // just silently dropping the "due" text either way.
-        arrivalLookupFailed: detailsFailed,
+        arrivalLookupFailed: detailsFailed || !arrivalDate,
       },
       board: null,
     });
@@ -5581,7 +5591,17 @@ function nextDateForTime(timeStr, cursor){
 // preference order used everywhere else in the app.
 function findCallingPointRaw(service, crs){
   if (!service || !crs) return null;
-  const lists = [service.previousCallingPoints, service.subsequentCallingPoints];
+  // subsequentCallingPoints first, deliberately — Emergency Routes
+  // always wants "when does this service reach `to` AFTER I get on at
+  // `from`", never a station this same physical service happened to
+  // call at earlier in its journey (before the leg's own departure).
+  // Checking previousCallingPoints first could silently return that
+  // earlier occurrence's time whenever a service's route revisits the
+  // same station code, or approaches the departure station from a
+  // direction that passes near it beforehand — producing an impossible
+  // "arrives before it departs" result for this leg while still looking
+  // like a normal resolved time.
+  const lists = [service.subsequentCallingPoints, service.previousCallingPoints];
   for (const list of lists){
     const points = (list && list[0] && list[0].callingPoint) ? list[0].callingPoint : [];
     const found = points.find(cp => cp.crs === crs);
