@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-30.07:53'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-30.08:14'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6701,25 +6701,28 @@ function openLiveScreen(initialSubTab){
     const addBtn = result.status === 'complete'
       ? `<div class="settings-link" data-add-route-idx="${ri}" style="margin-top:4px;">Add to Tracked</div>`
       : '';
-    // Overall-journey banner: first leg's origin to the AUTHORED final
-    // leg's destination (from alternativeRoutes, not result.legs — a
-    // partial result's legs array stops wherever the chain died, which
-    // isn't the route's real intended end-to-end journey). A quick "so
-    // what does this card actually get me" line above the route's own
-    // label, since the label itself ("Via Liverpool") doesn't say that.
-    const authoredRoute = alternativeRoutes.find(r => r.id === result.id);
-    const overallBannerHtml = (authoredRoute && authoredRoute.legs.length)
-      ? `<div style="font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; opacity:0.7; margin-bottom:4px;">${escapeHtml(authoredRoute.legs[0].fromName || authoredRoute.legs[0].from)} to ${escapeHtml(authoredRoute.legs[authoredRoute.legs.length - 1].toName || authoredRoute.legs[authoredRoute.legs.length - 1].to)}</div>`
-      : '';
+    // The overall-journey banner now lives once per GROUP (see
+    // groupHeadingHtml below), not per card — routes sharing the same
+    // origin/destination town are clustered together, so repeating it
+    // on every card in that cluster would just be noise.
     return `
       <div class="rail-detail-row" style="display:block; padding:12px; margin-bottom:10px;">
-        ${overallBannerHtml}
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
           <strong>${escapeHtml(result.label || 'Untitled route')}</strong>
           ${statusBadge}
         </div>
         ${legsHtml}
         ${addBtn}
+      </div>`;
+  }
+
+  // Same background treatment as .holiday-card (the "working days until
+  // your next holiday" card on Home) — reused here so a group heading
+  // reads as a distinct visual band, not just another line of text.
+  function groupHeadingHtml(originName, destName){
+    return `
+      <div style="margin:0 0 10px; background:linear-gradient(135deg, #2a3b4a, #1c2a35); border:1px solid #3a5468; border-radius:14px; padding:10px 14px; font-size:12.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">
+        ${escapeHtml(originName)} to ${escapeHtml(destName)}
       </div>`;
   }
 
@@ -6820,48 +6823,79 @@ function openLiveScreen(initialSubTab){
     }
   }
 
+  // Reduces a station name to "the town it's in" for grouping purposes
+  // — just the first word, lowercased. Crewe has one station so this is
+  // just "crewe"; Wigan has two (Wallgate and North Western) that both
+  // reduce to "wigan", which is exactly the point: Wayne's routes fan
+  // out from/into different physical Wigan stations that all mean the
+  // same thing for grouping ("this gets me to/from Wigan").
+  // KNOWN LIMITATION: this would also merge, say, "Manchester Victoria"
+  // and "Manchester Piccadilly" if either were ever used as a route's
+  // actual start/end point (rather than just an intermediate leg, which
+  // is all they are in Wayne's current routes) — there's no station
+  // locality/grouping data available to do this more precisely, only
+  // name and coordinates.
+  function areaKeyFor(name){
+    const n = (name || '').trim();
+    return n ? n.split(/\s+/)[0].toLowerCase() : '';
+  }
+
   // Works out whether a result's route currently matches "the direction
   // I'm travelling right now" — before 12:00, that's routes that end at
   // Work (the AM commute); from 12:00 on, routes that end at Home (the
   // PM commute). Matched on each route's AUTHORED final destination
   // (alternativeRoutes, not the possibly-truncated result.legs — a
   // partial result's legs array stops wherever the chain died, which
-  // isn't necessarily the route's real intended destination) rather
-  // than its first leg's origin, since Wayne's own routes fan out from
-  // different nearby stations (e.g. Wigan Wallgate vs. Wigan North
-  // Western) that all still mean "going home" — matching on where a
-  // route ENDS is robust to that in a way matching on where it STARTS
-  // isn't.
-  function isPrimaryDirection(result){
-    const route = alternativeRoutes.find(r => r.id === result.id);
+  // isn't necessarily the route's real intended destination), and on
+  // town (areaKeyFor) rather than exact station code — Wayne's own
+  // routes fan out from/into different nearby stations (e.g. Wigan
+  // Wallgate vs. Wigan North Western) that all still mean "going home"
+  // or "going to work".
+  function isPrimaryDirection(route){
     if (!route || !route.legs.length) return false;
     const isPM = new Date().getHours() >= 12;
-    const targetCode = isPM ? homeStation.code : workStation.code;
-    return route.legs[route.legs.length - 1].to === targetCode;
+    const targetStation = isPM ? homeStation : workStation;
+    const lastLeg = route.legs[route.legs.length - 1];
+    return areaKeyFor(lastLeg.toName || lastLeg.to) === areaKeyFor(targetStation.name);
   }
 
-  // Sorted, not just grouped: primary-direction routes first, then
-  // within each group a complete plan sorts by how soon it actually
-  // arrives (earliest first), with any partial/dead route pushed to the
-  // bottom of its group regardless — a dead route has no real arrival
-  // time to sort by, and a "soonest" position would be misleading for
-  // something that doesn't get you all the way there.
-  function sortedEmergencyResults(){
+  // Groups routes that share the same overall journey (same start town,
+  // same end town) under one heading, then sorts groups — matching-
+  // direction groups first, then by how soon the soonest full plan in
+  // that group actually arrives — and sorts routes within a group the
+  // same way, with any partial/dead route pushed to the bottom since it
+  // has no real arrival time to sort by.
+  function groupedEmergencyResults(){
     if (!emergencyResults) return [];
-    const withMeta = emergencyResults.map((result, originalIndex) => {
-      const lastLeg = result.legs[result.legs.length - 1];
-      const arrivalTimestamp = (result.status === 'complete' && lastLeg && lastLeg.candidate)
-        ? lastLeg.candidate.arrivalTimestamp
+    const groups = new Map();
+    emergencyResults.forEach((result, originalIndex) => {
+      const route = alternativeRoutes.find(r => r.id === result.id);
+      if (!route || !route.legs.length) return;
+      const firstLeg = route.legs[0];
+      const lastLeg = route.legs[route.legs.length - 1];
+      const originName = firstLeg.fromName || firstLeg.from;
+      const destName = lastLeg.toName || lastLeg.to;
+      const key = `${areaKeyFor(originName)}|${areaKeyFor(destName)}`;
+      const lastResultLeg = result.legs[result.legs.length - 1];
+      const arrivalTimestamp = (result.status === 'complete' && lastResultLeg && lastResultLeg.candidate)
+        ? lastResultLeg.candidate.arrivalTimestamp
         : null;
-      return { result, originalIndex, primary: isPrimaryDirection(result), arrivalTimestamp };
+      if (!groups.has(key)){
+        groups.set(key, { originName, destName, primary: isPrimaryDirection(route), members: [] });
+      }
+      groups.get(key).members.push({ result, originalIndex, arrivalTimestamp });
     });
-    withMeta.sort((a, b) => {
+
+    const groupList = Array.from(groups.values());
+    groupList.forEach(g => {
+      g.members.sort((a, b) => (a.arrivalTimestamp ?? Infinity) - (b.arrivalTimestamp ?? Infinity));
+      g.bestArrival = g.members.length ? (g.members[0].arrivalTimestamp ?? Infinity) : Infinity;
+    });
+    groupList.sort((a, b) => {
       if (a.primary !== b.primary) return a.primary ? -1 : 1;
-      const aKey = a.arrivalTimestamp ?? Infinity;
-      const bKey = b.arrivalTimestamp ?? Infinity;
-      return aKey - bKey;
+      return a.bestArrival - b.bestArrival;
     });
-    return withMeta;
+    return groupList;
   }
 
   async function runEmergencyCheck(){
@@ -6886,8 +6920,11 @@ function openLiveScreen(initialSubTab){
       bodyEl.innerHTML = `<div class="sub" id="emergency-status">Checking ${alternativeRoutes.length} route${alternativeRoutes.length === 1 ? '' : 's'}…</div>`;
       return;
     }
-    const ordered = sortedEmergencyResults();
-    const resultsHtml = ordered.map(({ result, originalIndex }) => routeCardHtml(result, originalIndex)).join('');
+    const groups = groupedEmergencyResults();
+    const resultsHtml = groups.map(g => {
+      const cardsHtml = g.members.map(({ result, originalIndex }) => routeCardHtml(result, originalIndex)).join('');
+      return `<div style="margin-bottom:16px;">${groupHeadingHtml(g.originName, g.destName)}${cardsHtml}</div>`;
+    }).join('');
     bodyEl.innerHTML = `
       <button class="save-btn" id="emergency-recheck-btn" style="margin-bottom:14px;">${emergencyResults ? 'Recheck' : 'Check now'}</button>
       <div id="emergency-results">${resultsHtml}</div>
