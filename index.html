@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-30.08:14'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-30.08:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6840,6 +6840,19 @@ function openLiveScreen(initialSubTab){
     return n ? n.split(/\s+/)[0].toLowerCase() : '';
   }
 
+  // The same "first word" reduction as areaKeyFor, but keeping the
+  // source station name's own casing — used for the group heading text.
+  // Deliberately NOT any one member route's full station name: a group
+  // can legitimately contain routes ending at different physical
+  // stations in the same town (e.g. Wigan Wallgate and Wigan North
+  // Western both group under "Wigan"), so showing one route's full name
+  // on the heading would misrepresent the routes that end at the OTHER
+  // station in that same group.
+  function areaDisplayName(name){
+    const n = (name || '').trim();
+    return n ? n.split(/\s+/)[0] : name;
+  }
+
   // Works out whether a result's route currently matches "the direction
   // I'm travelling right now" — before 12:00, that's routes that end at
   // Work (the AM commute); from 12:00 on, routes that end at Home (the
@@ -6881,7 +6894,7 @@ function openLiveScreen(initialSubTab){
         ? lastResultLeg.candidate.arrivalTimestamp
         : null;
       if (!groups.has(key)){
-        groups.set(key, { originName, destName, primary: isPrimaryDirection(route), members: [] });
+        groups.set(key, { originName: areaDisplayName(originName), destName: areaDisplayName(destName), primary: isPrimaryDirection(route), members: [] });
       }
       groups.get(key).members.push({ result, originalIndex, arrivalTimestamp });
     });
