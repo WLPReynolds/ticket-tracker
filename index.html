@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-30.08:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-30.08:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5460,6 +5460,14 @@ async function checkEmergencyRoute(route){
   const MAX_LEG_LOOKAHEAD_MS = 3 * 60 * 60 * 1000;
 
   for (const leg of route.legs){
+    // There's nothing to chain FROM the final leg, so — unlike every
+    // earlier leg — a failed arrival-time lookup here doesn't need to
+    // kill the route. This matters much more now that a route can be a
+    // single leg (the synthetic direct-service check): without this,
+    // a real, catchable, on-schedule departure would still show as
+    // "Partial" just because GetServiceDetails hiccuped, defeating much
+    // of the point of surfacing it.
+    const isFinalLeg = leg === route.legs[route.legs.length - 1];
     let board;
     try{
       board = await fetchDebugBoard(leg.from, leg.to);
@@ -5556,7 +5564,7 @@ async function checkEmergencyRoute(route){
       board: null,
     });
 
-    if (!arrivalDate){
+    if (!arrivalDate && !isFinalLeg){
       // Found a real, running service, but couldn't work out when it
       // arrives at `to` — nothing safe to chain onward from, so this
       // still counts as a dead end for the remaining legs even though
@@ -5564,12 +5572,14 @@ async function checkEmergencyRoute(route){
       status = 'partial';
       break;
     }
-    // 5-minute minimum interchange buffer before searching the next leg
-    // — was 10, reduced after a real near-miss: a genuinely catchable
-    // Liverpool Lime Street connection (9 minutes after the previous
-    // leg's arrival) was being excluded by the old, more conservative
-    // figure.
-    cursor = new Date(arrivalDate.getTime() + 5 * 60 * 1000);
+    if (arrivalDate){
+      // 5-minute minimum interchange buffer before searching the next
+      // leg — was 10, reduced after a real near-miss: a genuinely
+      // catchable Liverpool Lime Street connection (9 minutes after the
+      // previous leg's arrival) was being excluded by the old, more
+      // conservative figure.
+      cursor = new Date(arrivalDate.getTime() + 5 * 60 * 1000);
+    }
   }
 
   return { id: route.id, label: route.label, legs: legResults, status };
@@ -6343,6 +6353,11 @@ function openLiveScreen(initialSubTab){
   // reopen of this screen, never persisted.
   let emergencyResults = null;
   let emergencyChecking = false;
+  // The exact route list actually checked (alternativeRoutes plus the
+  // synthetic direct-service route built fresh each check) — grouping
+  // and direction logic look routes up here, not in alternativeRoutes
+  // directly, since the direct-service route was never authored/saved.
+  let emergencyRoutesChecked = null;
 
   function styleTabs(){
     tabYoursBtn.style.background = activeSubTab === 'yours' ? 'var(--amber)' : 'var(--tile)';
@@ -6880,9 +6895,10 @@ function openLiveScreen(initialSubTab){
   // has no real arrival time to sort by.
   function groupedEmergencyResults(){
     if (!emergencyResults) return [];
+    const routesChecked = emergencyRoutesChecked || alternativeRoutes;
     const groups = new Map();
     emergencyResults.forEach((result, originalIndex) => {
-      const route = alternativeRoutes.find(r => r.id === result.id);
+      const route = routesChecked.find(r => r.id === result.id);
       if (!route || !route.legs.length) return;
       const firstLeg = route.legs[0];
       const lastLeg = route.legs[route.legs.length - 1];
@@ -6911,28 +6927,53 @@ function openLiveScreen(initialSubTab){
     return groupList;
   }
 
+  // A same-check, no-authoring-required safety net: disruption recovery
+  // sometimes introduces or reinstates a direct service between Home
+  // and Work that wouldn't normally run, and it's easy to be so focused
+  // on authored alternative routes that a simple direct one gets missed
+  // entirely. Built fresh every check (direction depends on the time of
+  // day), never saved to alternativeRoutes — it's not something Wayne
+  // authors or manages, just always checked alongside whatever he has.
+  function buildDirectServiceRoute(){
+    const isPM = new Date().getHours() >= 12;
+    const from = isPM ? workStation : homeStation;
+    const to = isPM ? homeStation : workStation;
+    return {
+      id: '__direct_service__',
+      label: 'Direct service',
+      legs: [{ from: from.code, fromName: from.name, to: to.code, toName: to.name }]
+    };
+  }
+
   async function runEmergencyCheck(){
     if (emergencyChecking) return;
     emergencyChecking = true;
     renderEmergencyTab();
     try{
-      emergencyResults = await checkAllEmergencyRoutes(alternativeRoutes);
+      const routesToCheck = [...alternativeRoutes, buildDirectServiceRoute()];
+      emergencyRoutesChecked = routesToCheck;
+      emergencyResults = await checkAllEmergencyRoutes(routesToCheck);
     }catch(e){
       emergencyResults = [];
+      emergencyRoutesChecked = [];
     }
     emergencyChecking = false;
     if (activeSubTab === 'emergency' && overlay.isConnected) renderEmergencyTab();
   }
 
   function renderEmergencyTab(){
-    if (!alternativeRoutes.length){
-      bodyEl.innerHTML = `<div class="sub">No emergency routes configured yet. Add some in Settings → Emergency routes, while things are calm.</div>`;
-      return;
-    }
     if (emergencyChecking){
-      bodyEl.innerHTML = `<div class="sub" id="emergency-status">Checking ${alternativeRoutes.length} route${alternativeRoutes.length === 1 ? '' : 's'}…</div>`;
+      const totalToCheck = alternativeRoutes.length + 1;
+      bodyEl.innerHTML = `<div class="sub" id="emergency-status">Checking ${totalToCheck} route${totalToCheck === 1 ? '' : 's'}…</div>`;
       return;
     }
+    // The direct-service check is always available (Home/Work stations
+    // have sensible defaults), so there's no "nothing configured" state
+    // that blocks the whole tab any more — just a gentle nudge when
+    // there are no authored fallback routes to fall back on beyond it.
+    const noRoutesNote = alternativeRoutes.length
+      ? ''
+      : `<div class="sub" style="margin-bottom:12px;">No fallback routes configured yet — showing the direct service only. Add some in Settings → Emergency routes for more coverage.</div>`;
     const groups = groupedEmergencyResults();
     const resultsHtml = groups.map(g => {
       const cardsHtml = g.members.map(({ result, originalIndex }) => routeCardHtml(result, originalIndex)).join('');
@@ -6940,6 +6981,7 @@ function openLiveScreen(initialSubTab){
     }).join('');
     bodyEl.innerHTML = `
       <button class="save-btn" id="emergency-recheck-btn" style="margin-bottom:14px;">${emergencyResults ? 'Recheck' : 'Check now'}</button>
+      ${noRoutesNote}
       <div id="emergency-results">${resultsHtml}</div>
     `;
     document.getElementById('emergency-recheck-btn').addEventListener('click', runEmergencyCheck);
