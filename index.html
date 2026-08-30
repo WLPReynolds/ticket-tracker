@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-30.09:26'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-30.09:33'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6967,15 +6967,17 @@ function openLiveScreen(initialSubTab){
   // entirely. Built fresh every check (direction depends on the time of
   // day), never saved to alternativeRoutes — it's not something Wayne
   // authors or manages, just always checked alongside whatever he has.
-  function buildDirectServiceRoute(){
-    const isPM = new Date().getHours() >= 12;
-    const from = isPM ? workStation : homeStation;
-    const to = isPM ? homeStation : workStation;
-    return {
-      id: '__direct_service__',
-      label: 'Direct service',
-      legs: [{ from: from.code, fromName: from.name, to: to.code, toName: to.name }]
-    };
+  function buildDirectServiceRoutes(){
+    // Both directions, always — not just whichever matches the current
+    // time of day. Wayne asked for Home→Work "and vice versa" both to
+    // be checked; only building the current-direction one silently
+    // dropped the other direction entirely (it was never even attempted,
+    // not a display bug — the "Checking N routes" count only ever
+    // included +1 for this, never +2).
+    return [
+      { id: '__direct_service_home_to_work__', label: 'Direct service', legs: [{ from: homeStation.code, fromName: homeStation.name, to: workStation.code, toName: workStation.name }] },
+      { id: '__direct_service_work_to_home__', label: 'Direct service', legs: [{ from: workStation.code, fromName: workStation.name, to: homeStation.code, toName: homeStation.name }] },
+    ];
   }
 
   async function runEmergencyCheck(){
@@ -6983,7 +6985,7 @@ function openLiveScreen(initialSubTab){
     emergencyChecking = true;
     renderEmergencyTab();
     try{
-      const routesToCheck = [...alternativeRoutes, buildDirectServiceRoute()];
+      const routesToCheck = [...alternativeRoutes, ...buildDirectServiceRoutes()];
       emergencyRoutesChecked = routesToCheck;
       emergencyResults = await checkAllEmergencyRoutes(routesToCheck);
     }catch(e){
@@ -6996,7 +6998,7 @@ function openLiveScreen(initialSubTab){
 
   function renderEmergencyTab(){
     if (emergencyChecking){
-      const totalToCheck = alternativeRoutes.length + 1;
+      const totalToCheck = alternativeRoutes.length + 2;
       bodyEl.innerHTML = `<div class="sub" id="emergency-status">Checking ${totalToCheck} route${totalToCheck === 1 ? '' : 's'}…</div>`;
       return;
     }
