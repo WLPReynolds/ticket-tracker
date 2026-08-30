@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-08-30.08:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-08-30.09:26'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5594,7 +5594,20 @@ async function checkAllEmergencyRoutes(routes){
   // subrequest budget for no real speed benefit on an on-demand,
   // manually-triggered check.
   for (const route of routes){
-    results.push(await checkEmergencyRoute(route));
+    // checkEmergencyRoute already catches every failure mode it
+    // anticipates (board fetch, service details, no candidate) and
+    // returns a partial result instead of throwing — but if something
+    // truly unexpected slipped through anyway, letting it escape here
+    // would abort this whole for-loop, silently dropping every route
+    // not yet checked (this loop's own routes AND, seen from the
+    // caller, wiping emergencyResults back to [] entirely via the
+    // outer catch). One route unexpectedly failing should mean one
+    // route missing, never all of them.
+    try{
+      results.push(await checkEmergencyRoute(route));
+    }catch(e){
+      results.push({ id: route.id, label: route.label, legs: [{ from: route.legs[0] && route.legs[0].from, fromName: route.legs[0] && route.legs[0].fromName, to: route.legs[0] && route.legs[0].to, toName: route.legs[0] && route.legs[0].toName, error: e.message || 'unexpected error', candidate: null, board: [] }], status: 'partial' });
+    }
   }
   return results;
 }
@@ -6898,31 +6911,51 @@ function openLiveScreen(initialSubTab){
     const routesChecked = emergencyRoutesChecked || alternativeRoutes;
     const groups = new Map();
     emergencyResults.forEach((result, originalIndex) => {
-      const route = routesChecked.find(r => r.id === result.id);
-      if (!route || !route.legs.length) return;
-      const firstLeg = route.legs[0];
-      const lastLeg = route.legs[route.legs.length - 1];
-      const originName = firstLeg.fromName || firstLeg.from;
-      const destName = lastLeg.toName || lastLeg.to;
-      const key = `${areaKeyFor(originName)}|${areaKeyFor(destName)}`;
-      const lastResultLeg = result.legs[result.legs.length - 1];
-      const arrivalTimestamp = (result.status === 'complete' && lastResultLeg && lastResultLeg.candidate)
-        ? lastResultLeg.candidate.arrivalTimestamp
-        : null;
-      if (!groups.has(key)){
-        groups.set(key, { originName: areaDisplayName(originName), destName: areaDisplayName(destName), primary: isPrimaryDirection(route), members: [] });
-      }
-      groups.get(key).members.push({ result, originalIndex, arrivalTimestamp });
+      // Isolated per result: a .forEach() callback that throws aborts
+      // every remaining iteration silently, with nothing shown on
+      // screen to say so — one malformed or unexpected result could
+      // wipe out every route checked after it in the list without any
+      // visible error. Catching per-item means the worst case is one
+      // route missing, not everything from that point on.
+      try{
+        const route = routesChecked.find(r => r.id === result.id);
+        if (!route || !route.legs.length) return;
+        const firstLeg = route.legs[0];
+        const lastLeg = route.legs[route.legs.length - 1];
+        const originName = firstLeg.fromName || firstLeg.from;
+        const destName = lastLeg.toName || lastLeg.to;
+        const key = `${areaKeyFor(originName)}|${areaKeyFor(destName)}`;
+        const lastResultLeg = result.legs[result.legs.length - 1];
+        const arrivalTimestamp = (result.status === 'complete' && lastResultLeg && lastResultLeg.candidate)
+          ? lastResultLeg.candidate.arrivalTimestamp
+          : null;
+        if (!groups.has(key)){
+          groups.set(key, { originName: areaDisplayName(originName), destName: areaDisplayName(destName), primary: isPrimaryDirection(route), members: [] });
+        }
+        groups.get(key).members.push({ result, originalIndex, arrivalTimestamp });
+      }catch(e){ /* one bad result shouldn't take the rest down with it */ }
     });
 
     const groupList = Array.from(groups.values());
+    // Infinity - Infinity is NaN, not 0 — when every member of a group
+    // is partial/dead (no real arrival time), the old subtraction-based
+    // comparator could return NaN for a tied comparison. Sort behaviour
+    // with a NaN-returning comparator isn't guaranteed consistent by
+    // spec, so this compares explicitly instead of relying on arithmetic
+    // that can produce NaN.
+    function byArrival(a, b){
+      const aVal = a.arrivalTimestamp ?? Infinity;
+      const bVal = b.arrivalTimestamp ?? Infinity;
+      if (aVal === bVal) return 0;
+      return aVal - bVal;
+    }
     groupList.forEach(g => {
-      g.members.sort((a, b) => (a.arrivalTimestamp ?? Infinity) - (b.arrivalTimestamp ?? Infinity));
+      g.members.sort(byArrival);
       g.bestArrival = g.members.length ? (g.members[0].arrivalTimestamp ?? Infinity) : Infinity;
     });
     groupList.sort((a, b) => {
       if (a.primary !== b.primary) return a.primary ? -1 : 1;
-      return a.bestArrival - b.bestArrival;
+      return byArrival(a, b);
     });
     return groupList;
   }
