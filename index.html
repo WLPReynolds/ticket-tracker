@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-01.12:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-01.13:33'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1523,6 +1523,166 @@ const STATION_COORDS = {
   CRE: { lat: 53.0896, lon: -2.4333, name: 'Crewe' },
   WGN: { lat: 53.5433, lon: -2.6326, name: 'Wigan North Western' },
 };
+
+// ---------------------------------------------------------------------
+// Avanti planned carriage formation
+// ---------------------------------------------------------------------
+// Avanti doesn't populate Darwin's formation.coaches[] for live services,
+// so buildFormationHtml() (below) never has anything to show for them.
+// This section fills that gap using Avanti's own periodically-published
+// "Train Plan" file (sourced from RDM as a File-type product, not an
+// API — see avanti-planned-formation-spec.md in Project knowledge).
+//
+// This is PLANNED data — Avanti's own pre-published intent for the
+// timetable period — not a live confirmation. It can be wrong on the
+// day (short-formation, unit failure, diagram change).
+
+// Points to the currently-bundled formation plan JSON and the timetable
+// period it covers. Update both when a new file is sourced at each
+// industry timetable change (May / December) — see spec for the refresh
+// workflow. validFrom drives the soft staleness check further down.
+const CURRENT_FORMATION_PLAN = {
+  url: './formation-plan-may-2026-tt.json',
+  timetable: 'May 2026 TT',
+  validFrom: '2026-05-17',
+};
+
+// Fixed coach lettering by unit class/variant/coupling. This is NOT
+// derivable from the Train Plan xlsx (which has no per-coach detail) —
+// it's fixed to the physical unit design and sourced from Avanti's own
+// "Get to know our Evero trains" material and published Pendolino
+// formation references (cross-checked against RAIL magazine's 805/807
+// launch coverage and RailUK Forums quoting the same Avanti PDF).
+// Deliberately non-sequential in places — Avanti keeps First Class
+// landing in the same lettered position (H/J, or J/K) across fleets.
+// Only needs updating if Avanti physically re-letters a fleet — not
+// tied to the twice-yearly timetable refresh above.
+const FORMATION_LETTERING = {
+  '390/0': { coupled: false, letters: ['A','B','C','D','E','F','H','J','K'] },
+  '390/1': { coupled: false, letters: ['A','B','C','D','E','F','U','G','H','J','K'] },
+  '805/0': { coupled: false, letters: ['A','B','C','D','J'] },
+  '805/0+805/0': { coupled: true, letters: ['A','B','C','D','J','L','M','N','P','K'] },
+  '807/0': { coupled: false, letters: ['A','B','C','D','E','H','J'] },
+};
+
+let plannedFormationData = null; // cached after first fetch
+let plannedFormationFetchPromise = null;
+
+async function loadPlannedFormationData(){
+  if (plannedFormationData) return plannedFormationData;
+  if (plannedFormationFetchPromise) return plannedFormationFetchPromise;
+  plannedFormationFetchPromise = fetch(CURRENT_FORMATION_PLAN.url)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => { plannedFormationData = data; return data; })
+    .catch(() => null);
+  return plannedFormationFetchPromise;
+}
+
+// Weekday/Saturday/Sunday, matching the getDay() convention used
+// elsewhere in the app (0 Sun .. 6 Sat).
+function dayTypeForDate(date){
+  const wd = date.getDay();
+  if (wd === 0) return 'sunday';
+  if (wd === 6) return 'saturday';
+  return 'weekday';
+}
+
+// Darwin doesn't expose the Train Plan's timetable headcode (e.g.
+// "1A10EU") anywhere in GetServiceDetails — only its own internal
+// serviceID, which isn't portable to this file at all. So matching
+// goes on scheduled origin departure time + true origin station name
+// instead, both of which the xlsx also carries per row. originName
+// and stdTime should come from the service's true origin (points[0]),
+// not from the "here" station's schedule time.
+function findPlannedFormationEntry(data, dayType, originName, stdTime){
+  if (!data || !data.dayTypes || !data.dayTypes[dayType] || !originName || !stdTime) return null;
+  const norm = s => String(s || '').trim().toLowerCase();
+  const wantOrigin = norm(originName);
+  const rows = Object.values(data.dayTypes[dayType]);
+  for (const arr of rows){
+    for (const entry of arr){
+      if (entry.std === stdTime && norm(entry.origin) === wantOrigin) return entry;
+    }
+  }
+  return null;
+}
+
+// Builds a lettering-table key from a formation variant's parsed unit
+// codes, e.g. two coupled 805/0 units -> "805/0+805/0".
+function letteringKeyForVariant(variant){
+  if (!variant || !Array.isArray(variant.units) || !variant.units.length) return null;
+  return variant.units
+    .map(u => (u && u.class !== undefined && u.variant !== undefined) ? `${u.class}/${u.variant}` : null)
+    .join('+');
+}
+
+// Returns an ordered array of coach letters for a planned-formation
+// entry, or null if there's no reference-table entry for this exact
+// unit combination — deliberately no vehicle-count-only fallback here.
+// Lettering is the whole point (knowing where to stand on the
+// platform), so an unlettered guess is worse than showing nothing.
+// Respects isReverseFormation by reversing the derived sequence — we
+// assigned these letters ourselves from a fixed table, unlike the live
+// coach-strip below which shows Darwin's own values verbatim and never
+// reorders them.
+function lettersForPlannedEntry(entry, isReverseFormation){
+  if (!entry) return null;
+  const variant = entry.declared || entry.booked; // prefer declared (closer to day-of)
+  if (!variant) return null;
+  const key = letteringKeyForVariant(variant);
+  const ref = key && FORMATION_LETTERING[key];
+  if (!ref || ref.letters.length !== variant.vehicles) return null;
+  const letters = ref.letters.slice();
+  return isReverseFormation ? letters.slice().reverse() : letters;
+}
+
+// Renders the same coach-box visual as buildFormationHtml, tagged
+// "planned" since this is Avanti's pre-published intent, not a live
+// confirmation. Only ever called when the live coach-strip has nothing
+// to show (see buildTrainProgress) and only ever shows anything when
+// the lettering table actually covers this service's unit combination.
+function buildPlannedFormationHtml(letters){
+  if (!letters || !letters.length) return '';
+  const boxes = letters.map((label, idx) => {
+    const isTaperedEnd = idx === letters.length - 1;
+    return `<div style="flex:0 0 auto; position:relative; width:36px; height:42px; margin-right:2px; background:var(--tile); border:1px solid var(--line); ${isTaperedEnd ? 'border-top-right-radius:18px; border-bottom-right-radius:18px;' : 'border-radius:4px;'} display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${escapeHtml(label)}</div>`;
+  }).join('');
+  return `
+    <div id="train-progress-planned-formation" style="margin-bottom:10px;">
+      <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${letters.length} coach${letters.length === 1 ? '' : 'es'} · <span style="color:var(--amber);">planned</span></div>
+      <div style="display:flex; overflow-x:auto; padding-bottom:2px;">${boxes}</div>
+    </div>`;
+}
+
+// One-shot detection: if Avanti ever starts populating live
+// formation.coaches[] for a service where we'd otherwise have shown the
+// planned lookup, that's worth surfacing — it may mean Avanti has
+// started sharing this properly (via API or otherwise) with no
+// announcement, at which point the static plan should probably be
+// switched off. Persisted so it only fires once, not on every load.
+function maybeFlagLiveAvantiFormationDetected(){
+  try {
+    if (localStorage.getItem('avantiLiveFormationDetected') === '1') return false;
+    localStorage.setItem('avantiLiveFormationDetected', '1');
+    return true;
+  } catch(e){ return false; }
+}
+
+// Soft staleness nudge — not an automatic disable. Avanti in practice
+// only republishes a genuinely different plan at the actual timetable
+// change, so this is a prompt to go check, not a hard cutoff.
+function isFormationPlanStale(){
+  const validFrom = new Date(CURRENT_FORMATION_PLAN.validFrom);
+  const sixMonthsOn = new Date(validFrom);
+  sixMonthsOn.setMonth(sixMonthsOn.getMonth() + 6);
+  return new Date() > sixMonthsOn;
+}
+
+// Fire-and-forget — cached in plannedFormationData once resolved. Kept
+// synchronous-friendly for buildTrainProgress by loading eagerly here
+// rather than on-demand; a first render or two may simply have nothing
+// to show for Avanti services until this resolves.
+loadPlannedFormationData();
 
 // Haversine formula — great-circle distance between two lat/lon points, in km.
 function distanceKm(lat1, lon1, lat2, lon2){
@@ -8468,8 +8628,28 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
   // between polls, not just staying alive for the rest of this session.
   saveConfirmedPointStatusCache();
 
-  const formationHtml = buildFormationHtml(service);
+  let formationHtml = buildFormationHtml(service);
   const formationDebugHtml = buildFormationDebugHtml(service, showRawDebug);
+
+  // Live formation.coaches[] always wins when present. If Avanti ever
+  // starts populating it (currently they never do), flag that once —
+  // it may mean live data has arrived unannounced and the static plan
+  // should be switched off — but still show the live strip as normal.
+  const isAvanti = !!(service.operator && /avanti/i.test(service.operator));
+  if (formationHtml && isAvanti){
+    maybeFlagLiveAvantiFormationDetected();
+  }
+
+  // Planned-formation fallback only ever fills the gap when there's no
+  // live data at all, and only for Avanti — other operators either
+  // share live formation already or aren't in the Train Plan file.
+  if (!formationHtml && isAvanti && plannedFormationData && points.length){
+    const originPoint = points[0];
+    const dayType = dayTypeForDate(new Date());
+    const entry = findPlannedFormationEntry(plannedFormationData, dayType, originPoint.locationName, originPoint.schedTime);
+    const letters = lettersForPlannedEntry(entry, !!service.isReverseFormation);
+    formationHtml = buildPlannedFormationHtml(letters);
+  }
 
   return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints, departsHere, firstPoint: points[0] || null, lastPoint: points[points.length - 1] || null, toLocIdx, formationHtml, formationDebugHtml };
 }
