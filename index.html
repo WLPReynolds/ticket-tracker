@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-01.13:33'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-01.20:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2041,7 +2041,7 @@ let dismissedLikelyTrainKeys = new Set(); // avoids re-suggesting the same match
 // session — but only ever needs writing once per direction per day,
 // since confirmedTrains itself blocks the underlying check from firing
 // again for that direction once it's set.
-let silentConfirmBanner = null; // { dateKey, direction, trainKey, label } | null
+let silentConfirmBanner = null; // { dateKey, direction, trainKey, label, source: 'phone'|'watch' } | null — source added 2026-09-01, temporary visibility aid, see renderSilentConfirmBanner
 
 async function loadData(){
   try{
@@ -2361,6 +2361,7 @@ async function saveGeofenceSettings(){
     localStorage.setItem('geofence-crewe-matches-wigan', JSON.stringify(geofenceCreweMatchesWigan));
     localStorage.setItem('geofence-wigan-matches-crewe', JSON.stringify(geofenceWiganMatchesCrewe));
   }catch(e){ /* save failed silently; will retry next change */ }
+  pushWatchConfig();
 }
 async function saveDayReturnPrice(){
   try{ localStorage.setItem('ticket-day-return-price', JSON.stringify(dayReturnPrice)); }
@@ -2429,6 +2430,79 @@ async function saveLastNotifiedBuyKey(){
 async function saveRailTrains(){
   try{ localStorage.setItem('rail-trains', JSON.stringify(railTrains)); }
   catch(e){ /* save failed silently; will retry next change */ }
+  pushWatchConfig();
+}
+
+// Pushes railTrains + both geofence radii to the Worker's WATCH_KV in
+// one shot, whenever either changes (called from saveRailTrains and
+// saveGeofenceSettings) — the watch reads the radii back via
+// GET /api/watch-config, and the same blob feeds station-ping matching
+// server-side. Fire-and-forget: if this fails (offline, Worker down),
+// nothing on the PWA's own side depends on it succeeding — the watch
+// just keeps using whatever it last fetched, and station-ping matching
+// simply won't have fresh data until the next successful push.
+// 2026-09-01 — see wearos-companion-session-2026-09-01.md.
+function pushWatchConfig(){
+  fetch(`${DARWIN_WORKER_URL}/api/watch-config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ railTrains, geofenceRadiusCrewe, geofenceRadiusWigan })
+  }).catch(()=>{});
+}
+
+// Fire-and-forget notice to the Worker that the PWA's own live check
+// (checkLikelyTrain/checkLikelyArrival) has just resolved a train,
+// purely so a station-ping arriving around the same moment doesn't
+// independently resolve the same thing again — first write wins
+// server-side (see darwin-live-worker.js's writeConfirmedIfAbsent).
+// Never blocks or affects the PWA's own confirmedTrains write, which
+// has already happened by the time this is called.
+function pushConfirmedTrain(dateKey, direction, trainKey, label){
+  fetch(`${DARWIN_WORKER_URL}/api/confirm-train`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: dateKey, direction, trainKey, label })
+  }).catch(()=>{});
+}
+
+// Checks the Worker for a train already confirmed via a watch
+// station-ping since this device last looked (e.g. overnight, or on
+// the walk in with the phone in a pocket) and applies it exactly as a
+// local silent confirm would — same confirmedTrains write, same
+// banner. Called once on startup, before the live-check loop begins,
+// so if the watch already settled today's direction, checkLikelyTrain/
+// checkLikelyArrival see confirmedTrains already set on their very
+// first guard check and never attempt (or push) their own resolution —
+// no race in the common case. Explicitly clears the Worker's copy once
+// applied (best-effort; a 36h TTL server-side is the backstop if that
+// clear never lands — see darwin-live-worker.js).
+async function checkPendingConfirmation(){
+  const todayKeyLocal = fmtKey(new Date());
+  let pending;
+  try{
+    const resp = await fetch(`${DARWIN_WORKER_URL}/api/pending-confirmation?date=${todayKeyLocal}`);
+    if (!resp.ok) return;
+    pending = await resp.json();
+  }catch(e){ return; } // offline or Worker unreachable — live checks remain the fallback, as always
+
+  for (const direction of ['AM','PM']){
+    const entry = pending && pending[direction];
+    if (!entry || !entry.trainKey) continue;
+    if (confirmedTrains[todayKeyLocal] && confirmedTrains[todayKeyLocal][direction] !== undefined) continue;
+
+    if (!confirmedTrains[todayKeyLocal]) confirmedTrains[todayKeyLocal] = {};
+    confirmedTrains[todayKeyLocal][direction] = entry.trainKey;
+    saveConfirmedTrains();
+    silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: entry.trainKey, label: entry.label, source: 'watch' };
+    saveSilentConfirmBanner();
+    renderSilentConfirmBanner();
+
+    fetch(`${DARWIN_WORKER_URL}/api/pending-confirmation/clear`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: todayKeyLocal, direction })
+    }).catch(()=>{});
+  }
 }
 async function saveRailPerfCache(){
   try{ localStorage.setItem('rail-perf-cache', JSON.stringify(railPerfCache)); }
@@ -5971,10 +6045,14 @@ async function checkLikelyTrain(){
       // A passive notice that this just happened — otherwise the silent
       // path lives up to its name a little too well, and the only way to
       // know it fired at all is to go check "Confirm train used" and
-      // look for yourself.
-      silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: closest.key, label: closest.label };
+      // look for yourself. source:'phone' vs 'watch' (see
+      // checkPendingConfirmation) is a temporary visibility aid while
+      // the watch-detection path is being shaken out — fine to drop
+      // once it's proven reliable.
+      silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: closest.key, label: closest.label, source: 'phone' };
       saveSilentConfirmBanner();
       renderSilentConfirmBanner();
+      pushConfirmedTrain(todayKeyLocal, direction, closest.key, closest.label);
       render();
     }
   }
@@ -6105,9 +6183,10 @@ async function checkLikelyArrival(){
       if (!confirmedTrains[todayKeyLocal]) confirmedTrains[todayKeyLocal] = {};
       confirmedTrains[todayKeyLocal][direction] = matchedTrain.key;
       saveConfirmedTrains();
-      silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: matchedTrain.key, label: matchedTrain.label };
+      silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: matchedTrain.key, label: matchedTrain.label, source: 'phone' };
       saveSilentConfirmBanner();
       renderSilentConfirmBanner();
+      pushConfirmedTrain(todayKeyLocal, direction, matchedTrain.key, matchedTrain.label);
       render();
     }
   }
@@ -11568,7 +11647,13 @@ function renderSilentConfirmBanner(){
   const textEl = document.getElementById('silent-confirm-banner-text');
   if (!el || !textEl) return;
   if (silentConfirmBanner){
-    textEl.textContent = `Confirmed: your usual ${silentConfirmBanner.label}`;
+    // source suffix is a temporary visibility aid while the watch
+    // detection path is being tested in the field — easy single-line
+    // removal (see silentConfirmBanner's own doc comment) once it's
+    // proven reliable and this stops being interesting to see.
+    const sourceSuffix = silentConfirmBanner.source === 'watch' ? ' (via watch)'
+      : silentConfirmBanner.source === 'phone' ? ' (via phone)' : '';
+    textEl.textContent = `Confirmed: your usual ${silentConfirmBanner.label}${sourceSuffix}`;
     el.style.display = 'flex';
   } else {
     el.style.display = 'none';
@@ -11735,6 +11820,14 @@ function spawnFireworkBurst(container, colors){
   runSeasonalEasterEgg();
   mountSilentConfirmBanner();
 
+  // Pick up anything the watch already resolved via a station-ping
+  // (overnight, or on the walk in with the phone away) BEFORE the live
+  // checks start — so if today's direction is already settled,
+  // checkLikelyTrain/checkLikelyArrival see confirmedTrains already set
+  // on their first guard check and never attempt their own resolution.
+  // 2026-09-01 — see wearos-companion-session-2026-09-01.md.
+  await checkPendingConfirmation();
+
   // Check for bank holidays after the initial render so startup isn't
   // delayed by a network call. Re-render only if new dates were filled in.
   syncBankHolidays().then((changed) => { if (changed) render(); });
@@ -11751,7 +11844,9 @@ function spawnFireworkBurst(container, colors){
       attemptDriveBackup();
       stopLikelyTrainChecks(); // no point polling while backgrounded — nothing can act on it anyway
     } else {
-      startLikelyTrainChecks();
+      // Same ordering as startup — the watch may have resolved
+      // something while the phone was locked/backgrounded.
+      checkPendingConfirmation().finally(startLikelyTrainChecks);
     }
   });
   startLikelyTrainChecks();
