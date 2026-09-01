@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-01.21:17'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-01.22:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -10924,14 +10924,25 @@ function openPerformanceStatsView(){
   }
   const amByWeekday = amTrains.length ? weekdayAverages(amTrains) : [];
   const pmByWeekday = pmTrains.length ? weekdayAverages(pmTrains) : [];
+  // Overall ranking combines both directions' trains into one set before
+  // averaging per weekday — same weekdayAverages function, just fed a
+  // wider train list, so a weekday's "overall" figure blends its morning
+  // and evening performance rather than picking whichever direction ran
+  // worse.
+  const allTrains = amTrains.concat(pmTrains);
+  const overallByWeekday = allTrains.length ? weekdayAverages(allTrains) : [];
   function weekdayRowsHtml(rows){
     if (rows.length === 0) return `<div class="sub" style="margin:0;">Not enough data yet.</div>`;
     const maxAvg = Math.max(...rows.map(r => r.avg), 0.1); // guard against div-by-zero when every average is 0
     return rows.map(r => {
-      const detailRows = r.trains.map(t => {
-        const a = trainAverageForWeekday(t, r.wd);
-        return `<div class="perf-stats-weekday-detail-row"><span class="train-label">${escapeHtml(t.label)}</span><span>${a === null ? '—' : `${a.toFixed(1)}m`}</span></div>`;
-      }).join('');
+      // Worst-first within the expanded detail — same ordering as the
+      // parent weekday rows. No-data trains (null average) sort to the
+      // bottom rather than breaking the comparator.
+      const detailRows = r.trains
+        .map(t => ({ t, a: trainAverageForWeekday(t, r.wd) }))
+        .sort((x, y) => (y.a === null ? -Infinity : y.a) - (x.a === null ? -Infinity : x.a))
+        .map(({ t, a }) => `<div class="perf-stats-weekday-detail-row"><span class="train-label">${escapeHtml(t.label)}</span><span>${a === null ? '—' : `${a.toFixed(1)}m`}</span></div>`)
+        .join('');
       return `
         <div class="perf-stats-weekday-row">
           <div class="perf-stats-weekday-name">${r.day}</div>
@@ -10960,6 +10971,10 @@ function openPerformanceStatsView(){
         <div class="perf-stats-section">
           <h4>Worst days — evening</h4>
           ${weekdayRowsHtml(pmByWeekday)}
+        </div>
+        <div class="perf-stats-section">
+          <h4>Worst days — overall</h4>
+          ${weekdayRowsHtml(overallByWeekday)}
         </div>
         <div class="perf-stats-section">
           <h4>Most common delay reasons</h4>
