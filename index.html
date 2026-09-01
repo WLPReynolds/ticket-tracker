@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-01.20:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-01.21:17'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2442,12 +2442,29 @@ async function saveRailTrains(){
 // just keeps using whatever it last fetched, and station-ping matching
 // simply won't have fresh data until the next successful push.
 // 2026-09-01 — see wearos-companion-session-2026-09-01.md.
+//
+// TEMPORARY (2026-09-01): shows a toast with the outcome, purely to
+// verify this is actually reaching the Worker while testing from the
+// phone with no dev tools handy. Revert to the plain silent
+// fire-and-forget below once confirmed working — this isn't something
+// that should surface during ordinary use.
 function pushWatchConfig(){
   fetch(`${DARWIN_WORKER_URL}/api/watch-config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ railTrains, geofenceRadiusCrewe, geofenceRadiusWigan })
-  }).catch(()=>{});
+  })
+    .then(async (resp) => {
+      if (resp.ok){
+        showToast('Watch config pushed ✓');
+      } else {
+        const text = await resp.text().catch(()=> '');
+        showToast(`Watch config push failed: ${resp.status} ${text}`.slice(0, 200));
+      }
+    })
+    .catch((e) => {
+      showToast(`Watch config push error: ${e.message}`.slice(0, 200));
+    });
 }
 
 // Fire-and-forget notice to the Worker that the PWA's own live check
