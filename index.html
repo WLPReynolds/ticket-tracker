@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-01.22:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-02.06:11'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1377,6 +1377,16 @@ let dismissedParkingSavingsPeriods = {};
 // recalculate" approach, so a comment edited or a parked-day re-tagged
 // after the fact doesn't retroactively change what a past period showed.
 let parkingSavingsSnapshots = {};
+// periodStartKey -> [dateKey, ...], the specific weekday travel days
+// that made up that period's parking budget, locked the moment the
+// period's own start date is genuinely reached (same day-selection rule
+// as the payday estimate's own parkingDays count, one level more
+// granular). Once locked, a day stays in this set even if later
+// re-tagged (WFH, holiday, sickness) — the money was already set aside
+// for it, so it just becomes a "saved" day instead of a "spent" one,
+// rather than dropping out of the budget entirely and silently shrinking
+// the period's total.
+let parkingBudgetDays = {};
 // 0 = the real current period; negative = that many periods back. Never
 // positive — unlike the payday estimate's preview-ahead nav, there's no
 // "future" parking savings to show, only periods that have actually
@@ -2089,6 +2099,10 @@ async function loadData(){
     parkingSavingsSnapshots = pss ? JSON.parse(pss) : {};
   }catch(e){ parkingSavingsSnapshots = {}; }
   try{
+    const pbd2 = localStorage.getItem('parking-budget-days');
+    parkingBudgetDays = pbd2 ? JSON.parse(pbd2) : {};
+  }catch(e){ parkingBudgetDays = {}; }
+  try{
     const tscd = localStorage.getItem('tickets-spent-card-dismissed');
     ticketsSpentCardDismissed = tscd ? JSON.parse(tscd) : false;
   }catch(e){ ticketsSpentCardDismissed = false; }
@@ -2342,6 +2356,10 @@ async function saveDismissedParkingSavingsPeriods(){
 }
 async function saveParkingSavingsSnapshots(){
   try{ localStorage.setItem('parking-savings-snapshots', JSON.stringify(parkingSavingsSnapshots)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+async function saveParkingBudgetDays(){
+  try{ localStorage.setItem('parking-budget-days', JSON.stringify(parkingBudgetDays)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
 async function saveTicketsSpentCardDismissed(){
@@ -2916,6 +2934,54 @@ function computeExpenseSavingsForPeriod(periodStart, periodEnd, todayDate, track
     const isTravel = comment === '' || travelOverrides[key];
     if (!isTravel) continue; // this expense doesn't apply on a non-travel day
     total += (trackedDays[key] !== undefined) ? (defaultCost - trackedDays[key]) : defaultCost;
+  }
+  return total;
+}
+
+// Returns the locked budget-day set for a period, computing and locking
+// it on the spot the first time it's needed after the period's own start
+// date has genuinely been reached (mirrors paydayEstimateSnapshots'
+// timing exactly). Returns null for a period that hasn't started yet —
+// there's nothing to budget for the future. Once locked, always returns
+// the same set regardless of later comment/override edits, which is the
+// whole fix: a day re-tagged afterward (WFH, holiday, sickness) doesn't
+// silently disappear from the period's parking budget.
+function getOrLockParkingBudgetDays(periodStart, periodEnd, todayDate){
+  const periodStartKey = fmtKey(periodStart);
+  if (parkingBudgetDays[periodStartKey]) return parkingBudgetDays[periodStartKey];
+  if (fmtKey(todayDate) < periodStartKey) return null;
+  const set = [];
+  for (let d = new Date(periodStart); d <= periodEnd; d = addDays(d, 1)){
+    if (isWeekend(d)) continue;
+    const key = fmtKey(d);
+    const comment = (comments[key] || '').trim();
+    const isTravel = comment === '' || travelOverrides[key];
+    if (isTravel) set.push(key);
+  }
+  parkingBudgetDays[periodStartKey] = set;
+  saveParkingBudgetDays();
+  return set;
+}
+
+// Parking savings for a period, measured against its locked budget-day
+// set rather than live day-by-day travel status. A budgeted day counts
+// as fully saved unless it's actually been parked on (in which case only
+// the difference against the default cost counts); a day parked on that
+// ISN'T in the locked budget — an unplanned extra commute — is a
+// straight loss against the total, since the budget never covered it.
+function computeParkingSavingsForPeriod(periodStart, periodEnd, todayDate, budgetDayKeys, trackedDays, defaultCost){
+  const budgetSet = new Set(budgetDayKeys || []);
+  let total = 0;
+  const cutoff = todayDate < periodEnd ? todayDate : periodEnd;
+  for (let d = new Date(periodStart); d <= cutoff; d = addDays(d, 1)){
+    if (isWeekend(d)) continue;
+    const key = fmtKey(d);
+    const parkedCost = trackedDays[key];
+    if (budgetSet.has(key)){
+      total += (parkedCost !== undefined) ? (defaultCost - parkedCost) : defaultCost;
+    } else if (parkedCost !== undefined){
+      total -= parkedCost;
+    }
   }
   return total;
 }
@@ -3739,28 +3805,31 @@ function render(){
   // estimate card above might be previewing via its own nav arrows —
   // this is about what's actually happened so far, not a projection.
   const realCurrentPeriod = getPayPeriodByOffset(today, 0);
-  const parkingSavedThisPeriod = computeExpenseSavingsForPeriod(realCurrentPeriod.start, realCurrentPeriod.end, today, parkedDays, parkingCost);
+  const currentPeriodBudgetDays = getOrLockParkingBudgetDays(realCurrentPeriod.start, realCurrentPeriod.end, today);
+  const parkingSavedThisPeriod = computeParkingSavingsForPeriod(realCurrentPeriod.start, realCurrentPeriod.end, today, currentPeriodBudgetDays, parkedDays, parkingCost);
 
   // Lock in the immediately preceding period's figure the first time
   // it's seen after ticking over, same reasoning as the payday
   // snapshot — once a period is done, its "saved" total shouldn't keep
   // drifting if a comment or parked-day gets edited afterwards. This
   // only catches the period right before the current one on each
-  // render; older, skipped-over periods still get locked in (with the
-  // same live-computed value they'd have had at rollover, since past
-  // days don't change) the first time they're actually viewed below.
+  // render; older, skipped-over periods still get locked in (with their
+  // own best-effort budget-day set, reconstructed from whatever comment
+  // state exists now) the first time they're actually viewed below.
   const prevParkingPeriod = getPayPeriodByOffset(today, -1);
   const prevParkingPeriodStartKey = fmtKey(prevParkingPeriod.start);
   if (parkingSavingsSnapshots[prevParkingPeriodStartKey] === undefined){
-    parkingSavingsSnapshots[prevParkingPeriodStartKey] = computeExpenseSavingsForPeriod(prevParkingPeriod.start, prevParkingPeriod.end, today, parkedDays, parkingCost);
+    const prevBudgetDays = getOrLockParkingBudgetDays(prevParkingPeriod.start, prevParkingPeriod.end, today);
+    parkingSavingsSnapshots[prevParkingPeriodStartKey] = computeParkingSavingsForPeriod(prevParkingPeriod.start, prevParkingPeriod.end, today, prevBudgetDays, parkedDays, parkingCost);
     saveParkingSavingsSnapshots();
   }
 
   // The period actually being displayed on the card, per its own nav
   // arrows — offset 0 is always the real current period (live, never
   // snapshotted, since it's still evolving); anything further back
-  // reads from the locked-in snapshot, computing and locking it on the
-  // spot if this is the first time it's being viewed.
+  // reads from the locked-in snapshot, computing and locking its
+  // budget-day set and resulting total on the spot if this is the first
+  // time it's being viewed.
   const psPeriod = parkingSavingsOffset === 0 ? realCurrentPeriod : getPayPeriodByOffset(today, parkingSavingsOffset);
   const psPeriodStartKey = fmtKey(psPeriod.start);
   let parkingSavingsCardValue;
@@ -3769,7 +3838,8 @@ function render(){
   } else if (parkingSavingsSnapshots[psPeriodStartKey] !== undefined){
     parkingSavingsCardValue = parkingSavingsSnapshots[psPeriodStartKey];
   } else {
-    parkingSavingsCardValue = computeExpenseSavingsForPeriod(psPeriod.start, psPeriod.end, today, parkedDays, parkingCost);
+    const psBudgetDays = getOrLockParkingBudgetDays(psPeriod.start, psPeriod.end, today);
+    parkingSavingsCardValue = computeParkingSavingsForPeriod(psPeriod.start, psPeriod.end, today, psBudgetDays, parkedDays, parkingCost);
     parkingSavingsSnapshots[psPeriodStartKey] = parkingSavingsCardValue;
     saveParkingSavingsSnapshots();
   }
@@ -10924,25 +10994,14 @@ function openPerformanceStatsView(){
   }
   const amByWeekday = amTrains.length ? weekdayAverages(amTrains) : [];
   const pmByWeekday = pmTrains.length ? weekdayAverages(pmTrains) : [];
-  // Overall ranking combines both directions' trains into one set before
-  // averaging per weekday — same weekdayAverages function, just fed a
-  // wider train list, so a weekday's "overall" figure blends its morning
-  // and evening performance rather than picking whichever direction ran
-  // worse.
-  const allTrains = amTrains.concat(pmTrains);
-  const overallByWeekday = allTrains.length ? weekdayAverages(allTrains) : [];
   function weekdayRowsHtml(rows){
     if (rows.length === 0) return `<div class="sub" style="margin:0;">Not enough data yet.</div>`;
     const maxAvg = Math.max(...rows.map(r => r.avg), 0.1); // guard against div-by-zero when every average is 0
     return rows.map(r => {
-      // Worst-first within the expanded detail — same ordering as the
-      // parent weekday rows. No-data trains (null average) sort to the
-      // bottom rather than breaking the comparator.
-      const detailRows = r.trains
-        .map(t => ({ t, a: trainAverageForWeekday(t, r.wd) }))
-        .sort((x, y) => (y.a === null ? -Infinity : y.a) - (x.a === null ? -Infinity : x.a))
-        .map(({ t, a }) => `<div class="perf-stats-weekday-detail-row"><span class="train-label">${escapeHtml(t.label)}</span><span>${a === null ? '—' : `${a.toFixed(1)}m`}</span></div>`)
-        .join('');
+      const detailRows = r.trains.map(t => {
+        const a = trainAverageForWeekday(t, r.wd);
+        return `<div class="perf-stats-weekday-detail-row"><span class="train-label">${escapeHtml(t.label)}</span><span>${a === null ? '—' : `${a.toFixed(1)}m`}</span></div>`;
+      }).join('');
       return `
         <div class="perf-stats-weekday-row">
           <div class="perf-stats-weekday-name">${r.day}</div>
@@ -10971,10 +11030,6 @@ function openPerformanceStatsView(){
         <div class="perf-stats-section">
           <h4>Worst days — evening</h4>
           ${weekdayRowsHtml(pmByWeekday)}
-        </div>
-        <div class="perf-stats-section">
-          <h4>Worst days — overall</h4>
-          ${weekdayRowsHtml(overallByWeekday)}
         </div>
         <div class="perf-stats-section">
           <h4>Most common delay reasons</h4>
