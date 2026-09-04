@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-04.22:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-04.22:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -7054,12 +7054,27 @@ function openLiveScreen(initialSubTab){
           if (!overlay.isConnected) return;
           row.style.opacity = '1';
           row.style.pointerEvents = '';
+          // Appended alongside the row's existing time/description/status
+          // grid cells (grid-column:1/-1 spans it under all three) rather
+          // than replacing them via innerHTML — the train itself is still
+          // useful to see, the failure is additional information, not a
+          // reason to hide what was already shown. Any message from an
+          // earlier failed attempt on this same row is cleared first, so
+          // repeated taps don't stack multiple lines underneath.
+          const existingMsg = row.querySelector('.rail-detail-row-msg');
+          if (existingMsg) existingMsg.remove();
+          const msgEl = document.createElement('div');
+          msgEl.className = 'rail-detail-row-msg';
+          msgEl.style.cssText = 'grid-column:1 / -1; margin-top:4px; font-size:12px;';
           const minsAway = schedTime ? minutesUntilLocalTime(schedTime) : null;
           if (minsAway !== null && minsAway > LIKELY_NOT_YET_ACTIVATED_MIN_AWAY){
-            row.innerHTML = `<span style="color:var(--ink-dim); font-size:12px;">Not showing live details yet — this one's booked for ${escapeHtml(schedTime)}, try again closer to departure.</span>`;
+            msgEl.style.color = 'var(--ink-dim)';
+            msgEl.textContent = `Not showing live details yet — booked for ${schedTime}, try again closer to departure.`;
           } else {
-            row.innerHTML = `<span style="color:#ff8b7e; font-size:12px;">Couldn't load that one (${escapeHtml(e.message)}) — tap another</span>`;
+            msgEl.style.color = '#ff8b7e';
+            msgEl.textContent = `Couldn't load that one (${e.message}) — tap to try again`;
           }
+          row.appendChild(msgEl);
         }
       });
     });
