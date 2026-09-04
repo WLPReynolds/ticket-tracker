@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-02.22:02'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-04.10:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1239,6 +1239,13 @@ let preferredGoogleEmail = ''; // used as a login hint to skip the account picke
 // become visible. Each hook's own info can look different; this is just
 // the single switch that reveals/hides all of them consistently.
 let debugModeEnabled = false;
+// One-shot test hook for the GetServiceDetails → stationBoardForService
+// recovery path (Settings > Debug, only visible when debug mode is on).
+// Deliberately session-memory only, not persisted to localStorage —
+// arming it and then closing the app shouldn't leave it silently armed
+// for a future session. Consumed (set back to false) the moment it's
+// used, whether or not the recovery attempt that followed succeeded.
+let debugForceServiceDetailsFailureOnce = false;
 // Weather badges on the live-progress screen — on by default, but a
 // single toggle to switch off entirely if the extra fetches ever cause
 // noticeable lag or just get annoying. Purely a novelty display; never
@@ -4883,6 +4890,7 @@ function openSettingsMenu(){
         <div class="settings-grid-item${produceClaimDetailsFile ? ' active' : ''}" id="settings-claim-file-link">${SETTINGS_ICONS.file}<span class="cat-label">Claim file</span><span class="status-label">${produceClaimDetailsFile ? 'On' : 'Off'}</span></div>
         <div class="settings-grid-item${weatherEnabled ? ' active' : ''}" id="settings-weather-link">${SETTINGS_ICONS.cloud}<span class="cat-label">Weather</span><span class="status-label">${weatherEnabled ? 'On' : 'Off'}</span></div>
         <div class="settings-grid-item${debugModeEnabled ? ' active' : ''}" id="settings-debug-link">${SETTINGS_ICONS.bug}<span class="cat-label">Debug</span><span class="status-label">${debugModeEnabled ? 'On' : 'Off'}</span></div>
+        ${debugModeEnabled ? `<div class="settings-grid-item${debugForceServiceDetailsFailureOnce ? ' active' : ''}" id="settings-debug-force-fail-link">${SETTINGS_ICONS.bug}<span class="cat-label">Force next lookup to fail</span><span class="status-label">${debugForceServiceDetailsFailureOnce ? 'Armed' : 'Off'}</span></div>` : ''}
         <div class="settings-grid-item${paydayVisible ? ' active' : ''}" id="settings-payday-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Payday card</span><span class="status-label">${paydayVisible ? 'Visible' : 'Hidden'}</span></div>
         <div class="settings-grid-item${parkingSavingsVisible ? ' active' : ''}" id="settings-parking-savings-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Savings card</span><span class="status-label">${parkingSavingsVisible ? 'Visible' : 'Hidden'}</span></div>
         <div class="settings-grid-item${spendingVisible ? ' active' : ''}" id="settings-spending-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Spending card</span><span class="status-label">${spendingVisible ? 'Visible' : 'Hidden'}</span></div>
@@ -4931,6 +4939,19 @@ function openSettingsMenu(){
     debugModeEnabled = !debugModeEnabled;
     await saveDebugMode();
     toggleStatus('settings-debug-link', debugModeEnabled, debugModeEnabled ? 'On' : 'Off');
+    // Turning debug mode off hides this tile from the grid entirely, but
+    // the flag underneath it isn't reset — re-render so a stale "Armed"
+    // tile can't be left dangling off-screen if it was never consumed.
+    close();
+    openSettingsMenu();
+  });
+  const debugForceFailLink = document.getElementById('settings-debug-force-fail-link');
+  if (debugForceFailLink) debugForceFailLink.addEventListener('click', () => {
+    // No persistence call — deliberately session-memory only (see the
+    // variable's own comment). Toggles both ways so it can be disarmed
+    // without needing to actually trigger a lookup first.
+    debugForceServiceDetailsFailureOnce = !debugForceServiceDetailsFailureOnce;
+    toggleStatus('settings-debug-force-fail-link', debugForceServiceDetailsFailureOnce, debugForceServiceDetailsFailureOnce ? 'Armed' : 'Off');
   });
   // These three are genuine bidirectional toggles now, not one-way
   // "restore" actions — tapping hides the card if it's showing, or
@@ -5712,42 +5733,112 @@ async function fetchDebugBoard(fromCrs, toCrs){
 // station's rolling board window — works for as long as Darwin still
 // has the service, regardless of how far past its departure station
 // the train has travelled.
-async function fetchServiceDetails(serviceId){
-  let resp;
+//
+// `recoveryHint`, when supplied by a caller that has one, is
+// { crs, boardType, schedTime } describing where this exact service can
+// still be found on a PURE dep/arr board right now (e.g. the station and
+// scheduled time it was searched under). GetServiceDetails is its own
+// separate Darwin product from the board endpoints, and confirmed via
+// live testing (2026-09-04) that its serviceID isn't always portable
+// from a serviceID minted by a board product — most of the time it is,
+// which is why this only shows up occasionally rather than on every
+// lookup. When the first attempt is a definitive rejection (not a
+// network/Worker-level hiccup) and a recoveryHint is available, this
+// re-resolves the service against that pure board to get a fresh,
+// board-scoped serviceID and retries once. No fallback is attempted
+// without a recoveryHint — callers that don't have one (nothing else to
+// go on) get the original behaviour unchanged.
+async function fetchServiceDetails(serviceId, recoveryHint){
+  async function callGetServiceDetails(id, allowDebugForce){
+    // Test hook — Settings > Debug. Forces this specific attempt to fail
+    // exactly as a real upstream-error would, without touching the
+    // network, so the recovery path below can be exercised on demand
+    // against whatever service is actually running right now. Consumed
+    // immediately so it only ever fires once per arming.
+    if (allowDebugForce && debugForceServiceDetailsFailureOnce){
+      debugForceServiceDetailsFailureOnce = false;
+      const err = new Error('Simulated upstream-error (debug hook)');
+      err.transient = false;
+      throw err;
+    }
+    let resp;
+    try{
+      resp = await fetch(DARWIN_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queries: [{ type: 'serviceDetails', serviceId: id }] })
+      });
+    }catch(networkErr){
+      // The fetch itself failed — no connectivity, DNS, Worker unreachable.
+      // This says nothing about whether the service itself still exists,
+      // so it's always transient.
+      const err = new Error(`Network error contacting Darwin: ${networkErr.message}`);
+      err.transient = true;
+      throw err;
+    }
+    if (!resp.ok){
+      // An HTTP-level failure from the Worker (rate limit, gateway error,
+      // etc.) — a server-side hiccup, not evidence the service is gone.
+      const err = new Error(`Darwin request failed: ${resp.status}`);
+      err.transient = true;
+      throw err;
+    }
+    const data = await resp.json();
+    const r = (data.results || [])[0];
+    if (!r || !r.ok || !r.data){
+      // A specific reason from the Worker means Darwin was actually
+      // reached and gave a definitive answer about this service — the one
+      // case we can be reasonably confident means it's genuinely gone.
+      // Anything else (empty/malformed response) is treated as transient,
+      // since we can't actually tell what happened.
+      const err = new Error((r && (r.reason || `status ${r.status}`)) || 'No service data returned — this train may no longer be tracked by Darwin');
+      err.transient = !(r && r.reason);
+      throw err;
+    }
+    return r.data;
+  }
+
   try{
-    resp = await fetch(DARWIN_WORKER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ queries: [{ type: 'serviceDetails', serviceId }] })
-    });
-  }catch(networkErr){
-    // The fetch itself failed — no connectivity, DNS, Worker unreachable.
-    // This says nothing about whether the service itself still exists,
-    // so it's always transient.
-    const err = new Error(`Network error contacting Darwin: ${networkErr.message}`);
-    err.transient = true;
-    throw err;
+    return await callGetServiceDetails(serviceId, true);
+  }catch(firstErr){
+    // Only worth attempting recovery for a definitive Darwin rejection —
+    // a transient/network-level failure would fail the recovery lookup
+    // for the same reason, so there's nothing to gain from trying it.
+    if (firstErr.transient || !recoveryHint || !recoveryHint.crs || !recoveryHint.boardType || !recoveryHint.schedTime){
+      throw firstErr;
+    }
+    let freshServiceId = null;
+    try{
+      const resp = await fetch(DARWIN_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queries: [{ type: 'stationBoardForService', crs: recoveryHint.crs, boardType: recoveryHint.boardType, schedTime: recoveryHint.schedTime, serviceId }] })
+      });
+      if (resp.ok){
+        const data = await resp.json();
+        const r = (data.results || [])[0];
+        if (r && r.ok && r.data && r.data.serviceID) freshServiceId = r.data.serviceID;
+      }
+    }catch(e){ /* recovery lookup itself failed — fall through to the original error below */ }
+
+    if (!freshServiceId || freshServiceId === serviceId){
+      // Nothing different to try (board didn't have it right now, or
+      // handed back the very same ID that just failed) — retrying would
+      // just fail identically, so surface the original error.
+      throw firstErr;
+    }
+    try{
+      return await callGetServiceDetails(freshServiceId, false);
+    }catch(secondErr){
+      // Darwin has this exact service sitting on its board right now (we
+      // just matched it by schedule) — GetServiceDetails still not
+      // recognizing either ID reads as a reachability hiccup, not proof
+      // the service is gone, so this is always treated as transient.
+      const err = new Error(`Darwin has this service but its details aren't reachable right now — try again shortly`);
+      err.transient = true;
+      throw err;
+    }
   }
-  if (!resp.ok){
-    // An HTTP-level failure from the Worker (rate limit, gateway error,
-    // etc.) — a server-side hiccup, not evidence the service is gone.
-    const err = new Error(`Darwin request failed: ${resp.status}`);
-    err.transient = true;
-    throw err;
-  }
-  const data = await resp.json();
-  const r = (data.results || [])[0];
-  if (!r || !r.ok || !r.data){
-    // A specific reason from the Worker means Darwin was actually
-    // reached and gave a definitive answer about this service — the one
-    // case we can be reasonably confident means it's genuinely gone.
-    // Anything else (empty/malformed response) is treated as transient,
-    // since we can't actually tell what happened.
-    const err = new Error((r && (r.reason || `status ${r.status}`)) || 'No service data returned — this train may no longer be tracked by Darwin');
-    err.transient = !(r && r.reason);
-    throw err;
-  }
-  return r.data;
 }
 
 // Emergency Routes — the "Emergency" Live sub-tab's core check (see
@@ -5825,9 +5916,13 @@ async function checkEmergencyRoute(route){
     // single dropped request is a worse outcome than one extra request.
     let arrivalStr = null;
     let detailsFailed = false;
+    // best.std is guaranteed present here (the loop above skips any
+    // candidate without one), so this is always a departure-board
+    // recoveryHint — leg.from is a pure 'dep' board lookup, not 'arr'.
+    const recoveryHint = { crs: leg.from, boardType: 'dep', schedTime: best.std };
     for (let attempt = 0; attempt < 2; attempt++){
       try{
-        const details = await fetchServiceDetails(best.serviceID);
+        const details = await fetchServiceDetails(best.serviceID, recoveryHint);
         const cp = findCallingPointRaw(details, leg.to);
         arrivalStr = resolveCallingPointClockTime(cp);
         detailsFailed = false;
@@ -6861,6 +6956,10 @@ function openLiveScreen(initialSubTab){
         const serviceId = row.dataset.debugServiceId;
         const label = row.dataset.debugLabel;
         const fromLoc = row.dataset.debugFrom;
+        const schedTime = row.dataset.debugTime;
+        const recoveryHint = schedTime
+          ? { crs: fromLoc, boardType: row.dataset.debugDepartsHere === '1' ? 'dep' : 'arr', schedTime }
+          : undefined;
         // Opening a train you've already got tracked just refreshes its
         // position — no new slot needed. Only a genuinely new one needs
         // checking against the cap, and needs checking *before* it's
@@ -6878,7 +6977,7 @@ function openLiveScreen(initialSubTab){
         row.style.opacity = '0.5';
         row.style.pointerEvents = 'none';
         try{
-          const service = await fetchServiceDetails(serviceId);
+          const service = await fetchServiceDetails(serviceId, recoveryHint);
           if (!overlay.isConnected) return;
           overlay.remove();
           openTrainProgress({ label, fromLoc, serviceId }, service);
@@ -7006,7 +7105,14 @@ function openLiveScreen(initialSubTab){
           // top alignment keeps time and status both anchored to the
           // first line regardless of how many lines the description
           // itself wraps to.
-          return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(displayText)}" data-debug-from="${fromCrs}" style="display:grid; grid-template-columns:44px 1fr auto; column-gap:8px; align-items:start; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+          // data-debug-time/data-debug-departs-here carry just enough to
+          // rebuild a recoveryHint for fetchServiceDetails if
+          // GetServiceDetails rejects this row's serviceID — the same
+          // station (fromCrs) and schedule time already shown here, plus
+          // which pure board (dep/arr) it'll actually be found on. Left
+          // empty when time is '?' (no std/sta on this entry) so no
+          // recovery is attempted rather than sending an invalid schedTime.
+          return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(displayText)}" data-debug-from="${fromCrs}" data-debug-time="${time === '?' ? '' : escapeHtml(time)}" data-debug-departs-here="${departsHere ? '1' : '0'}" style="display:grid; grid-template-columns:44px 1fr auto; column-gap:8px; align-items:start; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
             <span style="color:var(--ink-dim); white-space:nowrap;">${escapeHtml(time)}</span>
             <span>${escapeHtml(descriptionText)}</span>
             <span style="color:var(--ink-dim); text-align:right; white-space:nowrap;">${escapeHtml(statusText)} ›</span>
