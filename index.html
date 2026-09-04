@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-04.21:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-04.22:15'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1963,6 +1963,21 @@ async function saveDelayClaims(){
 let trackedTrains = []; // [{ serviceId, label, fromLoc, addedAt }]
 const TRACKED_TRAIN_MAX_AGE_MS = 6 * 60 * 60 * 1000; // stop tracking after 6 hours regardless — a journey this long has almost certainly finished
 const TRACKED_TRAIN_MAX = 5; // matches the cap enforced when a train is opened (see openTrainProgress) — kept in one place so the "Track a train" flow can check it before adding, rather than only finding out after something's already been silently dropped
+// A service well ahead of its scheduled time that fails to load (both
+// GetServiceDetails and the pure-board recovery lookup come back empty)
+// is very often just not "activated" in Darwin/TRUST yet, rather than
+// anything actually wrong — a real service on a real board, Darwin
+// simply hasn't attached live tracking to it. Confirmed via one real
+// occurrence (2026-09-04): a Caledonian Sleeper booked for 23:45 failed
+// to load at 22:03, 102 minutes ahead of departure. No documented
+// Darwin activation window to derive this from, so 45 minutes is a
+// first-guess threshold rather than a confirmed boundary — only used to
+// pick a friendlier, less alarming message ("try again closer to
+// departure" instead of a raw error), so a wrong guess here costs
+// nothing beyond wording; worth revisiting if a genuine unrelated
+// failure this far out gets mislabelled by it, or if a service closer
+// in than this still turns out to be pre-activation.
+const LIKELY_NOT_YET_ACTIVATED_MIN_AWAY = 45;
 
 // Emergency Routes — pre-defined fallback journeys (authored in Settings,
 // calm), checked live on the "Emergency" Live sub-tab when disruption
@@ -5877,6 +5892,24 @@ async function fetchServiceDetails(serviceId, recoveryHint){
   }
 }
 
+// How many minutes from now until an "HH:MM" scheduled time, same-day —
+// same simple local-clock diff checkLikelyTrain/checkLikelyArrival
+// already use elsewhere (see their own nowMinutes lines), not the
+// Worker's UTC/BST-aware ukLocalTimeToEpoch, since this only ever runs
+// in the browser's own local timezone. Returns null for anything that
+// doesn't parse, and a negative number for a time already passed today
+// — callers deciding whether a service is likely just "not yet
+// activated" should only act on a positive result; a negative one means
+// the service should already be running; assumes today's date, so this
+// is not meant for a schedTime that's actually for tomorrow.
+function minutesUntilLocalTime(hhmm){
+  if (typeof hhmm !== 'string' || !/^\d{2}:\d{2}$/.test(hhmm)) return null;
+  const [hh, mm] = hhmm.split(':').map(Number);
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  return (hh * 60 + mm) - nowMinutes;
+}
+
 // Emergency Routes — the "Emergency" Live sub-tab's core check (see
 // emergency-routes-spec.md). Walks one route's legs in order, carrying
 // forward an "earliest departure time" cursor (starts as "now" for leg
@@ -7021,7 +7054,12 @@ function openLiveScreen(initialSubTab){
           if (!overlay.isConnected) return;
           row.style.opacity = '1';
           row.style.pointerEvents = '';
-          row.innerHTML = `<span style="color:#ff8b7e; font-size:12px;">Couldn't load that one (${escapeHtml(e.message)}) — tap another</span>`;
+          const minsAway = schedTime ? minutesUntilLocalTime(schedTime) : null;
+          if (minsAway !== null && minsAway > LIKELY_NOT_YET_ACTIVATED_MIN_AWAY){
+            row.innerHTML = `<span style="color:var(--ink-dim); font-size:12px;">Not showing live details yet — this one's booked for ${escapeHtml(schedTime)}, try again closer to departure.</span>`;
+          } else {
+            row.innerHTML = `<span style="color:#ff8b7e; font-size:12px;">Couldn't load that one (${escapeHtml(e.message)}) — tap another</span>`;
+          }
         }
       });
     });
