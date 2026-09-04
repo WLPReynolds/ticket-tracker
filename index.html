@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-04.10:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-04.11:12'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1239,13 +1239,6 @@ let preferredGoogleEmail = ''; // used as a login hint to skip the account picke
 // become visible. Each hook's own info can look different; this is just
 // the single switch that reveals/hides all of them consistently.
 let debugModeEnabled = false;
-// One-shot test hook for the GetServiceDetails → stationBoardForService
-// recovery path (Settings > Debug, only visible when debug mode is on).
-// Deliberately session-memory only, not persisted to localStorage —
-// arming it and then closing the app shouldn't leave it silently armed
-// for a future session. Consumed (set back to false) the moment it's
-// used, whether or not the recovery attempt that followed succeeded.
-let debugForceServiceDetailsFailureOnce = false;
 // Weather badges on the live-progress screen — on by default, but a
 // single toggle to switch off entirely if the extra fetches ever cause
 // noticeable lag or just get annoying. Purely a novelty display; never
@@ -4890,7 +4883,6 @@ function openSettingsMenu(){
         <div class="settings-grid-item${produceClaimDetailsFile ? ' active' : ''}" id="settings-claim-file-link">${SETTINGS_ICONS.file}<span class="cat-label">Claim file</span><span class="status-label">${produceClaimDetailsFile ? 'On' : 'Off'}</span></div>
         <div class="settings-grid-item${weatherEnabled ? ' active' : ''}" id="settings-weather-link">${SETTINGS_ICONS.cloud}<span class="cat-label">Weather</span><span class="status-label">${weatherEnabled ? 'On' : 'Off'}</span></div>
         <div class="settings-grid-item${debugModeEnabled ? ' active' : ''}" id="settings-debug-link">${SETTINGS_ICONS.bug}<span class="cat-label">Debug</span><span class="status-label">${debugModeEnabled ? 'On' : 'Off'}</span></div>
-        ${debugModeEnabled ? `<div class="settings-grid-item${debugForceServiceDetailsFailureOnce ? ' active' : ''}" id="settings-debug-force-fail-link">${SETTINGS_ICONS.bug}<span class="cat-label">Force next lookup to fail</span><span class="status-label">${debugForceServiceDetailsFailureOnce ? 'Armed' : 'Off'}</span></div>` : ''}
         <div class="settings-grid-item${paydayVisible ? ' active' : ''}" id="settings-payday-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Payday card</span><span class="status-label">${paydayVisible ? 'Visible' : 'Hidden'}</span></div>
         <div class="settings-grid-item${parkingSavingsVisible ? ' active' : ''}" id="settings-parking-savings-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Savings card</span><span class="status-label">${parkingSavingsVisible ? 'Visible' : 'Hidden'}</span></div>
         <div class="settings-grid-item${spendingVisible ? ' active' : ''}" id="settings-spending-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Spending card</span><span class="status-label">${spendingVisible ? 'Visible' : 'Hidden'}</span></div>
@@ -4939,19 +4931,6 @@ function openSettingsMenu(){
     debugModeEnabled = !debugModeEnabled;
     await saveDebugMode();
     toggleStatus('settings-debug-link', debugModeEnabled, debugModeEnabled ? 'On' : 'Off');
-    // Turning debug mode off hides this tile from the grid entirely, but
-    // the flag underneath it isn't reset — re-render so a stale "Armed"
-    // tile can't be left dangling off-screen if it was never consumed.
-    close();
-    openSettingsMenu();
-  });
-  const debugForceFailLink = document.getElementById('settings-debug-force-fail-link');
-  if (debugForceFailLink) debugForceFailLink.addEventListener('click', () => {
-    // No persistence call — deliberately session-memory only (see the
-    // variable's own comment). Toggles both ways so it can be disarmed
-    // without needing to actually trigger a lookup first.
-    debugForceServiceDetailsFailureOnce = !debugForceServiceDetailsFailureOnce;
-    toggleStatus('settings-debug-force-fail-link', debugForceServiceDetailsFailureOnce, debugForceServiceDetailsFailureOnce ? 'Armed' : 'Off');
   });
   // These three are genuine bidirectional toggles now, not one-way
   // "restore" actions — tapping hides the card if it's showing, or
@@ -5749,18 +5728,7 @@ async function fetchDebugBoard(fromCrs, toCrs){
 // without a recoveryHint — callers that don't have one (nothing else to
 // go on) get the original behaviour unchanged.
 async function fetchServiceDetails(serviceId, recoveryHint){
-  async function callGetServiceDetails(id, allowDebugForce){
-    // Test hook — Settings > Debug. Forces this specific attempt to fail
-    // exactly as a real upstream-error would, without touching the
-    // network, so the recovery path below can be exercised on demand
-    // against whatever service is actually running right now. Consumed
-    // immediately so it only ever fires once per arming.
-    if (allowDebugForce && debugForceServiceDetailsFailureOnce){
-      debugForceServiceDetailsFailureOnce = false;
-      const err = new Error('Simulated upstream-error (debug hook)');
-      err.transient = false;
-      throw err;
-    }
+  async function callGetServiceDetails(id){
     let resp;
     try{
       resp = await fetch(DARWIN_WORKER_URL, {
@@ -5799,7 +5767,7 @@ async function fetchServiceDetails(serviceId, recoveryHint){
   }
 
   try{
-    return await callGetServiceDetails(serviceId, true);
+    return await callGetServiceDetails(serviceId);
   }catch(firstErr){
     // Only worth attempting recovery for a definitive Darwin rejection —
     // a transient/network-level failure would fail the recovery lookup
@@ -5828,7 +5796,7 @@ async function fetchServiceDetails(serviceId, recoveryHint){
       throw firstErr;
     }
     try{
-      return await callGetServiceDetails(freshServiceId, false);
+      return await callGetServiceDetails(freshServiceId);
     }catch(secondErr){
       // Darwin has this exact service sitting on its board right now (we
       // just matched it by schedule) — GetServiceDetails still not
