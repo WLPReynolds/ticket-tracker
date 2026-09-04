@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-04.11:12'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-04.21:58'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3517,6 +3517,53 @@ function countWorkingDaysUntil(from, to){
   return count;
 }
 
+// See holiday-countdown-time-aware-spec.md. Before this hour, "today"
+// hasn't happened yet from a commute point of view, so it should still
+// count as a day owed. From this hour on, today is spoken for — matching
+// the plain countWorkingDaysUntil behaviour.
+const HOLIDAY_COUNTDOWN_CUTOFF_HOUR = 9;
+// Once the day-count would hit 0 (today is genuinely the last working day
+// and it's past the cutoff above), the card switches from a day-count to
+// an hour countdown to this clock time instead of showing a bare "0".
+const HOLIDAY_COUNTDOWN_HOME_HOUR = 17;
+
+// Same count as countWorkingDaysUntil, but optionally anchored one calendar
+// day earlier so `today` itself is included in the result.
+function holidayWorkingDaysCount(today, holidayDate, includeToday){
+  const anchor = includeToday ? addDays(today, -1) : today;
+  return countWorkingDaysUntil(anchor, holidayDate);
+}
+
+// Minutes-precision countdown to HOLIDAY_COUNTDOWN_HOME_HOUR:00 today.
+function hoursUntilHomeTime(now){
+  const home = new Date(now.getFullYear(), now.getMonth(), now.getDate(), HOLIDAY_COUNTDOWN_HOME_HOUR, 0, 0);
+  const diffMs = Math.max(0, home - now);
+  const hours = Math.floor(diffMs / 3600000);
+  const minutes = Math.round((diffMs % 3600000) / 60000);
+  return { hours, minutes, isPastHomeTime: home <= now };
+}
+
+// Decides what the holiday card should show: a working-day count (the
+// default), or — on the last working day before the holiday, from
+// HOLIDAY_COUNTDOWN_CUTOFF_HOUR onward — an hour countdown to home time
+// instead of a misleading "0". `today` is the calendar-only date used
+// elsewhere in render(); `now` is the live clock, used only for the
+// hour-of-day checks here. See holiday-countdown-time-aware-spec.md.
+function getHolidayCountdownState(today, now, holidayDate){
+  const isBeforeCutoff = now.getHours() < HOLIDAY_COUNTDOWN_CUTOFF_HOUR;
+  const dayCount = holidayWorkingDaysCount(today, holidayDate, isBeforeCutoff);
+
+  const todayKey = fmtKey(today);
+  const todayTag = (comments[todayKey] || '').trim().toUpperCase();
+  const isNonWorkingToday = isWeekend(today) || todayTag === 'BANK HOLIDAY';
+
+  const isFinalDayHourMode = !isBeforeCutoff && dayCount === 0 && !isNonWorkingToday;
+  if (isFinalDayHourMode){
+    return { mode: 'hours', ...hoursUntilHomeTime(now) };
+  }
+  return { mode: 'days', dayCount };
+}
+
 // Small line-style SVG icons for the delay repay badge — kept inline rather
 // than pulling in an icon font, since the app otherwise relies on emoji and
 // these two need to look crisp at ~17px against a tinted background.
@@ -3650,12 +3697,33 @@ function render(){
   let holidayHtml = '';
   if (nextHolidayKey){
     const hDate = parseKey(nextHolidayKey);
-    const daysUntil = countWorkingDaysUntil(today, hDate);
+    // Fresh wall-clock time, not state.today — the hour-of-day check needs
+    // to reflect the moment of this render, not when the app was opened.
+    const nowClock = new Date();
+    const countdown = getHolidayCountdownState(today, nowClock, hDate);
+
+    let bigNumber, bigNumberStyle, labelText;
+    if (countdown.mode === 'hours'){
+      if (countdown.isPastHomeTime){
+        bigNumber = '🎉';
+        bigNumberStyle = '';
+        labelText = 'Enjoy your holiday';
+      } else {
+        bigNumber = `${countdown.hours}h ${countdown.minutes}m`;
+        bigNumberStyle = 'font-size:26px;'; // "Xh Ym" is wider than a bare day-count
+        labelText = "Until you're off for your holiday";
+      }
+    } else {
+      bigNumber = countdown.dayCount;
+      bigNumberStyle = '';
+      labelText = `Working day${countdown.dayCount===1?'':'s'} until your next holiday`;
+    }
+
     holidayHtml = `
       <div class="holiday-card">
-        <div class="holiday-count">${daysUntil}</div>
+        <div class="holiday-count" style="${bigNumberStyle}">${bigNumber}</div>
         <div class="holiday-info">
-          <div class="holiday-label">Working day${daysUntil===1?'':'s'} until your next holiday</div>
+          <div class="holiday-label">${labelText}</div>
           <div class="holiday-date">${dateLabel(hDate)}</div>
         </div>
       </div>`;
@@ -12024,6 +12092,10 @@ function spawnFireworkBurst(container, colors){
       // Same ordering as startup — the watch may have resolved
       // something while the phone was locked/backgrounded.
       checkPendingConfirmation().finally(startLikelyTrainChecks);
+      // Re-render so the holiday countdown's hour-of-day cutoff (see
+      // holiday-countdown-time-aware-spec.md) reflects the current clock
+      // time rather than whatever it was when the app was last opened.
+      render();
     }
   });
   startLikelyTrainChecks();
