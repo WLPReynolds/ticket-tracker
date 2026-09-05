@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-04.22:20'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-05.05:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1963,21 +1963,6 @@ async function saveDelayClaims(){
 let trackedTrains = []; // [{ serviceId, label, fromLoc, addedAt }]
 const TRACKED_TRAIN_MAX_AGE_MS = 6 * 60 * 60 * 1000; // stop tracking after 6 hours regardless — a journey this long has almost certainly finished
 const TRACKED_TRAIN_MAX = 5; // matches the cap enforced when a train is opened (see openTrainProgress) — kept in one place so the "Track a train" flow can check it before adding, rather than only finding out after something's already been silently dropped
-// A service well ahead of its scheduled time that fails to load (both
-// GetServiceDetails and the pure-board recovery lookup come back empty)
-// is very often just not "activated" in Darwin/TRUST yet, rather than
-// anything actually wrong — a real service on a real board, Darwin
-// simply hasn't attached live tracking to it. Confirmed via one real
-// occurrence (2026-09-04): a Caledonian Sleeper booked for 23:45 failed
-// to load at 22:03, 102 minutes ahead of departure. No documented
-// Darwin activation window to derive this from, so 45 minutes is a
-// first-guess threshold rather than a confirmed boundary — only used to
-// pick a friendlier, less alarming message ("try again closer to
-// departure" instead of a raw error), so a wrong guess here costs
-// nothing beyond wording; worth revisiting if a genuine unrelated
-// failure this far out gets mislabelled by it, or if a service closer
-// in than this still turns out to be pre-activation.
-const LIKELY_NOT_YET_ACTIVATED_MIN_AWAY = 45;
 
 // Emergency Routes — pre-defined fallback journeys (authored in Settings,
 // calm), checked live on the "Emergency" Live sub-tab when disruption
@@ -3537,9 +3522,9 @@ function countWorkingDaysUntil(from, to){
 // count as a day owed. From this hour on, today is spoken for — matching
 // the plain countWorkingDaysUntil behaviour.
 const HOLIDAY_COUNTDOWN_CUTOFF_HOUR = 9;
-// Once the day-count would hit 0 (today is genuinely the last working day
-// and it's past the cutoff above), the card switches from a day-count to
-// an hour countdown to this clock time instead of showing a bare "0".
+// Once the day-count would hit 0 on the actual last working day (past the
+// cutoff above), the card switches from a day-count to an hour countdown
+// to this clock time instead of showing a bare "0".
 const HOLIDAY_COUNTDOWN_HOME_HOUR = 17;
 
 // Same count as countWorkingDaysUntil, but optionally anchored one calendar
@@ -3558,24 +3543,69 @@ function hoursUntilHomeTime(now){
   return { hours, minutes, isPastHomeTime: home <= now };
 }
 
-// Decides what the holiday card should show: a working-day count (the
-// default), or — on the last working day before the holiday, from
-// HOLIDAY_COUNTDOWN_CUTOFF_HOUR onward — an hour countdown to home time
-// instead of a misleading "0". `today` is the calendar-only date used
-// elsewhere in render(); `now` is the live clock, used only for the
-// hour-of-day checks here. See holiday-countdown-time-aware-spec.md.
-function getHolidayCountdownState(today, now, holidayDate){
-  const isBeforeCutoff = now.getHours() < HOLIDAY_COUNTDOWN_CUTOFF_HOUR;
-  const dayCount = holidayWorkingDaysCount(today, holidayDate, isBeforeCutoff);
-
-  const todayKey = fmtKey(today);
-  const todayTag = (comments[todayKey] || '').trim().toUpperCase();
-  const isNonWorkingToday = isWeekend(today) || todayTag === 'BANK HOLIDAY';
-
-  const isFinalDayHourMode = !isBeforeCutoff && dayCount === 0 && !isNonWorkingToday;
-  if (isFinalDayHourMode){
-    return { mode: 'hours', ...hoursUntilHomeTime(now) };
+// Walks backward from `beforeDate` (exclusive) to the closest working day —
+// skips weekends and BANK HOLIDAY-tagged dates. Used to find the real last
+// working day before a holiday block starts.
+function findLastWorkingDayBefore(beforeDate){
+  let d = addDays(beforeDate, -1);
+  while (isWeekend(d) || (comments[fmtKey(d)] || '').trim().toUpperCase() === 'BANK HOLIDAY'){
+    d = addDays(d, -1);
   }
+  return d;
+}
+
+// Walks forward from `holidayStart` while the HOLIDAY tag continues,
+// returning the last contiguous day of that block.
+function findHolidayBlockEnd(holidayStart){
+  let d = holidayStart;
+  while ((comments[fmtKey(addDays(d, 1))] || '').trim().toUpperCase() === 'HOLIDAY'){
+    d = addDays(d, 1);
+  }
+  return d;
+}
+
+// Walks forward from `afterDate` (exclusive) to the next genuine working
+// day — skips weekends, BANK HOLIDAY, and any further HOLIDAY tags (in case
+// two holiday blocks sit close together). Used for the "back to work" date.
+function findNextWorkingDayAfter(afterDate){
+  let d = addDays(afterDate, 1);
+  while (isWeekend(d) || ['BANK HOLIDAY', 'HOLIDAY'].includes((comments[fmtKey(d)] || '').trim().toUpperCase())){
+    d = addDays(d, 1);
+  }
+  return d;
+}
+
+// Decides what the holiday card should show. Three modes:
+//  - 'off'   — today is already within the holiday's calendar gap (the
+//              stretch between your last working day finishing and the
+//              block starting, e.g. the weekend before a Monday start) or
+//              within the tagged block itself. Persists all the way
+//              through to the day before you're back at work.
+//  - 'hours' — today is genuinely the last working day, it's past
+//              HOLIDAY_COUNTDOWN_CUTOFF_HOUR, and home time hasn't arrived yet.
+//  - 'days'  — the default working-day count, for every day before that.
+// `today` is the calendar-only date used elsewhere in render(); `now` is
+// the live clock, used only for the hour-of-day checks here.
+// See holiday-countdown-time-aware-spec.md.
+function getHolidayCountdownState(today, now, holidayStart){
+  const holidayEnd = findHolidayBlockEnd(holidayStart);
+  const lastWorkingDay = findLastWorkingDayBefore(holidayStart);
+  const backToWorkDay = findNextWorkingDayAfter(holidayEnd);
+
+  if (today.getTime() > lastWorkingDay.getTime() && today.getTime() <= holidayEnd.getTime()){
+    return { mode: 'off', backToWorkDay };
+  }
+
+  if (today.getTime() === lastWorkingDay.getTime()){
+    const isBeforeCutoff = now.getHours() < HOLIDAY_COUNTDOWN_CUTOFF_HOUR;
+    if (isBeforeCutoff) return { mode: 'days', dayCount: 1 };
+    const h = hoursUntilHomeTime(now);
+    if (h.isPastHomeTime) return { mode: 'off', backToWorkDay };
+    return { mode: 'hours', hours: h.hours, minutes: h.minutes };
+  }
+
+  const isBeforeCutoff = now.getHours() < HOLIDAY_COUNTDOWN_CUTOFF_HOUR;
+  const dayCount = holidayWorkingDaysCount(today, holidayStart, isBeforeCutoff);
   return { mode: 'days', dayCount };
 }
 
@@ -3717,21 +3747,22 @@ function render(){
     const nowClock = new Date();
     const countdown = getHolidayCountdownState(today, nowClock, hDate);
 
-    let bigNumber, bigNumberStyle, labelText;
-    if (countdown.mode === 'hours'){
-      if (countdown.isPastHomeTime){
-        bigNumber = '🎉';
-        bigNumberStyle = '';
-        labelText = 'Enjoy your holiday';
-      } else {
-        bigNumber = `${countdown.hours}h ${countdown.minutes}m`;
-        bigNumberStyle = 'font-size:26px;'; // "Xh Ym" is wider than a bare day-count
-        labelText = "Until you're off for your holiday";
-      }
+    let bigNumber, bigNumberStyle, labelText, dateLine;
+    if (countdown.mode === 'off'){
+      bigNumber = '🎉';
+      bigNumberStyle = '';
+      labelText = 'Enjoy your holiday!';
+      dateLine = `Back to work ${dateLabel(countdown.backToWorkDay)}`;
+    } else if (countdown.mode === 'hours'){
+      bigNumber = `${countdown.hours}h ${countdown.minutes}m`;
+      bigNumberStyle = 'font-size:26px;'; // "Xh Ym" is wider than a bare day-count
+      labelText = "Until you're off for your holiday";
+      dateLine = dateLabel(hDate);
     } else {
       bigNumber = countdown.dayCount;
       bigNumberStyle = '';
       labelText = `Working day${countdown.dayCount===1?'':'s'} until your next holiday`;
+      dateLine = dateLabel(hDate);
     }
 
     holidayHtml = `
@@ -3739,7 +3770,7 @@ function render(){
         <div class="holiday-count" style="${bigNumberStyle}">${bigNumber}</div>
         <div class="holiday-info">
           <div class="holiday-label">${labelText}</div>
-          <div class="holiday-date">${dateLabel(hDate)}</div>
+          <div class="holiday-date">${dateLine}</div>
         </div>
       </div>`;
   }
@@ -5892,24 +5923,6 @@ async function fetchServiceDetails(serviceId, recoveryHint){
   }
 }
 
-// How many minutes from now until an "HH:MM" scheduled time, same-day —
-// same simple local-clock diff checkLikelyTrain/checkLikelyArrival
-// already use elsewhere (see their own nowMinutes lines), not the
-// Worker's UTC/BST-aware ukLocalTimeToEpoch, since this only ever runs
-// in the browser's own local timezone. Returns null for anything that
-// doesn't parse, and a negative number for a time already passed today
-// — callers deciding whether a service is likely just "not yet
-// activated" should only act on a positive result; a negative one means
-// the service should already be running; assumes today's date, so this
-// is not meant for a schedTime that's actually for tomorrow.
-function minutesUntilLocalTime(hhmm){
-  if (typeof hhmm !== 'string' || !/^\d{2}:\d{2}$/.test(hhmm)) return null;
-  const [hh, mm] = hhmm.split(':').map(Number);
-  const now = new Date();
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  return (hh * 60 + mm) - nowMinutes;
-}
-
 // Emergency Routes — the "Emergency" Live sub-tab's core check (see
 // emergency-routes-spec.md). Walks one route's legs in order, carrying
 // forward an "earliest departure time" cursor (starts as "now" for leg
@@ -7054,27 +7067,7 @@ function openLiveScreen(initialSubTab){
           if (!overlay.isConnected) return;
           row.style.opacity = '1';
           row.style.pointerEvents = '';
-          // Appended alongside the row's existing time/description/status
-          // grid cells (grid-column:1/-1 spans it under all three) rather
-          // than replacing them via innerHTML — the train itself is still
-          // useful to see, the failure is additional information, not a
-          // reason to hide what was already shown. Any message from an
-          // earlier failed attempt on this same row is cleared first, so
-          // repeated taps don't stack multiple lines underneath.
-          const existingMsg = row.querySelector('.rail-detail-row-msg');
-          if (existingMsg) existingMsg.remove();
-          const msgEl = document.createElement('div');
-          msgEl.className = 'rail-detail-row-msg';
-          msgEl.style.cssText = 'grid-column:1 / -1; margin-top:4px; font-size:12px;';
-          const minsAway = schedTime ? minutesUntilLocalTime(schedTime) : null;
-          if (minsAway !== null && minsAway > LIKELY_NOT_YET_ACTIVATED_MIN_AWAY){
-            msgEl.style.color = 'var(--ink-dim)';
-            msgEl.textContent = `Not showing live details yet — booked for ${schedTime}, try again closer to departure.`;
-          } else {
-            msgEl.style.color = '#ff8b7e';
-            msgEl.textContent = `Couldn't load that one (${e.message}) — tap to try again`;
-          }
-          row.appendChild(msgEl);
+          row.innerHTML = `<span style="color:#ff8b7e; font-size:12px;">Couldn't load that one (${escapeHtml(e.message)}) — tap another</span>`;
         }
       });
     });
