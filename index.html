@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-05.05:25'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-06.22:16'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -10281,15 +10281,22 @@ function openRailConfig(cameFromSettings){
         }
       });
 
-      // Invalidate cached performance for any train whose configuration
-      // changed. The sync routine will then fetch the current time/route data.
+      // Invalidate cached performance only for a train whose ROUTE changed
+      // (fromLoc/toLoc) — that's genuinely a different service. A pure
+      // time-only edit (e.g. a timetable change retiming 08:08 to 08:10)
+      // keeps the same key and its full history: the label above already
+      // updated, and this is deliberately not treated as invalidating,
+      // so Performance history continuity survives a retimed-but-otherwise-
+      // unchanged usual train. A removed train (no newTrain) or a newly
+      // added one (no oldTrain) has nothing to invalidate either way.
       const oldByKey = Object.fromEntries(railTrains.map(t => [t.key, t]));
       const newByKey = Object.fromEntries(draftTrains.map(t => [t.key, t]));
       const changedKeys = new Set();
       for (const key of new Set([...Object.keys(oldByKey), ...Object.keys(newByKey)])){
         const oldTrain = oldByKey[key];
         const newTrain = newByKey[key];
-        if (!oldTrain || !newTrain || oldTrain.time !== newTrain.time || oldTrain.fromLoc !== newTrain.fromLoc || oldTrain.toLoc !== newTrain.toLoc){
+        if (!oldTrain || !newTrain) continue;
+        if (oldTrain.fromLoc !== newTrain.fromLoc || oldTrain.toLoc !== newTrain.toLoc){
           changedKeys.add(key);
         }
       }
