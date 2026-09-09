@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-06.22:16'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-09.19:18'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6724,21 +6724,36 @@ function createStationPicker(opts){
   const initialValue = initialCode ? (initialName ? `${initialName} (${initialCode})` : initialCode) : '';
   wrap.innerHTML = `
     <input type="text" class="station-picker-input" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(initialValue)}"
-      style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); box-sizing:border-box;" />
+      style="width:100%; padding:10px 32px 10px 10px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); box-sizing:border-box;" />
+    <span class="station-picker-clear" style="display:${initialValue ? 'flex' : 'none'}; position:absolute; right:6px; top:0; bottom:0; width:22px; align-items:center; justify-content:center; cursor:pointer; color:var(--ink-dim); font-size:15px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">✕</span>
     <div class="station-picker-dropdown" style="display:none; position:absolute; left:0; right:0; top:100%; margin-top:4px; background:var(--board-2); border:1px solid var(--line); border-radius:8px; max-height:220px; overflow-y:auto; z-index:20;"></div>
   `;
   const input = wrap.querySelector('.station-picker-input');
   const dropdown = wrap.querySelector('.station-picker-dropdown');
+  const clearBtn = wrap.querySelector('.station-picker-clear');
   let selected = initialCode ? { code: initialCode.toUpperCase(), name: initialName || null } : { code: null, name: null };
 
   function closeDropdown(){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; }
+  function updateClearVisibility(){ clearBtn.style.display = input.value ? 'flex' : 'none'; }
 
   function pick(entry){
     selected = { code: entry.crs, name: entry.name };
     input.value = `${entry.name} (${entry.crs})`;
     closeDropdown();
+    updateClearVisibility();
     onChange(selected.code, selected.name);
   }
+
+  function clear(){
+    selected = { code: null, name: null };
+    input.value = '';
+    updateClearVisibility();
+    closeDropdown();
+    onChange(null, null);
+  }
+  // mousedown, not click — same reasoning as the dropdown options: fires
+  // before the input's blur handler would otherwise run first.
+  clearBtn.addEventListener('mousedown', (e) => { e.preventDefault(); clear(); });
 
   function renderMatches(q){
     const idx = stationIndexCache;
@@ -6785,6 +6800,7 @@ function createStationPicker(opts){
 
   input.addEventListener('input', () => {
     selected = { code: null, name: null }; // typing invalidates the old selection until re-confirmed
+    updateClearVisibility();
     renderMatches(input.value);
   });
   input.addEventListener('focus', () => { if (input.value) renderMatches(input.value); });
@@ -6797,9 +6813,11 @@ function createStationPicker(opts){
         const name = stationNameForCrs(raw);
         selected = { code: raw, name };
         input.value = name ? `${name} (${raw})` : raw;
+        updateClearVisibility();
         onChange(raw, name);
       } else if (raw === ''){
         selected = { code: null, name: null };
+        updateClearVisibility();
         onChange(null, null);
       }
       // else: unresolved free text left as typed — no valid selection
@@ -6810,7 +6828,8 @@ function createStationPicker(opts){
   return {
     el: wrap,
     getCode: () => selected.code,
-    getName: () => selected.name
+    getName: () => selected.name,
+    clear
   };
 }
 
@@ -7101,8 +7120,26 @@ function openLiveScreen(initialSubTab){
     if (!showAddForm) return;
 
     const resultsEl = document.getElementById('tracked-search-results');
-    const fromPicker = createStationPicker({ placeholder: 'From: name or code' });
-    const toPicker = createStationPicker({ placeholder: 'To (optional)' });
+    // Restores whichever from/to stations were last searched, so
+    // repeating the same lookup (e.g. checking the next available
+    // service on a route already searched once) doesn't mean retyping
+    // both stations from scratch every time the form is reopened.
+    let lastSearch = null;
+    try{ lastSearch = JSON.parse(localStorage.getItem('tracked-search-last') || 'null'); }catch(e){ lastSearch = null; }
+    function saveLastSearch(fromCode, fromName, toCode, toName){
+      try{ localStorage.setItem('tracked-search-last', JSON.stringify({ fromCode, fromName, toCode, toName })); }
+      catch(e){ /* save failed silently — worst case, next open just starts blank */ }
+    }
+    const fromPicker = createStationPicker({
+      placeholder: 'From: name or code',
+      initialCode: lastSearch && lastSearch.fromCode,
+      initialName: lastSearch && lastSearch.fromName
+    });
+    const toPicker = createStationPicker({
+      placeholder: 'To (optional)',
+      initialCode: lastSearch && lastSearch.toCode,
+      initialName: lastSearch && lastSearch.toName
+    });
     document.getElementById('tracked-picker-row').appendChild(fromPicker.el);
     document.getElementById('tracked-picker-row').appendChild(toPicker.el);
 
@@ -7143,11 +7180,19 @@ function openLiveScreen(initialSubTab){
         return;
       }
       const fromLabel = fromPicker.getName() || fromCrs;
+      saveLastSearch(fromCrs, fromPicker.getName(), toCrs, toPicker.getName());
       resultsEl.innerHTML = `<div class="sub">Searching…</div>`;
       try{
-        const services = await fetchDebugBoard(fromCrs, toCrs);
+        const allServices = await fetchDebugBoard(fromCrs, toCrs);
+        // Drop anything already sitting in the Tracked list below — no
+        // point offering to track the same service twice, and it just
+        // clutters the results with an entry tapping it would've
+        // refreshed anyway rather than added.
+        const services = allServices.filter(s => !trackedTrains.some(t => t.serviceId === s.serviceID));
         if (services.length === 0){
-          resultsEl.innerHTML = `<div class="sub">No live services found for that station right now.</div>`;
+          resultsEl.innerHTML = allServices.length
+            ? `<div class="sub">No new services — every live result for that station is already in your Tracked list below.</div>`
+            : `<div class="sub">No live services found for that station right now.</div>`;
           return;
         }
         resultsEl.innerHTML = services.slice(0, 15).map(s => {
