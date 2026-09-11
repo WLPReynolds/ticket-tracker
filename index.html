@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-09.19:18'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-11.06:46'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3536,7 +3536,7 @@ function holidayWorkingDaysCount(today, holidayDate, includeToday){
 
 // Minutes-precision countdown to HOLIDAY_COUNTDOWN_HOME_HOUR:00 today.
 function hoursUntilHomeTime(now){
-  const home = new Date(now.getFullYear(), now.getMonth(), now.getDate(), HOLIDAY_COUNTDOWN_HOME_HOUR, 0, 0);
+  const home = londonWallClockOn(now, HOLIDAY_COUNTDOWN_HOME_HOUR, 0);
   const diffMs = Math.max(0, home - now);
   const hours = Math.floor(diffMs / 3600000);
   const minutes = Math.round((diffMs % 3600000) / 60000);
@@ -3597,14 +3597,14 @@ function getHolidayCountdownState(today, now, holidayStart){
   }
 
   if (today.getTime() === lastWorkingDay.getTime()){
-    const isBeforeCutoff = now.getHours() < HOLIDAY_COUNTDOWN_CUTOFF_HOUR;
+    const isBeforeCutoff = londonParts(now).hour < HOLIDAY_COUNTDOWN_CUTOFF_HOUR;
     if (isBeforeCutoff) return { mode: 'days', dayCount: 1 };
     const h = hoursUntilHomeTime(now);
     if (h.isPastHomeTime) return { mode: 'off', backToWorkDay };
     return { mode: 'hours', hours: h.hours, minutes: h.minutes };
   }
 
-  const isBeforeCutoff = now.getHours() < HOLIDAY_COUNTDOWN_CUTOFF_HOUR;
+  const isBeforeCutoff = londonParts(now).hour < HOLIDAY_COUNTDOWN_CUTOFF_HOUR;
   const dayCount = holidayWorkingDaysCount(today, holidayStart, isBeforeCutoff);
   return { mode: 'days', dayCount };
 }
@@ -5412,7 +5412,7 @@ function openDepartureBoardView(){
     const totalPages = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
     const safePage = page % totalPages;
     const pageRows = rows.slice(safePage * ROWS_PER_PAGE, safePage * ROWS_PER_PAGE + ROWS_PER_PAGE);
-    const clock = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    const clock = new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Europe/London' });
     // A failed fetch is shown outright rather than quietly presented as
     // an empty board — this is the actual content of the screen, not a
     // decorative extra, so silently hiding *why* it's empty just hides
@@ -6125,15 +6125,70 @@ function getCurrentPositionOnce(){
   });
 }
 
+// ---- UK wall-clock helpers ----------------------------------------------
+// Darwin sends every schedule/live time as UK wall-clock, but the device
+// running this app isn't guaranteed to be in the UK's own timezone (e.g.
+// while travelling). Building "h:m today" via Date.setHours()/getHours()
+// implicitly trusts the device's own zone, which silently drifted every
+// schedule time, countdown, and clock label by exactly the device/UK
+// offset — found live while Wayne was a timezone ahead of the UK on
+// holiday. These helpers resolve UK wall-clock values against a real,
+// zone-correct instant instead, via Intl's own BST/GMT transition dates
+// rather than a hand-rolled DST rule.
+
+// The UK's own UTC offset, in minutes, at the given real instant —
+// +60 during BST, 0 during GMT.
+function londonOffsetMinutes(date){
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London', timeZoneName: 'shortOffset'
+  }).formatToParts(date);
+  const tz = parts.find(p => p.type === 'timeZoneName');
+  const m = tz && tz.value.match(/GMT([+-]\d+)?/);
+  return (m && m[1] ? parseInt(m[1], 10) : 0) * 60;
+}
+
+// year/month(1-based)/day/hour/minute as they actually read on a UK wall
+// clock at the given real instant — the zone-correct equivalent of
+// date.getFullYear()/getMonth()/getDate()/getHours()/getMinutes(), which
+// only ever give the device's own zone.
+function londonParts(date){
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  }).formatToParts(date);
+  const get = t => parseInt(parts.find(p => p.type === t).value, 10);
+  return { year: get('year'), month: get('month'), day: get('day'), hour: get('hour') % 24, minute: get('minute'), second: get('second') };
+}
+
+// 'YYYY-MM-DD' for the given real instant's UK calendar day — the
+// zone-correct equivalent of fmtKey(new Date()) for anything keyed
+// against "today" as the UK, not the device, understands it.
+function londonDateKey(date){
+  const p = londonParts(date);
+  return `${p.year}-${String(p.month).padStart(2,'0')}-${String(p.day).padStart(2,'0')}`;
+}
+
+// The real instant for "h:m UK wall-clock time, on referenceDate's own
+// UK calendar day" — the zone-correct replacement for
+// `new Date(referenceDate); d.setHours(h, m, 0, 0)`, which silently set
+// h:m against the device's own zone instead of the UK's. Builds a UTC
+// guess first, then corrects using the real UK offset for that
+// approximate instant — right for all but the rare instant of the
+// BST/GMT transition itself, which doesn't matter here.
+function londonWallClockOn(referenceDate, h, m){
+  const { year, month, day } = londonParts(referenceDate);
+  const guessUtc = Date.UTC(year, month - 1, day, h, m, 0, 0);
+  const offsetMin = londonOffsetMinutes(new Date(guessUtc));
+  return new Date(guessUtc - offsetMin * 60000);
+}
+
 // Converts a train's live status (etd/eta, or "On time") for today into
 // an actual Date object, so it can be compared against the current time.
 function liveTimeToDate(hhmm, referenceDate){
   if (!hhmm || hhmm.length < 4) return null;
   const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
   if (isNaN(h) || isNaN(m)) return null;
-  const d = new Date(referenceDate);
-  d.setHours(h, m, 0, 0);
-  return d;
+  return londonWallClockOn(referenceDate, h, m);
 }
 
 // A bare "HH:MM" could plausibly belong to yesterday, today, or tomorrow
@@ -6150,9 +6205,11 @@ function closestDateForTime(hhmm, referenceDate){
   let best = base, bestDiff = Math.abs(best.getTime() - referenceDate.getTime());
   const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
   for (const dayOffset of [-1, 1]){
-    const candidate = new Date(referenceDate);
-    candidate.setDate(candidate.getDate() + dayOffset);
-    candidate.setHours(h, m, 0, 0);
+    // Shift the real instant by a whole day first, then re-resolve h:m
+    // against *that* instant's own UK calendar day — correct regardless
+    // of the device's zone, unlike mutating date/hour components directly.
+    const shiftedRef = new Date(referenceDate.getTime() + dayOffset * 24*60*60*1000);
+    const candidate = londonWallClockOn(shiftedRef, h, m);
     const diff = Math.abs(candidate.getTime() - referenceDate.getTime());
     if (diff < bestDiff){ bestDiff = diff; best = candidate; }
   }
@@ -6225,10 +6282,10 @@ function resolveCallingPointClockTime(cp){
 // every open.
 async function checkLikelyTrain(){
   if (!railTrains || railTrains.length === 0) return;
-  const now = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate(),
-                        new Date().getHours(), new Date().getMinutes());
-  const todayKeyLocal = fmtKey(now);
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const now = new Date();
+  const nowLondonParts = londonParts(now);
+  const todayKeyLocal = londonDateKey(now);
+  const nowMinutes = nowLondonParts.hour * 60 + nowLondonParts.minute;
 
   for (const direction of ['AM', 'PM']){
     const dirTrains = railTrains.filter(t => t.direction === direction).sort((a,b) => a.time.localeCompare(b.time));
@@ -6343,10 +6400,10 @@ async function checkLikelyTrain(){
 // is as precisely matched as the departure side's own logic.
 async function checkLikelyArrival(){
   if (!railTrains || railTrains.length === 0) return;
-  const now = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate(),
-                        new Date().getHours(), new Date().getMinutes());
-  const todayKeyLocal = fmtKey(now);
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const now = new Date();
+  const nowLondonParts = londonParts(now);
+  const todayKeyLocal = londonDateKey(now);
+  const nowMinutes = nowLondonParts.hour * 60 + nowLondonParts.minute;
 
   for (const direction of ['AM', 'PM']){
     const dirTrains = railTrains.filter(t => t.direction === direction).sort((a,b) => a.time.localeCompare(b.time));
@@ -6469,8 +6526,8 @@ async function checkLikelyArrival(){
 function computeLikelyTrainCheckDelay(){
   if (!railTrains || railTrains.length === 0) return LIKELY_TRAIN_CHECK_INTERVAL_MS;
   const now = new Date();
-  const todayKeyLocal = fmtKey(now);
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const todayKeyLocal = londonDateKey(now);
+  const nowMinutes = londonParts(now).hour * 60 + londonParts(now).minute;
   for (const direction of ['AM', 'PM']){
     if (confirmedTrains[todayKeyLocal] && confirmedTrains[todayKeyLocal][direction] !== undefined) continue;
     const dirTrains = railTrains.filter(t => t.direction === direction);
@@ -7453,7 +7510,7 @@ function openLiveScreen(initialSubTab){
   // or "going to work".
   function isPrimaryDirection(route){
     if (!route || !route.legs.length) return false;
-    const isPM = new Date().getHours() >= 12;
+    const isPM = londonParts(new Date()).hour >= 12;
     const targetStation = isPM ? homeStation : workStation;
     const lastLeg = route.legs[route.legs.length - 1];
     return areaKeyFor(lastLeg.toName || lastLeg.to) === areaKeyFor(targetStation.name);
@@ -8429,8 +8486,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     if (hhmm.length < 4) return pointDates[i];
     const h = parseInt(hhmm.slice(0,2), 10), m = parseInt(hhmm.slice(2,4), 10);
     if (isNaN(h) || isNaN(m)) return pointDates[i];
-    const d = new Date(pointDates[i]);
-    d.setHours(h, m, 0, 0);
+    let d = londonWallClockOn(pointDates[i], h, m);
     // pointDates[i] (the schedule) is already correctly midnight-aware
     // via the day-inference used to build it — this just naively
     // applies the live time's hours/minutes to that same calendar day,
@@ -8446,7 +8502,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     // a "not yet arrived" pill both firing hours too soon) before fixing
     // this — both share this exact computation, so the one fix covers
     // both symptoms.
-    if (pointDates[i] - d > MIDNIGHT_ROLLOVER_THRESHOLD_MS) d.setDate(d.getDate() + 1);
+    if (pointDates[i] - d > MIDNIGHT_ROLLOVER_THRESHOLD_MS) d = new Date(d.getTime() + 24*60*60*1000);
     return d;
   });
   liveDates.forEach((t, i) => { if (t && t <= now) lastPassedIdx = i; });
@@ -9668,7 +9724,7 @@ function openTrainProgress(train, service){
       <div id="train-progress-refresh-bar-wrap" style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
         <div id="train-progress-refresh-fill" style="height:100%; width:0%; background:var(--amber);"></div>
       </div>
-      <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</div>
+      <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone: 'Europe/London'})}</div>
       <div id="train-progress-board-debug" style="display:none; font-family:monospace; font-size:10px; color:#6a7a8a; text-align:right; margin-top:-6px; margin-bottom:10px;"></div>
       <div id="train-progress-staff-debug" style="display:none; font-family:monospace; font-size:10px; color:#6a7a8a; white-space:pre-wrap; text-align:left; margin-bottom:10px; border:1px dashed var(--line); border-radius:6px; padding:6px;"></div>
       <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
@@ -9999,7 +10055,7 @@ function openTrainProgress(train, service){
     // a second one that could resolve out of order.
     if (refreshInFlight) return;
     refreshInFlight = true;
-    const stamp = () => new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    const stamp = () => new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone: 'Europe/London'});
     const lastCheckEl = overlay.querySelector('#train-progress-last-check');
     try{
       let freshService = null;
