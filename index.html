@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-13.22:38'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-14.08:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2058,6 +2058,7 @@ let likelyTrainCheckTimer = null;      // pending setTimeout handle, or null whe
 let likelyTrainChecksActive = false;   // true from startLikelyTrainChecks() until stopLikelyTrainChecks()
 let likelyTrainCycleRunning = false;   // guards against an overlapping cycle if one run takes longer than expected
 let dismissedLikelyTrainKeys = new Set(); // avoids re-suggesting the same match repeatedly in one session
+let notifiedLikelyTrainKeys = new Set(); // avoids re-sending the push notification for the same match on every poll cycle — the banner itself still refreshes each cycle, only the notification is one-shot per suggestionId
 // A passive, no-response-needed notice that the silent-confirm branch
 // above actually fired — the "no surprise, just quietly confirm it" path
 // otherwise leaves no trace anywhere the person would see it. Persisted
@@ -3017,11 +3018,11 @@ function findNextBuyDateKey(today, todayKeyParam){
 // Shows a local notification via the service worker, which is the more
 // reliable path for installed PWAs on Android compared to the plain
 // Notification constructor.
-async function showLocalNotification(title, body){
+async function showLocalNotification(title, body, tag){
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   try{
     const reg = await navigator.serviceWorker.ready;
-    reg.showNotification(title, { body, icon: 'icons/icon-192.png' });
+    reg.showNotification(title, { body, icon: 'icons/icon-192.png', tag, renotify: false });
   }catch(e){ /* notification failed silently — not critical */ }
 }
 
@@ -6382,7 +6383,10 @@ async function checkLikelyTrain(){
       const suggestionId = `${todayKeyLocal}-${direction}-${closest.key}`;
       if (dismissedLikelyTrainKeys.has(suggestionId)) continue;
       likelyTrainSuggestion = { dateKey: todayKeyLocal, direction, trainKey: closest.key, label: closest.label };
-      showLocalNotification('Is this your train?', `Looks like you might be on the delayed ${closest.label} instead of your usual one — open the app to confirm.`);
+      if (!notifiedLikelyTrainKeys.has(suggestionId)){
+        notifiedLikelyTrainKeys.add(suggestionId);
+        showLocalNotification('Is this your train?', `Looks like you might be on the delayed ${closest.label} instead of your usual one — open the app to confirm.`, suggestionId);
+      }
       render();
       return; // one interactive suggestion at a time is plenty
     } else if (closest && closest.key === nominal.key && closestDiff <= SILENT_CONFIRM_MAX_DIFF_MIN){
