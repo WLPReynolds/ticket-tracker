@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-14.13:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-14.20:04'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2524,9 +2524,20 @@ function pushConfirmedTrain(dateKey, direction, trainKey, label){
 // so if the watch already settled today's direction, checkLikelyTrain/
 // checkLikelyArrival see confirmedTrains already set on their very
 // first guard check and never attempt (or push) their own resolution —
-// no race in the common case. Explicitly clears the Worker's copy once
-// applied (best-effort; a 36h TTL server-side is the backstop if that
-// clear never lands — see darwin-live-worker.js).
+// no race in the common case.
+//
+// 2026-09-14: no longer explicitly clears the Worker's copy after
+// applying. It used to (best-effort, backstopped by the 36h TTL) — but
+// a different station's ping can still be mid-retry against the SAME
+// date+direction for up to 90 minutes (matchArrivalSide/
+// matchDepartureSide's own existing-guard is what stops it re-matching
+// something else), and deleting the confirmed record out from under
+// that guard let a stale retry land on an unrelated, later train — see
+// departure-match-drift-spec.md's second addendum. The phone's own
+// confirmedTrains[date][direction] guard (below) already prevents this
+// function from re-applying the same entry twice, so the explicit
+// clear was never actually needed for that purpose; the 36h TTL is
+// sufficient cleanup on its own.
 async function checkPendingConfirmation(){
   const todayKeyLocal = fmtKey(new Date());
   let pending;
@@ -2547,12 +2558,6 @@ async function checkPendingConfirmation(){
     silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: entry.trainKey, label: entry.label, source: 'watch' };
     saveSilentConfirmBanner();
     renderSilentConfirmBanner();
-
-    fetch(`${DARWIN_WORKER_URL}/api/pending-confirmation/clear`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: todayKeyLocal, direction })
-    }).catch(()=>{});
   }
 }
 async function saveRailPerfCache(){
