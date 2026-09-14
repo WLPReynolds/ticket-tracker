@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-14.08:30'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-14.13:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4436,6 +4436,13 @@ function render(){
         if (!confirmedTrains[s.dateKey]) confirmedTrains[s.dateKey] = {};
         confirmedTrains[s.dateKey][s.direction] = s.trainKey;
         await saveConfirmedTrains();
+        // 2026-09-14: the two silent-confirm paths (checkLikelyTrain,
+        // checkLikelyArrival) already push to the Worker so a watch
+        // ping around the same moment doesn't independently resolve
+        // the same thing — this interactive path was missing the same
+        // call, which let a departure-side watch mis-match pre-empt a
+        // correct interactive confirm (see departure-match-drift-spec).
+        pushConfirmedTrain(s.dateKey, s.direction, s.trainKey, s.label);
       }
       likelyTrainSuggestion = null;
       render();
