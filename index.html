@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-14.20:04'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-16.12:42'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6951,6 +6951,21 @@ function createStationPicker(opts){
 // identical and only ever needs updating in one place.
 const REFRESH_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.5L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.5L3 16"/><path d="M3 21v-5h5"/></svg>';
 
+// Last from/to searched on the Tracked tab's "Track a train" form
+// (2026-09-16, replacing a localStorage-backed version). Deliberately a
+// plain module-level variable, not localStorage: it needs to survive
+// switching sub-tabs and reopening the add form within one Live screen
+// session (the original point of remembering it at all — repeating a
+// lookup shouldn't mean retyping both stations), but genuinely not
+// survive a fresh app open, which localStorage did by design and Wayne
+// didn't want. Being plain memory also fixes a related bug: previously
+// the "X" clear button only cleared the on-screen picker, never the
+// persisted value, so switching tabs and back silently resurrected the
+// stations just cleared. Updated directly by the pickers' onChange below
+// (not just on Search), so a clear takes effect immediately everywhere
+// this gets read.
+let lastTrackedSearch = null;
+
 function openLiveScreen(initialSubTab){
   let activeSubTab = initialSubTab === 'tracked' ? 'tracked' : 'yours';
   let showAddForm = false;
@@ -7246,25 +7261,29 @@ function openLiveScreen(initialSubTab){
     if (!showAddForm) return;
 
     const resultsEl = document.getElementById('tracked-search-results');
-    // Restores whichever from/to stations were last searched, so
+    // Restores whichever from/to stations were last searched (this app
+    // session only — see lastTrackedSearch's own declaration), so
     // repeating the same lookup (e.g. checking the next available
     // service on a route already searched once) doesn't mean retyping
     // both stations from scratch every time the form is reopened.
-    let lastSearch = null;
-    try{ lastSearch = JSON.parse(localStorage.getItem('tracked-search-last') || 'null'); }catch(e){ lastSearch = null; }
     function saveLastSearch(fromCode, fromName, toCode, toName){
-      try{ localStorage.setItem('tracked-search-last', JSON.stringify({ fromCode, fromName, toCode, toName })); }
-      catch(e){ /* save failed silently — worst case, next open just starts blank */ }
+      lastTrackedSearch = { fromCode, fromName, toCode, toName };
     }
     const fromPicker = createStationPicker({
       placeholder: 'From: name or code',
-      initialCode: lastSearch && lastSearch.fromCode,
-      initialName: lastSearch && lastSearch.fromName
+      initialCode: lastTrackedSearch && lastTrackedSearch.fromCode,
+      initialName: lastTrackedSearch && lastTrackedSearch.fromName,
+      // Keeps lastTrackedSearch current the moment either field changes —
+      // in particular the "X" clear button, so a clear is reflected
+      // immediately if the person switches tabs and back, rather than
+      // only once Search is next pressed.
+      onChange: (code, name) => saveLastSearch(code, name, toPicker.getCode(), toPicker.getName())
     });
     const toPicker = createStationPicker({
       placeholder: 'To (optional)',
-      initialCode: lastSearch && lastSearch.toCode,
-      initialName: lastSearch && lastSearch.toName
+      initialCode: lastTrackedSearch && lastTrackedSearch.toCode,
+      initialName: lastTrackedSearch && lastTrackedSearch.toName,
+      onChange: (code, name) => saveLastSearch(fromPicker.getCode(), fromPicker.getName(), code, name)
     });
     document.getElementById('tracked-picker-row').appendChild(fromPicker.el);
     document.getElementById('tracked-picker-row').appendChild(toPicker.el);
@@ -7494,7 +7513,12 @@ function openLiveScreen(initialSubTab){
         trackedTrains = trackedTrains.filter((t, i) => !selected.has(i));
         commitEmergencyLegsToTracked(legsToAdd);
         pickerOverlay.remove();
-        renderEmergencyTab();
+        // switchTab (not renderEmergencyTab) so the "Tracked (N)" counter
+        // on the tab button actually refreshes and the person lands on
+        // the Tracked tab to see what they just added (2026-09-16) —
+        // previously this only re-rendered Emergency, leaving both the
+        // counter stale and the newly tracked route out of sight.
+        switchTab('tracked');
       });
       document.getElementById('emergency-drop-cancel').addEventListener('click', () => pickerOverlay.remove());
       pickerOverlay.addEventListener('click', (e) => { if (e.target === pickerOverlay) pickerOverlay.remove(); });
@@ -7532,7 +7556,12 @@ function openLiveScreen(initialSubTab){
       openEmergencyCapacityPicker(overflow, legsToAdd);
     } else {
       commitEmergencyLegsToTracked(legsToAdd);
-      renderEmergencyTab();
+      // switchTab (not renderEmergencyTab) so the "Tracked (N)" counter
+      // refreshes and the person lands on the Tracked tab to see what
+      // they just added (2026-09-16) — see the matching fix in
+      // openEmergencyCapacityPicker's confirm handler above for the
+      // overflow path.
+      switchTab('tracked');
     }
   }
 
@@ -8858,7 +8887,20 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // own row. Left alone (not overridden) when it's genuinely still
       // within its expected dwell — "Running on time" can be perfectly
       // correct there.
-      if (lastStaffPlatform && lastStaffPlatform.overrun) runningText = 'Delayed — not yet departed';
+      // Wording split from the overrun signal itself (2026-09-16) — found
+      // live on a train that departed exactly on time: overrun only means
+      // Staff hasn't confirmed the departure past Darwin's predicted etd,
+      // which for an on-time service is the scheduled time itself, so it
+      // goes true within seconds of an on-time departure purely from
+      // confirmation lag, not because the train is actually late.
+      // "Delayed" is only accurate once there's a genuine known delay
+      // figure (knownOverallDelay, already set just above whenever
+      // overallStatus.minutesLate is a real positive number); otherwise
+      // this stays a plain, non-judgemental "Not yet departed" — the pill
+      // on the row already says that on its own.
+      if (lastStaffPlatform && lastStaffPlatform.overrun){
+        runningText = knownOverallDelay > 0 ? `Delayed — ${knownOverallDelay} min late, not yet departed` : 'Not yet departed';
+      }
       // Three separate lines — where it is, its status, and why (if
       // known) — rather than one long line that wraps awkwardly with
       // longer station names.
@@ -9077,11 +9119,15 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
           statusText = `${minutesLateNow} min late`;
           statusColor = '#ff8b7e';
         } else {
-          // pointDates[i] missing, or the schedule genuinely hasn't
-          // passed yet (etd earlier than schedule, a real if unusual
-          // case) — falls back to the plain word rather than showing a
-          // zero or negative figure that would look like a bug.
-          statusText = 'Delayed';
+          // pointDates[i] missing, or the schedule has only just passed
+          // (rounds to zero minutes) or hasn't passed at all yet (etd
+          // earlier than schedule, a real if unusual case) — none of
+          // these are an actual known delay, just confirmation lag on a
+          // departure that may well have happened exactly on time
+          // (2026-09-16, found live on an on-time 17:31 departure).
+          // "Delayed" would be asserting something not yet known; stays
+          // neutral instead, same wording as the summary banner.
+          statusText = 'Not yet departed';
           statusColor = '#ff8b7e';
         }
       }
