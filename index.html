@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-16.15:29'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-16.23:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -8135,36 +8135,82 @@ function addMinutesToTime(hhmm, mins){
 
 const TRAIN_PROGRESS_ROW_HEIGHT = 54; // px — a sensible minimum row height; actual positioning now measures real rendered rows, not this value
 
-// Coach formation strip, Avanti-style horizontal scroll of coach boxes —
-// only ever rendered when GetServiceDetails actually included a
-// `formation.coaches[]` array, which isn't guaranteed on every service.
-// Deliberately displays whatever `coach.number` Darwin sends verbatim
-// (rather than re-lettering ourselves A/B/C...) since some operators may
-// already send letters through that field — unconfirmed until a real
-// example turns up (see buildFormationDebugHtml below for checking that).
-// The tapered end is applied to the last coach in array order purely to
-// visually match Avanti's own display; there's no confirmed signal in
-// the data for which physical end is the "front" of the train, so this
-// may need flipping once a real multi-coach service is inspected.
+// Vehicle-count → coach-letter lookup for Avanti's current declared
+// fleet, sourced and cross-checked against Avanti's own "Get to know
+// our Evero trains" material, RAIL magazine's 805/807 launch coverage,
+// and a RailUK Forums thread on Pendolino coach lettering (see
+// avanti-planned-formation-spec.md for the full sourcing notes — this
+// table is the same one that spec built for the now-removed planned-
+// formation feature; only its use here is new). Every vehicle count
+// below is unique across the current fleet, so the plain `length`
+// number alone is enough to pick the right sequence — no unit/headcode
+// lookup needed.
+const AVANTI_LENGTH_LETTERS = {
+  5: ['A','B','C','D','J'],                       // 805/0
+  7: ['A','B','C','D','E','H','J'],                // 807/0
+  9: ['A','B','C','D','E','F','H','J','K'],        // 390/0
+  10: ['A','B','C','D','J','L','M','N','P','K'],   // 805/0+805/0 coupled
+  11: ['A','B','C','D','E','F','U','G','H','J','K'], // 390/1
+};
+
+// Coach formation strip, Avanti-style horizontal scroll of coach boxes.
+// Two data tiers, tried in order:
+//
+// 1. Real per-coach data from GetServiceDetails' `formation.coaches[]`
+//    — full detail (class, loading, Darwin's own coach number/letter).
+//    Not guaranteed on every service; Avanti doesn't currently send it.
+//    Deliberately displays whatever `coach.number` Darwin sends
+//    verbatim (rather than re-lettering ourselves A/B/C...) since some
+//    operators may already send letters through that field —
+//    unconfirmed until a real example turns up (see
+//    buildFormationDebugHtml below for checking that). The tapered end
+//    is applied to the last coach in array order purely to visually
+//    match Avanti's own display; there's no confirmed signal in the
+//    data for which physical end is the "front" of the train, so this
+//    may need flipping once a real multi-coach service is inspected.
+//
+// 2. Fallback: Darwin's plain top-level `length` field — confirmed live
+//    (2026-09-16) to be populated on at least some Avanti services even
+//    when `formation.coaches[]` stays empty — mapped through
+//    AVANTI_LENGTH_LETTERS above. This only labels the coaches; there's
+//    no class/loading info in this tier, since that genuinely isn't in
+//    this data. Only attempted for Avanti (`operatorCode === 'VT'`),
+//    since the lettering table is specific to that fleet — a 3-car
+//    Transport for Wales `length` shouldn't go anywhere near it.
 function buildFormationHtml(service){
   const coaches = service && service.formation && Array.isArray(service.formation.coaches) ? service.formation.coaches : null;
-  if (!coaches || !coaches.length) return '';
-  const anyFirstClass = coaches.some(c => c.coachClass && /first/i.test(c.coachClass));
-  const boxes = coaches.map((c, idx) => {
-    const isFirstClass = c.coachClass && /first/i.test(c.coachClass);
-    const isTaperedEnd = idx === coaches.length - 1;
-    const label = (c.number !== undefined && c.number !== null && c.number !== '') ? escapeHtml(String(c.number)) : '?';
-    let loadingBar = '';
-    if (c.loadingSpecified && typeof c.loading === 'number'){
-      const pct = Math.max(0, Math.min(100, c.loading));
-      const barColor = pct >= 70 ? '#e05a4e' : (pct >= 35 ? 'var(--amber)' : 'var(--good)');
-      loadingBar = `<div style="position:absolute; left:3px; right:3px; bottom:3px; height:3px; border-radius:2px; background:rgba(255,255,255,0.15); overflow:hidden;"><div style="width:${pct}%; height:100%; background:${barColor};"></div></div>`;
-    }
-    return `<div style="flex:0 0 auto; position:relative; width:36px; height:42px; margin-right:2px; background:${isFirstClass ? 'color-mix(in srgb, var(--amber) 20%, var(--tile))' : 'var(--tile)'}; border:1px solid var(--line); ${isTaperedEnd ? 'border-top-right-radius:18px; border-bottom-right-radius:18px;' : 'border-radius:4px;'} display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${label}${loadingBar}</div>`;
+  if (coaches && coaches.length){
+    const anyFirstClass = coaches.some(c => c.coachClass && /first/i.test(c.coachClass));
+    const boxes = coaches.map((c, idx) => {
+      const isFirstClass = c.coachClass && /first/i.test(c.coachClass);
+      const isTaperedEnd = idx === coaches.length - 1;
+      const label = (c.number !== undefined && c.number !== null && c.number !== '') ? escapeHtml(String(c.number)) : '?';
+      let loadingBar = '';
+      if (c.loadingSpecified && typeof c.loading === 'number'){
+        const pct = Math.max(0, Math.min(100, c.loading));
+        const barColor = pct >= 70 ? '#e05a4e' : (pct >= 35 ? 'var(--amber)' : 'var(--good)');
+        loadingBar = `<div style="position:absolute; left:3px; right:3px; bottom:3px; height:3px; border-radius:2px; background:rgba(255,255,255,0.15); overflow:hidden;"><div style="width:${pct}%; height:100%; background:${barColor};"></div></div>`;
+      }
+      return `<div style="flex:0 0 auto; position:relative; width:36px; height:42px; margin-right:2px; background:${isFirstClass ? 'color-mix(in srgb, var(--amber) 20%, var(--tile))' : 'var(--tile)'}; border:1px solid var(--line); ${isTaperedEnd ? 'border-top-right-radius:18px; border-bottom-right-radius:18px;' : 'border-radius:4px;'} display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${label}${loadingBar}</div>`;
+    }).join('');
+    return `
+      <div id="train-progress-formation" style="margin-bottom:10px;">
+        <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${coaches.length} coach${coaches.length === 1 ? '' : 'es'}${anyFirstClass ? ' · amber = 1st class' : ''}</div>
+        <div style="display:flex; overflow-x:auto; padding-bottom:2px;">${boxes}</div>
+      </div>`;
+  }
+
+  const isAvanti = !!(service && service.operatorCode === 'VT');
+  const length = service && typeof service.length === 'number' ? service.length : null;
+  const letters = (isAvanti && length) ? AVANTI_LENGTH_LETTERS[length] : null;
+  if (!letters) return '';
+  const boxes = letters.map((letter, idx) => {
+    const isTaperedEnd = idx === letters.length - 1;
+    return `<div style="flex:0 0 auto; position:relative; width:36px; height:42px; margin-right:2px; background:var(--tile); border:1px solid var(--line); ${isTaperedEnd ? 'border-top-right-radius:18px; border-bottom-right-radius:18px;' : 'border-radius:4px;'} display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${letter}</div>`;
   }).join('');
   return `
     <div id="train-progress-formation" style="margin-bottom:10px;">
-      <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${coaches.length} coach${coaches.length === 1 ? '' : 'es'}${anyFirstClass ? ' · amber = 1st class' : ''}</div>
+      <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${letters.length} coaches · estimated from formation length, not live per-coach data</div>
       <div style="display:flex; overflow-x:auto; padding-bottom:2px;">${boxes}</div>
     </div>`;
 }
@@ -8177,9 +8223,17 @@ function buildFormationHtml(service){
 function buildFormationDebugHtml(service, showRawDebug){
   if (!showRawDebug) return '';
   const hasFormation = !!(service && service.formation);
-  const body = hasFormation
-    ? JSON.stringify(service.formation, null, 2)
-    : '(no "formation" field in this GetServiceDetails response)';
+  let body;
+  if (hasFormation){
+    body = JSON.stringify(service.formation, null, 2);
+  } else {
+    const isAvanti = !!(service && service.operatorCode === 'VT');
+    const length = service && typeof service.length === 'number' ? service.length : null;
+    const usingFallback = isAvanti && length && AVANTI_LENGTH_LETTERS[length];
+    body = usingFallback
+      ? `(no "formation" field — showing length-only fallback: length=${length}, operatorCode=VT)`
+      : `(no "formation" field in this GetServiceDetails response — length=${length ?? '·'}, operatorCode=${(service && service.operatorCode) || '·'})`;
+  }
   return `<div id="train-progress-formation-debug" style="font-family:monospace; font-size:10px; color:#6a7a8a; white-space:pre-wrap; margin-bottom:10px; max-height:160px; overflow-y:auto; border:1px dashed var(--line); border-radius:6px; padding:6px;">formation debug:
 ${escapeHtml(body)}</div>`;
 }
