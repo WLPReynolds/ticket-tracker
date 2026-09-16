@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-16.23:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-16.23:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -8153,6 +8153,22 @@ const AVANTI_LENGTH_LETTERS = {
   11: ['A','B','C','D','E','F','U','G','H','J','K'], // 390/1
 };
 
+// Returns the fallback letter sequence for a service, or null if the
+// fallback doesn't apply — either because real `formation.coaches[]`
+// data already exists (real data always takes precedence, so the
+// fallback is irrelevant), or because this isn't an Avanti service, or
+// because `length` doesn't match one of the fleet's known vehicle
+// counts. Shared between buildFormationHtml (the strip itself) and the
+// operator-line footnote below, so the two can never disagree about
+// whether the fallback is active for a given service.
+function getLengthOnlyFormationLetters(service){
+  const coaches = service && service.formation && Array.isArray(service.formation.coaches) ? service.formation.coaches : null;
+  if (coaches && coaches.length) return null;
+  const isAvanti = !!(service && service.operatorCode === 'VT');
+  const length = service && typeof service.length === 'number' ? service.length : null;
+  return (isAvanti && length) ? (AVANTI_LENGTH_LETTERS[length] || null) : null;
+}
+
 // Coach formation strip, Avanti-style horizontal scroll of coach boxes.
 // Two data tiers, tried in order:
 //
@@ -8172,11 +8188,13 @@ const AVANTI_LENGTH_LETTERS = {
 // 2. Fallback: Darwin's plain top-level `length` field — confirmed live
 //    (2026-09-16) to be populated on at least some Avanti services even
 //    when `formation.coaches[]` stays empty — mapped through
-//    AVANTI_LENGTH_LETTERS above. This only labels the coaches; there's
-//    no class/loading info in this tier, since that genuinely isn't in
-//    this data. Only attempted for Avanti (`operatorCode === 'VT'`),
-//    since the lettering table is specific to that fleet — a 3-car
-//    Transport for Wales `length` shouldn't go anywhere near it.
+//    AVANTI_LENGTH_LETTERS via getLengthOnlyFormationLetters above.
+//    This only labels the coaches; there's no class/loading info in
+//    this tier, since that genuinely isn't in this data. The tapered
+//    end goes on coach A (idx 0), not the last letter — confirmed
+//    against Avanti's own app (2026-09-16 screenshot), which shows the
+//    nose on A, left-to-right, opposite of tier 1's still-unconfirmed
+//    convention above.
 function buildFormationHtml(service){
   const coaches = service && service.formation && Array.isArray(service.formation.coaches) ? service.formation.coaches : null;
   if (coaches && coaches.length){
@@ -8200,17 +8218,15 @@ function buildFormationHtml(service){
       </div>`;
   }
 
-  const isAvanti = !!(service && service.operatorCode === 'VT');
-  const length = service && typeof service.length === 'number' ? service.length : null;
-  const letters = (isAvanti && length) ? AVANTI_LENGTH_LETTERS[length] : null;
+  const letters = getLengthOnlyFormationLetters(service);
   if (!letters) return '';
   const boxes = letters.map((letter, idx) => {
-    const isTaperedEnd = idx === letters.length - 1;
-    return `<div style="flex:0 0 auto; position:relative; width:36px; height:42px; margin-right:2px; background:var(--tile); border:1px solid var(--line); ${isTaperedEnd ? 'border-top-right-radius:18px; border-bottom-right-radius:18px;' : 'border-radius:4px;'} display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${letter}</div>`;
+    const isTaperedEnd = idx === 0;
+    return `<div style="flex:0 0 auto; position:relative; width:36px; height:42px; margin-right:2px; background:var(--tile); border:1px solid var(--line); ${isTaperedEnd ? 'border-top-left-radius:18px; border-bottom-left-radius:18px;' : 'border-radius:4px;'} display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${letter}</div>`;
   }).join('');
   return `
     <div id="train-progress-formation" style="margin-bottom:10px;">
-      <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${letters.length} coaches · estimated from formation length, not live per-coach data</div>
+      <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${letters.length} coaches*</div>
       <div style="display:flex; overflow-x:auto; padding-bottom:2px;">${boxes}</div>
     </div>`;
 }
@@ -9126,8 +9142,9 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
 
   let formationHtml = buildFormationHtml(service);
   const formationDebugHtml = buildFormationDebugHtml(service, showRawDebug);
+  const formationIsEstimated = !!getLengthOnlyFormationLetters(service);
 
-  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints, departsHere, firstPoint: points[0] || null, lastPoint: points[points.length - 1] || null, toLocIdx, formationHtml, formationDebugHtml };
+  return { summaryHtml, rowsHtml, lastPassedIdx, fraction, pointCount: points.length, anyReasonSuppressed, journeyFinished, weatherPoints, departsHere, firstPoint: points[0] || null, lastPoint: points[points.length - 1] || null, toLocIdx, formationHtml, formationDebugHtml, formationIsEstimated };
 }
 
 const TRAIN_PROGRESS_REFRESH_MS = 60 * 1000;
@@ -9759,6 +9776,7 @@ function openTrainProgress(train, service){
           <div id="train-progress-blob" style="position:absolute; left:6px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
           <div id="train-progress-rows">${initial.rowsHtml}</div>
           <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); margin-top:5px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
+          <div id="train-progress-formation-footnote" style="font-size:11px; color:var(--ink-dim); margin-top:2px; ${initial.formationIsEstimated ? '' : 'display:none;'}">* coach count estimated from formation length, not live per-coach data</div>
         </div>
       </div>
       <div class="modal-close" id="train-progress-close-btn" style="margin-top:16px;">Close</div>
@@ -10108,6 +10126,7 @@ function openTrainProgress(train, service){
         const blobEl = overlay.querySelector('#train-progress-blob');
         const reasonToggleWrap = overlay.querySelector('#train-progress-reason-toggle-wrap');
         const formationWrapEl = overlay.querySelector('#train-progress-formation-wrap');
+        const formationFootnoteEl = overlay.querySelector('#train-progress-formation-footnote');
         if (rowsEl) rowsEl.innerHTML = fresh.rowsHtml;
         if (summaryEl) summaryEl.innerHTML = fresh.summaryHtml;
         if (formationWrapEl) formationWrapEl.innerHTML = fresh.formationHtml + fresh.formationDebugHtml;
@@ -10116,6 +10135,7 @@ function openTrainProgress(train, service){
         applyWeather(fresh.weatherPoints, fresh.lastPassedIdx, fresh.fraction, renderGeneration);
         if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
         if (operatorEl) operatorEl.textContent = freshService.operator ? `Operator: ${freshService.operator}` : '';
+        if (formationFootnoteEl) formationFootnoteEl.style.display = fresh.formationIsEstimated ? '' : 'none';
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
         if (reasonToggleWrap) reasonToggleWrap.style.display = fresh.anyReasonSuppressed ? '' : 'none';
         // Connection's back — drop out of the offline/estimated state.
