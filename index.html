@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-17.12:44'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-17.15:51'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -8225,7 +8225,9 @@ function buildFormationHtml(service){
   }
 
   const letters = getLengthOnlyFormationLetters(service);
-  if (!letters) return '';
+  if (!letters){
+    return `<div id="train-progress-formation" style="margin-bottom:10px; font-size:11px; color:var(--ink-dim);">Coach information not available for this service</div>`;
+  }
   const boxes = letters.map((letter) => {
     return `<div style="flex:0 0 auto; position:relative; width:36px; height:34px; margin-right:2px; background:var(--tile); border:1px solid var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${letter}</div>`;
   }).join('');
@@ -8256,6 +8258,7 @@ function buildFormationDebugHtml(service, showRawDebug){
       : `(no "formation" field in this GetServiceDetails response — length=${length ?? '·'}, operatorCode=${(service && service.operatorCode) || '·'})`;
   }
   return `<div id="train-progress-formation-debug" style="font-family:monospace; font-size:10px; color:#6a7a8a; white-space:pre-wrap; margin-bottom:10px; max-height:160px; overflow-y:auto; border:1px dashed var(--line); border-radius:6px; padding:6px;">formation debug:
+serviceId: ${escapeHtml((service && service.serviceID) || '·')}
 ${escapeHtml(body)}</div>`;
 }
 
