@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-17.12:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-17.12:44'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -8178,7 +8178,7 @@ function getLengthOnlyFormationLetters(service){
 // (which physical end is the "front") — both tiers now always put the
 // nose on coach A / idx 0.
 function buildNoseSvg(){
-  return `<div style="flex:0 0 auto; margin-right:2px; display:flex; align-items:center;"><svg width="22" height="34" viewBox="0 0 22 34" style="display:block;"><polygon points="22,0 22,34 4,31" fill="color-mix(in srgb, var(--ink) 45%, var(--tile))" stroke="var(--line)" stroke-width="1"/></svg></div>`;
+  return `<div style="flex:0 0 auto; margin-right:2px; display:flex; align-items:center;"><svg width="22" height="34" viewBox="0 0 22 34" style="display:block;"><path d="M22,0 L5,32 Q3,34 6,34 L22,34 Z" fill="color-mix(in srgb, var(--ink) 45%, var(--tile))" stroke="var(--line)" stroke-width="1"/></svg></div>`;
 }
 
 // Coach formation strip, side-on view (Wayne's steer, 2026-09-17):
