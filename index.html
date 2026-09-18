@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-17.16:00'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-18.20:38'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1518,6 +1518,108 @@ const DEFAULT_RAIL_TRAINS = [
   { key: 'pm-1631', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1631', label: '16:31' },
   { key: 'pm-1831', direction: 'PM', fromLoc: 'WGN', toLoc: 'CRE', time: '1831', label: '18:31' },
 ];
+
+// ---------------------------------------------------------------------
+// Target-train alerts (2026-09-18, target-train-alert-spec.md, slice 1)
+//
+// The watch wakes at each train's "alert at" time, asks the Worker how the
+// day's TARGET train for that direction is running, and buzzes with
+// on time / delayed / cancelled + platform. Everything the watch needs is
+// pushed to the Worker by pushWatchConfig() below:
+//
+//   trainAlertConfig     trainKey -> { checkTime: 'HH:MM', earlyWarningLeadMin }
+//                        (localStorage 'train-alert-config'). A train with
+//                        no checkTime simply has no alert. earlyWarningLeadMin
+//                        is carried for the later early-warning slice and is
+//                        always null for now.
+//   defaultTargetTrains  { AM?: trainKey, PM?: trainKey } — which train to
+//                        report on when there's no override. Absent = no alert
+//                        for that direction. (localStorage 'target-trains')
+//   targetTrainOverrides dateKey -> { AM?: trainKey, PM?: trainKey } — the
+//                        evening-before "tomorrow I'm catching the 07:27"
+//                        control on the Live screen. Sparse: only a date/
+//                        direction that differs from the default is stored, and
+//                        past dates are pruned on load. (same 'target-trains' key)
+//
+// Nothing here is derived from data that isn't already in the app: the
+// commute-day rule is the same one findNextTravelDay/isEligibleRailDay
+// already use (a weekday is a commute day if it has no comment tag, or the
+// tag was overridden with "I still used the ticket today").
+// ---------------------------------------------------------------------
+const DEFAULT_TRAIN_ALERT_CONFIG = {
+  'am-0727': { checkTime: '06:30', earlyWarningLeadMin: null },
+  'am-0808': { checkTime: '07:15', earlyWarningLeadMin: null },
+  'pm-1631': { checkTime: '15:45', earlyWarningLeadMin: null },
+  'pm-1731': { checkTime: '16:00', earlyWarningLeadMin: null },
+  'pm-1831': { checkTime: '17:15', earlyWarningLeadMin: null },
+};
+const DEFAULT_TARGET_TRAINS = { AM: 'am-0808', PM: 'pm-1731' };
+const NON_TRAVEL_PUSH_DAYS = 60; // how far ahead the PWA tells the Worker which days aren't commutes
+const ALERT_CHECK_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+let trainAlertConfig = {};
+let defaultTargetTrains = {};
+let targetTrainOverrides = {};
+
+// First-run values (nothing stored yet): the spec's defaults, but only for
+// trains that actually exist in this install's railTrains.
+function defaultTrainAlertConfigFor(trains){
+  const out = {};
+  trains.forEach(t => { if (DEFAULT_TRAIN_ALERT_CONFIG[t.key]) out[t.key] = { ...DEFAULT_TRAIN_ALERT_CONFIG[t.key] }; });
+  return out;
+}
+function defaultTargetTrainsFor(trains){
+  const out = {};
+  ['AM', 'PM'].forEach(dir => {
+    const key = DEFAULT_TARGET_TRAINS[dir];
+    if (trains.some(t => t.key === key && t.direction === dir)) out[dir] = key;
+  });
+  return out;
+}
+
+// Drops overrides for past dates, unknown/removed trains, or a train filed
+// under the wrong direction. Called on load and whenever railTrains changes.
+function pruneTargetTrainOverrides(){
+  const todayKey = fmtKey(new Date());
+  Object.keys(targetTrainOverrides).forEach(dateKey => {
+    const per = targetTrainOverrides[dateKey];
+    if (dateKey < todayKey || !per || typeof per !== 'object'){ delete targetTrainOverrides[dateKey]; return; }
+    Object.keys(per).forEach(dir => {
+      if (dir !== 'AM' && dir !== 'PM'){ delete per[dir]; return; }
+      if (!railTrains.some(t => t.key === per[dir] && t.direction === dir)) delete per[dir];
+    });
+    if (!Object.keys(per).length) delete targetTrainOverrides[dateKey];
+  });
+}
+
+// Why a date isn't a commute, or null if it is: 'Weekend', or the tag text
+// (WFH, HOLIDAY, DENTIST, BANK HOLIDAY, a custom note...) — unless that tag
+// was overridden with "I still used the ticket today". Mirrors
+// isEligibleRailDay / findNextTravelDay exactly, so the watch and the
+// ticket counter can never disagree about what counts as a travel day.
+function nonTravelLabelFor(dateKey){
+  if (isWeekend(parseKey(dateKey))) return 'Weekend';
+  const comment = (comments[dateKey] || '').trim();
+  if (comment !== '' && !travelOverrides[dateKey]) return comment;
+  return null;
+}
+
+// The weekday dates in the next NON_TRAVEL_PUSH_DAYS days that are NOT
+// commutes, for the Worker. Weekends are deliberately left out — the Worker
+// works those out itself. A date missing from this list is treated as a
+// travel day, so an app that hasn't been opened for weeks errs towards a
+// spurious alert rather than a missed one.
+function computeNonTravelDates(){
+  const out = [];
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  for (let i = 0; i < NON_TRAVEL_PUSH_DAYS; i++){
+    const d = addDays(start, i);
+    if (isWeekend(d)) continue;
+    const key = fmtKey(d);
+    if (nonTravelLabelFor(key) !== null) out.push(key);
+  }
+  return out;
+}
 
 // Crewe and Wigan North Western: manually verified, field-tested
 // coordinates — gathered on-site (via a since-removed temporary debug
@@ -2093,6 +2195,21 @@ async function loadData(){
     const rt = localStorage.getItem('rail-trains');
     railTrains = rt ? JSON.parse(rt) : DEFAULT_RAIL_TRAINS.slice();
   }catch(e){ railTrains = DEFAULT_RAIL_TRAINS.slice(); }
+  // 2026-09-18 — target-train alert settings (see the block after
+  // DEFAULT_RAIL_TRAINS). Nothing stored yet -> the spec's defaults; a
+  // stored value, even an empty one, is respected as-is.
+  try{
+    const tac = localStorage.getItem('train-alert-config');
+    const parsed = tac ? JSON.parse(tac) : null;
+    trainAlertConfig = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : defaultTrainAlertConfigFor(railTrains);
+  }catch(e){ trainAlertConfig = defaultTrainAlertConfigFor(railTrains); }
+  try{
+    const tt = localStorage.getItem('target-trains');
+    const parsed = tt ? JSON.parse(tt) : null;
+    defaultTargetTrains = (parsed && parsed.defaultTargetTrains && typeof parsed.defaultTargetTrains === 'object') ? parsed.defaultTargetTrains : defaultTargetTrainsFor(railTrains);
+    targetTrainOverrides = (parsed && parsed.targetTrainOverrides && typeof parsed.targetTrainOverrides === 'object') ? parsed.targetTrainOverrides : {};
+  }catch(e){ defaultTargetTrains = defaultTargetTrainsFor(railTrains); targetTrainOverrides = {}; }
+  pruneTargetTrainOverrides();
   try{
     const rc = localStorage.getItem('rail-perf-cache');
     railPerfCache = rc ? JSON.parse(rc) : {};
@@ -2204,10 +2321,12 @@ async function loadData(){
 async function saveComments(){
   try{ localStorage.setItem('ticket-comments', JSON.stringify(comments)); }
   catch(e){ /* save failed silently; will retry next change */ }
+  schedulePushWatchConfig(); // 2026-09-18 — a day tagged (or untagged) WFH/HOLIDAY/etc changes which days the watch should stay quiet on
 }
 async function saveTravelOverrides(){
   try{ localStorage.setItem('ticket-travel-overrides', JSON.stringify(travelOverrides)); }
   catch(e){ /* save failed silently; will retry next change */ }
+  schedulePushWatchConfig(); // 2026-09-18 — "I still used the ticket today" turns a tagged day back into a commute
 }
 async function savePurchases(){
   try{ localStorage.setItem('ticket-purchases', JSON.stringify(purchases)); }
@@ -2338,38 +2457,107 @@ async function saveRailTrains(){
   pushWatchConfig();
 }
 
-// Pushes railTrains + both geofence radii to the Worker's WATCH_KV in
-// one shot, whenever either changes (called from saveRailTrains and
-// saveGeofenceSettings) — the watch reads the radii back via
-// GET /api/watch-config, and the same blob feeds station-ping matching
-// server-side. Fire-and-forget: if this fails (offline, Worker down),
-// nothing on the PWA's own side depends on it succeeding — the watch
-// just keeps using whatever it last fetched, and station-ping matching
-// simply won't have fresh data until the next successful push.
+async function saveTrainAlertConfig(){
+  try{ localStorage.setItem('train-alert-config', JSON.stringify(trainAlertConfig)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+  schedulePushWatchConfig();
+}
+async function saveTargetTrains(){
+  try{ localStorage.setItem('target-trains', JSON.stringify({ defaultTargetTrains, targetTrainOverrides })); }
+  catch(e){ /* save failed silently; will retry next change */ }
+  schedulePushWatchConfig();
+}
+
+// Builds what the Worker's WATCH_KV holds for the watch: railTrains + both
+// geofence radii (as before) plus, since 2026-09-18, the target-train alert
+// settings and the next NON_TRAVEL_PUSH_DAYS days that aren't commutes. Only
+// trains still in railTrains, with a valid alert time, are sent — the Worker
+// validates the shapes strictly and rejects a malformed push outright.
+function buildWatchConfigBody(){
+  const todayKey = fmtKey(new Date());
+  const alertCfg = {};
+  railTrains.forEach(t => {
+    const c = trainAlertConfig[t.key];
+    if (c && typeof c.checkTime === 'string' && ALERT_CHECK_TIME_PATTERN.test(c.checkTime)){
+      alertCfg[t.key] = { checkTime: c.checkTime, earlyWarningLeadMin: (typeof c.earlyWarningLeadMin === 'number') ? c.earlyWarningLeadMin : null };
+    }
+  });
+  const targets = {};
+  ['AM', 'PM'].forEach(dir => {
+    const key = defaultTargetTrains[dir];
+    if (key && railTrains.some(t => t.key === key && t.direction === dir)) targets[dir] = key;
+  });
+  const overrides = {};
+  Object.keys(targetTrainOverrides).forEach(dateKey => {
+    if (dateKey < todayKey) return;
+    const per = {};
+    ['AM', 'PM'].forEach(dir => {
+      const key = (targetTrainOverrides[dateKey] || {})[dir];
+      if (key && railTrains.some(t => t.key === key && t.direction === dir)) per[dir] = key;
+    });
+    if (Object.keys(per).length) overrides[dateKey] = per;
+  });
+  return {
+    railTrains, geofenceRadiusCrewe, geofenceRadiusWigan,
+    trainAlertConfig: alertCfg,
+    defaultTargetTrains: targets,
+    targetTrainOverrides: overrides,
+    nonTravelDates: computeNonTravelDates(),
+  };
+}
+
+// Pushes the watch-relevant config to the Worker's WATCH_KV in one shot —
+// the watch reads its geofence radii and (since 2026-09-18) its alert
+// schedule back via GET /api/watch-config, and the same blob feeds
+// station-ping matching and /api/train-status server-side. Fire-and-forget:
+// if this fails (offline, Worker down), nothing on the PWA's own side
+// depends on it succeeding — the watch just keeps using whatever it last
+// fetched, and the next push (this one now goes out on every app open and
+// foreground, not just Settings saves) catches it up.
 // 2026-09-01 — see wearos-companion-session-2026-09-01.md.
 //
-// TEMPORARY (2026-09-01): shows a toast with the outcome, purely to
-// verify this is actually reaching the Worker while testing from the
-// phone with no dev tools handy. Revert to the plain silent
-// fire-and-forget below once confirmed working — this isn't something
-// that should surface during ordinary use.
+// 2026-09-18: the temporary "Watch config pushed ✓" toast is gone — with a
+// push on every app open it would fire constantly. Failures are still
+// surfaced, but only the ones that mean something: the Worker REFUSING the
+// push (a non-2xx — e.g. a 400 for a field it doesn't like) shows a toast,
+// because that would otherwise fail silently and leave the watch on stale
+// config; a plain network failure (offline) only logs to the console.
+// keepalive lets a push started as the app is being backgrounded still
+// complete.
 function pushWatchConfig(){
   fetch(`${DARWIN_WORKER_URL}/api/watch-config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ railTrains, geofenceRadiusCrewe, geofenceRadiusWigan })
+    body: JSON.stringify(buildWatchConfigBody()),
+    keepalive: true
   })
     .then(async (resp) => {
-      if (resp.ok){
-        showToast('Watch config pushed ✓');
-      } else {
+      if (!resp.ok){
         const text = await resp.text().catch(()=> '');
-        showToast(`Watch config push failed: ${resp.status} ${text}`.slice(0, 200));
+        showToast(`Watch config not accepted: ${resp.status} ${text}`.slice(0, 200));
       }
     })
     .catch((e) => {
-      showToast(`Watch config push error: ${e.message}`.slice(0, 200));
+      console.warn('pushWatchConfig failed (offline?):', e && e.message);
     });
+}
+
+// Debounced variant for the many small triggers (tagging a day, changing a
+// target, app open/foreground) — several in quick succession collapse into
+// one push. The Worker also skips its own write when nothing has changed,
+// so an app open with nothing new costs one tiny request and no KV write.
+let watchConfigPushTimer = null;
+function schedulePushWatchConfig(){
+  if (watchConfigPushTimer) clearTimeout(watchConfigPushTimer);
+  watchConfigPushTimer = setTimeout(() => { watchConfigPushTimer = null; pushWatchConfig(); }, 2000);
+}
+// Called when the app is being backgrounded: a pending debounced push would
+// otherwise sit in a timer the OS may freeze, so send it now.
+function flushWatchConfigPush(){
+  if (!watchConfigPushTimer) return;
+  clearTimeout(watchConfigPushTimer);
+  watchConfigPushTimer = null;
+  pushWatchConfig();
 }
 
 // Fire-and-forget notice to the Worker that the PWA's own live check
@@ -5480,7 +5668,7 @@ const BACKUP_KEYS = [
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
   'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
   'ticket-period-start','ticket-purchases','ticket-seed-imported','ticket-travel-overrides',
-  'tickets-spent-card-dismissed','tracked-trains','weather-enabled','work-station'
+  'target-trains','tickets-spent-card-dismissed','tracked-trains','train-alert-config','weather-enabled','work-station'
 ];
 
 function exportBackup(){
@@ -6915,8 +7103,77 @@ function openLiveScreen(initialSubTab){
     return `<div class="rail-detail-row" data-train-key="${train.key}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText} ›</span></div>`;
   }
 
+  // ---- "Watch alert target" strip (2026-09-18, target-train-alert-spec.md) ----
+  // The evening-before override: which train the watch should report on for
+  // today or tomorrow, if not the default. Sits above the live board on the
+  // My trains tab (not on the rows themselves — those already tap through to
+  // train progress). Defaults to Today in the morning and Tomorrow from
+  // midday, since the point is setting it the evening before.
+  let targetStripDay = new Date().getHours() < 12 ? 'today' : 'tomorrow';
+  function targetStripDateKey(){
+    const d = new Date();
+    if (targetStripDay === 'tomorrow') d.setDate(d.getDate() + 1);
+    return fmtKey(d);
+  }
+  function renderTargetStrip(){
+    const el = document.getElementById('live-target-strip');
+    if (!el || !overlay.isConnected) return;
+    const dateKey = targetStripDateKey();
+    const overrides = targetTrainOverrides[dateKey] || {};
+    const noCommute = nonTravelLabelFor(dateKey);
+    const notes = [];
+    if (noCommute) notes.push(`${escapeHtml(noCommute)} — not a commute day, so no alerts.`);
+
+    function rowHtml(dir, label){
+      const trains = railTrains.filter(t => t.direction === dir).sort((a, b) => a.time.localeCompare(b.time));
+      if (!trains.length) return '';
+      const defTrain = trains.find(t => t.key === defaultTargetTrains[dir]);
+      const ovKey = overrides[dir] || '';
+      const effTrain = trains.find(t => t.key === (ovKey || defaultTargetTrains[dir]));
+      if (effTrain && !(trainAlertConfig[effTrain.key] && trainAlertConfig[effTrain.key].checkTime)){
+        notes.push(`No alert time set for the ${effTrain.label} — add one in Settings → Trains.`);
+      }
+      const opts = `<option value="">${defTrain ? `Default (${defTrain.label})` : 'Default (no alert)'}</option>` +
+        trains.map(t => `<option value="${t.key}" ${ovKey === t.key ? 'selected' : ''}>${t.label}</option>`).join('');
+      return `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;"><span style="width:62px; font-size:13px; color:var(--ink-dim);">${label}</span><select data-target-dir="${dir}" style="flex:1;">${opts}</select></div>`;
+    }
+    const rows = rowHtml('AM', 'Morning') + rowHtml('PM', 'Evening');
+
+    el.innerHTML = `
+      <div style="padding:12px; background:var(--tile); border:1px solid var(--line); border-radius:10px; margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <span style="font-weight:600; font-size:14px;">Watch alert target</span>
+          <span style="display:flex; gap:6px;">
+            <span class="chip ${targetStripDay === 'today' ? 'active' : ''}" data-target-day="today" style="padding:5px 11px;">Today</span>
+            <span class="chip ${targetStripDay === 'tomorrow' ? 'active' : ''}" data-target-day="tomorrow" style="padding:5px 11px;">Tomorrow</span>
+          </span>
+        </div>
+        <div style="font-size:12px; color:var(--ink-dim); margin-bottom:10px;">${dateLabel(parseKey(dateKey))}</div>
+        ${rows || '<div class="sub">No trains configured.</div>'}
+        ${notes.map(n => `<div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${n}</div>`).join('')}
+      </div>`;
+
+    el.querySelectorAll('[data-target-day]').forEach(chip => {
+      chip.addEventListener('click', () => { targetStripDay = chip.dataset.targetDay; renderTargetStrip(); });
+    });
+    el.querySelectorAll('select[data-target-dir]').forEach(sel => {
+      sel.addEventListener('change', async () => {
+        const dir = sel.dataset.targetDir;
+        const val = sel.value;
+        const per = targetTrainOverrides[dateKey] ? { ...targetTrainOverrides[dateKey] } : {};
+        // Sparse: choosing "Default" (or the train that already IS the
+        // default) stores nothing, rather than an override that just repeats it.
+        if (!val || val === defaultTargetTrains[dir]) delete per[dir]; else per[dir] = val;
+        if (Object.keys(per).length) targetTrainOverrides[dateKey] = per; else delete targetTrainOverrides[dateKey];
+        await saveTargetTrains();
+        renderTargetStrip();
+      });
+    });
+  }
+
   function renderYoursTab(){
-    bodyEl.innerHTML = `<div class="sub" id="live-board-status">Loading…</div><div id="live-board-content"></div>`;
+    bodyEl.innerHTML = `<div id="live-target-strip"></div><div class="sub" id="live-board-status">Loading…</div><div id="live-board-content"></div>`;
+    renderTargetStrip();
     if (!yoursBoardsPromise) yoursBoardsPromise = fetchLiveBoards();
     yoursBoardsPromise.then(boards => {
       // The person may have switched to the other sub-tab, or closed the
@@ -10384,18 +10641,39 @@ function openRailConfig(cameFromSettings){
   // Edit a private copy. Add/remove/time changes should not affect the live
   // configuration until Save is pressed; Cancel must genuinely cancel.
   let draftTrains = railTrains.map(t => ({ ...t }));
+  // 2026-09-18 — target-train alert settings, edited alongside the trains
+  // and committed on the same Save. Held separately from draftTrains so the
+  // existing draft/Save/Cancel behaviour for the times themselves is
+  // untouched. draftAlertCheck: trainKey -> 'HH:MM' or '' (no alert);
+  // draftDefaultTargets: { AM, PM } -> trainKey or '' (none). The 'change'
+  // listeners below write into these as you go, so add/remove re-renders
+  // don't lose an alert time you've just entered.
+  const draftAlertCheck = {};
+  railTrains.forEach(t => { draftAlertCheck[t.key] = (trainAlertConfig[t.key] && trainAlertConfig[t.key].checkTime) || ''; });
+  const draftDefaultTargets = { AM: defaultTargetTrains.AM || '', PM: defaultTargetTrains.PM || '' };
 
   function buildSectionHtml(direction, title, fromLoc, toLoc){
     const trains = draftTrains.filter(t => t.direction === direction).sort((a, b) => a.time.localeCompare(b.time));
     const rows = trains.map(t => `
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <input type="time" class="rail-time-input" data-key="${t.key}" value="${t.time.slice(0,2)}:${t.time.slice(2,4)}" style="flex:1;" />
-        <span class="modal-close" data-remove-key="${t.key}" style="margin:0; font-size:13px;">Remove</span>
+      <div style="margin-bottom:12px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <input type="time" class="rail-time-input" data-key="${t.key}" value="${t.time.slice(0,2)}:${t.time.slice(2,4)}" style="flex:1;" />
+          <span class="modal-close" data-remove-key="${t.key}" style="margin:0; font-size:13px;">Remove</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:12px; color:var(--ink-dim); white-space:nowrap;">Watch alert at</span>
+          <input type="time" class="rail-check-input" data-key="${t.key}" value="${draftAlertCheck[t.key] || ''}" style="flex:1;" />
+          <span class="modal-close" data-clear-check-key="${t.key}" style="margin:0; font-size:13px;">Clear</span>
+        </div>
       </div>`).join('');
+    const defaultOptions = `<option value="">None — no alerts</option>` + trains.map(t =>
+      `<option value="${t.key}" ${draftDefaultTargets[direction] === t.key ? 'selected' : ''}>${t.label}</option>`).join('');
     return `
       <div class="rail-col-header">${title} (${fromLoc} → ${toLoc})</div>
       <div id="rail-section-${direction}">${rows}</div>
       <div class="settings-link" id="rail-add-${direction}" style="margin-top:4px; margin-bottom:16px;">+ Add another time</div>
+      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Default watch-alert train</label>
+      <select class="rail-default-target" data-direction="${direction}" style="margin-bottom:18px;">${defaultOptions}</select>
     `;
   }
 
@@ -10404,6 +10682,7 @@ function openRailConfig(cameFromSettings){
       <div class="modal">
         <h3>Usual trains</h3>
         <div class="sub">Used to check delay repay eligibility on your travel days. Add every time you sometimes catch, not just your default.</div>
+        <div class="sub">Watch alert: at the time set for a train, your watch checks how the day's target train is running and buzzes with on time / delayed / cancelled and the platform. Leave a train's time blank for no alert. You can switch tomorrow's target train on the Live screen.</div>
         ${buildSectionHtml('AM', 'Morning', 'CRE', 'WGN')}
         ${buildSectionHtml('PM', 'Evening', 'WGN', 'CRE')}
         <button class="save-btn" id="rail-config-save">Save</button>
@@ -10419,6 +10698,24 @@ function openRailConfig(cameFromSettings){
         draftTrains = draftTrains.filter(t => t.key !== el.dataset.removeKey);
         renderConfig();
       });
+    });
+
+    // 2026-09-18 — target-train alert inputs (see draftAlertCheck above).
+    overlay.querySelectorAll('.rail-check-input').forEach(inp => {
+      inp.addEventListener('change', () => { draftAlertCheck[inp.dataset.key] = inp.value || ''; });
+    });
+    overlay.querySelectorAll('[data-clear-check-key]').forEach(el => {
+      el.addEventListener('click', () => {
+        const key = el.dataset.clearCheckKey;
+        draftAlertCheck[key] = '';
+        // Direct DOM update rather than renderConfig(), so an unsaved
+        // change to a train's own time above isn't thrown away by a re-render.
+        const inp = overlay.querySelector(`.rail-check-input[data-key="${key}"]`);
+        if (inp) inp.value = '';
+      });
+    });
+    overlay.querySelectorAll('.rail-default-target').forEach(sel => {
+      sel.addEventListener('change', () => { draftDefaultTargets[sel.dataset.direction] = sel.value; });
     });
 
     overlay.querySelector('#rail-config-save').addEventListener('click', async () => {
@@ -10458,7 +10755,33 @@ function openRailConfig(cameFromSettings){
       }
 
       railTrains = draftTrains;
+
+      // 2026-09-18 — commit the alert settings alongside the trains. Only
+      // trains still present, with a valid time, keep an alert; a default
+      // target that was removed (or set to None) means no alert for that
+      // direction, and any override pointing at a removed train is dropped.
+      overlay.querySelectorAll('.rail-check-input').forEach(inp => { draftAlertCheck[inp.dataset.key] = inp.value || ''; });
+      overlay.querySelectorAll('.rail-default-target').forEach(sel => { draftDefaultTargets[sel.dataset.direction] = sel.value; });
+      const nextAlertConfig = {};
+      draftTrains.forEach(t => {
+        const v = draftAlertCheck[t.key];
+        if (v && ALERT_CHECK_TIME_PATTERN.test(v)){
+          const prev = trainAlertConfig[t.key];
+          nextAlertConfig[t.key] = { checkTime: v, earlyWarningLeadMin: (prev && typeof prev.earlyWarningLeadMin === 'number') ? prev.earlyWarningLeadMin : null };
+        }
+      });
+      trainAlertConfig = nextAlertConfig;
+      const nextDefaultTargets = {};
+      ['AM', 'PM'].forEach(dir => {
+        const k = draftDefaultTargets[dir];
+        if (k && draftTrains.some(t => t.key === k && t.direction === dir)) nextDefaultTargets[dir] = k;
+      });
+      defaultTargetTrains = nextDefaultTargets;
+      pruneTargetTrainOverrides();
+
       await saveRailTrains();
+      await saveTrainAlertConfig();
+      await saveTargetTrains();
       overlay.remove();
       railSyncMissingDates();
       if (cameFromSettings) openSettingsMenu(); else render();
@@ -12264,6 +12587,10 @@ function spawnFireworkBurst(container, colors){
 (async function init(){
   await loadData();
   render();
+  // 2026-09-18 — keep the Worker's picture of upcoming non-commute days
+  // (and everything else the watch alerts depend on) fresh on every app
+  // open. Debounced, and a no-op server-side if nothing changed.
+  schedulePushWatchConfig();
   runSeasonalEasterEgg();
   mountSilentConfirmBanner();
 
@@ -12289,8 +12616,10 @@ function spawnFireworkBurst(container, colors){
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden'){
       attemptDriveBackup();
+      flushWatchConfigPush(); // 2026-09-18 — don't leave a debounced push stranded in a frozen timer
       stopLikelyTrainChecks(); // no point polling while backgrounded — nothing can act on it anyway
     } else {
+      schedulePushWatchConfig(); // 2026-09-18 — foreground counts as "app open" for keeping the rolling non-travel window fresh
       // Same ordering as startup — the watch may have resolved
       // something while the phone was locked/backgrounded.
       checkPendingConfirmation().finally(startLikelyTrainChecks);
