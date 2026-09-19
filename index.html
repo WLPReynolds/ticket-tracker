@@ -283,6 +283,15 @@
     background: #ff8b7e;
     margin-top: 3px;
   }
+  /* "Buy Ticket" day — off-white (same tone as the day numbers) rather than
+     a hue, so it stays distinguishable from the amber comment dot and the
+     red delay dots by brightness as well as colour. */
+  .cal-dot-buy{
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--ink);
+    margin-top: 3px;
+  }
   .eyebrow{
     font-size: 11px;
     letter-spacing: 3px;
@@ -1230,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-19.12:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-19.23:09'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -11427,6 +11436,14 @@ function openPassPhotoManager(cameFromSettings){
   });
 }
 
+// True when the projection behind the main list's Buy Ticket line puts a
+// ticket purchase on this day. Today onwards only, matching the calendar dot.
+function isBuyTicketDay(key, todayKey){
+  if (key < todayKey) return false;
+  const st = computeStates(parseKey(key));
+  return !!(st[key] && st[key].buyFlag);
+}
+
 function openCalendarDayDetail(key){
   const d = parseKey(key);
   const todayKeyLocal = fmtKey(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()));
@@ -11438,6 +11455,12 @@ function openCalendarDayDetail(key){
   const commentHtml = comment ? `
     <div class="rail-col-header">Logged</div>
     <div class="rail-detail-row"><span>${escapeHtml(comment)}</span>${travelOverrides[key] ? '<span style="color:var(--ink-dim);">counted anyway</span>' : ''}</div>
+  ` : '';
+
+  const buyHtml = isBuyTicketDay(key, todayKeyLocal) ? `
+    <div style="${commentHtml ? 'margin-top:14px;' : ''}">
+      <div class="rail-detail-row"><span><span class="cal-dot-buy" style="display:inline-block; margin:0 8px 1px 0;"></span>Buy Ticket</span></div>
+    </div>
   ` : '';
 
   let delayHtml = '';
@@ -11457,7 +11480,7 @@ function openCalendarDayDetail(key){
       </div>`;
   }
 
-  const bodyHtml = (commentHtml || delayHtml) ? (commentHtml + delayHtml) : `<div class="sub">Nothing logged for this day.</div>`;
+  const bodyHtml = (commentHtml || buyHtml || delayHtml) ? (commentHtml + buyHtml + delayHtml) : `<div class="sub">Nothing logged for this day.</div>`;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -11908,6 +11931,12 @@ function openCalendarView(){
     // Monday-first offset: JS getDay() is 0=Sun..6=Sat, shift so Mon=0..Sun=6
     const leadingBlanks = (firstOfMonth.getDay() + 6) % 7;
 
+    // Projected "Buy Ticket" days for this month, from the same
+    // computeStates() buyFlag that drives the main list's Buy Ticket line.
+    // Only today onwards — same rule as findNextBuyDateKey(), and past
+    // days have no live reminder to show.
+    const buyStates = computeStates(new Date(viewYear, viewMonth + 1, 0));
+
     let cells = weekdayLabels.map(w => `<div class="cal-weekday">${w}</div>`).join('');
     for (let i = 0; i < leadingBlanks; i++){
       cells += `<div class="cal-day empty"></div>`;
@@ -11925,8 +11954,9 @@ function openCalendarView(){
       const delayDotHtml = delayStatus === 'confirmed' ? '<span class="cal-dot-confirmed"></span>'
         : delayStatus === 'maybe' ? '<span class="cal-dot-delay"></span>'
         : '';
-      const dots = (hasEntry || delayStatus)
-        ? `<span class="cal-dot-row">${hasEntry ? '<span class="cal-dot"></span>' : ''}${delayDotHtml}</span>`
+      const isBuyDay = key >= todayKeyLocal && !!(buyStates[key] && buyStates[key].buyFlag);
+      const dots = (hasEntry || isBuyDay || delayStatus)
+        ? `<span class="cal-dot-row">${hasEntry ? '<span class="cal-dot"></span>' : ''}${isBuyDay ? '<span class="cal-dot-buy"></span>' : ''}${delayDotHtml}</span>`
         : '';
       cells += `<div class="cal-day ${weekend ? 'weekend' : ''} ${isToday ? 'today' : ''}" data-key="${key}">
         <span>${day}</span>${dots}
