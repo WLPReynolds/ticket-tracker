@@ -1230,7 +1230,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-19.06:22'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-19.12:45'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3090,12 +3090,18 @@ async function showLocalNotification(title, body, tag){
   }catch(e){ /* notification failed silently — not critical */ }
 }
 
+// 2026-09-19 — Google only calls `callback` on success. If the consent popup is
+// blocked, closed or dismissed it calls `error_callback` instead, which used to
+// be unset — so the awaiting promise hung forever and (for Drive backup) left
+// the in-flight lock stuck. See getGoogleAccessToken().
+let googleTokenErrorHandler = null;
 function ensureGoogleTokenClient(){
   if (!googleTokenClient && window.google && google.accounts && google.accounts.oauth2){
     const config = {
       client_id: GOOGLE_CLIENT_ID,
       scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.file',
-      callback: () => {} // overridden per-request below
+      callback: () => {}, // overridden per-request below
+      error_callback: (err) => { if (googleTokenErrorHandler) googleTokenErrorHandler(err); }
     };
     if (preferredGoogleEmail) config.login_hint = preferredGoogleEmail;
     googleTokenClient = google.accounts.oauth2.initTokenClient(config);
@@ -3103,26 +3109,45 @@ function ensureGoogleTokenClient(){
   return googleTokenClient;
 }
 
+const GOOGLE_TOKEN_TIMEOUT_MS = 20 * 1000;
 // Gets a valid Google access token, reusing a cached one if it hasn't
 // expired yet. Must be called from within a genuine user gesture (a
 // click handler) the first time, or the browser may block the consent
 // popup — this is why calendar syncing happens via a tappable prompt
 // rather than automatically in the background.
-function getGoogleAccessToken(){
+// opts.interactive === false: only ever return a cached token — never open
+// Google's popup. Used by the automatic (no-tap) Drive backup, where a popup
+// has no user gesture behind it and iOS just blocks it.
+function getGoogleAccessToken(opts){
+  const interactive = !opts || opts.interactive !== false;
   return new Promise((resolve) => {
     if (cachedAccessToken && Date.now() < cachedTokenExpiry){
       resolve(cachedAccessToken);
       return;
     }
+    if (!interactive){ resolve(null); return; }
     const client = ensureGoogleTokenClient();
     if (!client){ resolve(null); return; }
+    let settled = false;
+    let timer = null;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      googleTokenErrorHandler = null;
+      resolve(val);
+    };
+    timer = setTimeout(() => finish(null), GOOGLE_TOKEN_TIMEOUT_MS);
+    googleTokenErrorHandler = () => finish(null);
     client.callback = (resp) => {
       if (resp && resp.access_token){
+        // Cache even if we've already timed out — a slow consent that
+        // completes late still makes the next attempt instant.
         cachedAccessToken = resp.access_token;
         cachedTokenExpiry = Date.now() + (resp.expires_in ? resp.expires_in * 1000 : 3000000) - 60000;
-        resolve(cachedAccessToken);
+        finish(cachedAccessToken);
       } else {
-        resolve(null);
+        finish(null);
       }
     };
     client.requestAccessToken({ prompt: '' });
@@ -3222,19 +3247,29 @@ async function pruneOldDriveBackups(token, folderId){
 // actually uploads if something's changed since the last successful
 // backup AND the throttle window has passed — otherwise does nothing.
 let driveBackupInFlight = false; // guards against overlapping triggers — e.g. Google's own OAuth popup opening/closing can itself cause a visibility change, which could otherwise race with an explicit manual backup
+let driveBackupStartedAt = 0;
+let driveBackupRunId = 0;
+// 2026-09-19 — a lock that's been held this long is assumed stuck (a hung
+// request that never settled) and is ignored, so one bad attempt can no
+// longer block every later one until the app is reloaded.
+const DRIVE_BACKUP_INFLIGHT_STALE_MS = 90 * 1000;
 
 async function attemptDriveBackup(force){
-  if (driveBackupInFlight) return { ok: false, reason: 'already-in-progress' };
+  if (driveBackupInFlight && Date.now() - driveBackupStartedAt < DRIVE_BACKUP_INFLIGHT_STALE_MS) return { ok: false, reason: 'already-in-progress' };
   if (!driveBackupEnabled) return { ok: false, reason: 'not-enabled' };
   if (!force){
     if (!driveBackupDirty) return { ok: false, reason: 'nothing-changed' };
     if (Date.now() - lastDriveBackupTime < DRIVE_BACKUP_THROTTLE_MS) return { ok: false, reason: 'throttled' };
   }
   driveBackupInFlight = true;
+  driveBackupStartedAt = Date.now();
+  const myRunId = ++driveBackupRunId;
 
   try{
-    const token = await getGoogleAccessToken();
-    if (!token) return { ok: false, reason: 'no-token' };
+    // Automatic (non-forced) runs have no tap behind them, so they may only
+    // use an already-cached token; a manual tap may open Google's popup.
+    const token = await getGoogleAccessToken({ interactive: !!force });
+    if (!token) return { ok: false, reason: 'needs-reconnect' };
     const folderId = await ensureDriveBackupFolder(token);
     await uploadBackupToDrive(token, folderId);
     await pruneOldDriveBackups(token, folderId);
@@ -3246,7 +3281,97 @@ async function attemptDriveBackup(force){
   }catch(e){
     return { ok: false, reason: e.message }; // dirty flag stays set — will retry next opportunity
   }finally{
-    driveBackupInFlight = false;
+    if (myRunId === driveBackupRunId) driveBackupInFlight = false;
+    try{ renderBackupNudge(); }catch(e){ /* banner not mounted yet — not critical */ }
+  }
+}
+
+function driveBackupReasonText(reason){
+  if (reason === 'needs-reconnect') return "Google sign-in didn't complete";
+  if (reason === 'already-in-progress') return 'A backup is already running';
+  return reason;
+}
+
+// ---- Stale Drive backup nudge ----
+// Red banner (same fixed-top style as the silent-confirm banner) shown when
+// automatic Drive backup is on, something has changed since the last backup,
+// and that backup is 2+ days old. Automatic backups can't refresh Google's
+// ~1-hour sign-in without a tap, so this is the prompt to give it one.
+// Tapping the text is a genuine user gesture, so consent can go through.
+const DRIVE_BACKUP_STALE_MS = 2 * 24 * 60 * 60 * 1000;
+const BACKUP_NUDGE_SNOOZE_MS = 4 * 60 * 60 * 1000;
+let backupNudgeSnoozedUntil = 0; // in-memory only — an accidental dismiss can't hide it for long
+let backupNudgeBusy = false;
+let backupNudgeError = null;
+
+function backupNudgeShouldShow(){
+  if (backupNudgeBusy) return true;
+  if (!driveBackupEnabled || !driveBackupDirty) return false;
+  if (Date.now() < backupNudgeSnoozedUntil) return false;
+  return (Date.now() - lastDriveBackupTime) >= DRIVE_BACKUP_STALE_MS;
+}
+
+function mountBackupNudge(){
+  if (document.getElementById('backup-nudge-banner')) return;
+  const el = document.createElement('div');
+  el.id = 'backup-nudge-banner';
+  el.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:201; display:none; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; padding-top:calc(10px + env(safe-area-inset-top)); background:rgba(214,64,64,0.96); color:#fff; font-size:13.5px; font-weight:700; box-shadow:0 2px 8px rgba(0,0,0,0.35);';
+  el.innerHTML = `
+    <span id="backup-nudge-text" style="flex:1; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;"></span>
+    <span id="backup-nudge-dismiss" style="cursor:pointer; font-weight:800; font-size:16px; line-height:1; padding:6px 8px; margin:-6px -6px -6px 0; -webkit-user-select:none; user-select:none; touch-action:manipulation;">×</span>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('backup-nudge-text').addEventListener('click', runBackupNudge);
+  document.getElementById('backup-nudge-dismiss').addEventListener('click', () => {
+    backupNudgeSnoozedUntil = Date.now() + BACKUP_NUDGE_SNOOZE_MS;
+    backupNudgeError = null;
+    renderBackupNudge();
+  });
+  renderBackupNudge();
+}
+
+// attemptDriveBackup(true) is called synchronously from the tap handler
+// (nothing awaited first) so Google's popup still counts as user-initiated.
+async function runBackupNudge(){
+  if (backupNudgeBusy) return;
+  backupNudgeBusy = true;
+  backupNudgeError = null;
+  renderBackupNudge();
+  const result = await attemptDriveBackup(true);
+  backupNudgeBusy = false;
+  backupNudgeError = result.ok ? null : driveBackupReasonText(result.reason);
+  renderBackupNudge();
+  if (result.ok) showToast('Backed up to Drive');
+}
+
+function renderBackupNudge(){
+  const el = document.getElementById('backup-nudge-banner');
+  const textEl = document.getElementById('backup-nudge-text');
+  if (!el || !textEl) return;
+  if (!backupNudgeShouldShow()){
+    el.style.display = 'none';
+    backupNudgeError = null; // resolved (backup succeeded elsewhere) or dismissed — don't resurrect a stale error later
+    return;
+  }
+  if (backupNudgeBusy){
+    textEl.textContent = 'Backing up to Drive…';
+  } else if (backupNudgeError){
+    textEl.textContent = `${backupNudgeError} — tap to retry`;
+  } else if (lastDriveBackupTime){
+    const days = Math.floor((Date.now() - lastDriveBackupTime) / 86400000);
+    textEl.textContent = `Drive backup is ${days} day${days === 1 ? '' : 's'} out of date — tap to back up now`;
+  } else {
+    textEl.textContent = 'No Drive backup yet — tap to back up now';
+  }
+  el.style.display = 'flex';
+  // Sit below the green silent-confirm banner if that's showing, rather than over it.
+  const green = document.getElementById('silent-confirm-banner');
+  if (green && green.style.display !== 'none' && green.offsetHeight > 0){
+    el.style.top = green.offsetHeight + 'px';
+    el.style.paddingTop = '10px';
+  } else {
+    el.style.top = '0';
+    el.style.paddingTop = 'calc(10px + env(safe-area-inset-top))';
   }
 }
 
@@ -4882,6 +5007,7 @@ Before you buy a new season ticket, the advisor checks your upcoming calendar (a
 1. Tap **More** $\\rightarrow$ **Backup & Restore**.
 2. Enable **Automatically back up to Google Drive**.
 3. Whenever you switch away from or close the app, it quietly checks if any data has changed. If changes were made and at least 30 minutes have passed since the last backup, it uploads a JSON file to a \`Ticket Tracker Backups\` folder in your Google Drive. It automatically keeps the 2 most recent backups and cleans up older ones.
+   Google's sign-in only lasts about an hour, and the app can't renew it without a tap. If the last Drive backup is over 2 days old and something has changed, a red banner appears at the top — tap it to back up (and re-authorise if asked).
 4. You can also manually export or restore a backup \`.json\` file at any time.
 
 ---
@@ -5708,7 +5834,7 @@ function openBackupRestore(){
         <input type="checkbox" id="drive-backup-toggle" ${driveBackupEnabled ? 'checked' : ''} style="width:16px; height:16px;" />
         Automatically back up to Google Drive
       </label>
-      <div class="sub" style="margin-bottom:10px;">Backs up whenever you leave the app, if something's changed and it's been at least 30 minutes since the last one. Keeps the 2 most recent backups in a "Ticket Tracker Backups" folder.</div>
+      <div class="sub" style="margin-bottom:10px;">Backs up whenever you leave the app, if something's changed and it's been at least 30 minutes since the last one. Keeps the 2 most recent backups in a "Ticket Tracker Backups" folder. Google's sign-in only lasts about an hour, so if a backup can't run on its own and the last one is over 2 days old, a red banner will ask you to tap to back up.</div>
       <div id="drive-backup-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">Last backup: ${lastBackupLabel}</div>
       <button class="save-btn" id="drive-backup-now-btn" ${driveBackupEnabled ? '' : 'disabled'}>Back up now</button>
 
@@ -5739,7 +5865,8 @@ function openBackupRestore(){
       const result = await attemptDriveBackup(true);
       driveStatus.textContent = result.ok
         ? `Last backup: ${new Date(lastDriveBackupTime).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
-        : `First backup failed: ${result.reason}`;
+        : `First backup failed: ${driveBackupReasonText(result.reason)} — tap Back up now to retry`;
+      renderBackupNudge();
     } else {
       driveBackupEnabled = false;
       await saveDriveBackupEnabled();
@@ -5753,7 +5880,8 @@ function openBackupRestore(){
     const result = await attemptDriveBackup(true);
     driveStatus.textContent = result.ok
       ? `Last backup: ${new Date(lastDriveBackupTime).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
-      : `Backup failed: ${result.reason}`;
+      : `Backup failed: ${driveBackupReasonText(result.reason)} — tap Back up now to retry`;
+    renderBackupNudge();
   });
 
   document.getElementById('backup-import-btn').addEventListener('click', () => {
@@ -12427,6 +12555,7 @@ function renderSilentConfirmBanner(){
   } else {
     el.style.display = 'none';
   }
+  renderBackupNudge(); // restack (or re-show) the red backup nudge relative to this banner
 }
 
 // One-off transient toast, e.g. for showing a decoded delay reason after
@@ -12592,6 +12721,8 @@ function spawnFireworkBurst(container, colors){
   schedulePushWatchConfig();
   runSeasonalEasterEgg();
   mountSilentConfirmBanner();
+  mountBackupNudge();
+  setInterval(renderBackupNudge, 5 * 60 * 1000); // stale-ness is time-based, so re-check while the app stays open
 
   // Pick up anything the watch already resolved via a station-ping
   // (overnight, or on the walk in with the phone away) BEFORE the live
@@ -12618,6 +12749,7 @@ function spawnFireworkBurst(container, colors){
       flushWatchConfigPush(); // 2026-09-18 — don't leave a debounced push stranded in a frozen timer
       stopLikelyTrainChecks(); // no point polling while backgrounded — nothing can act on it anyway
     } else {
+      renderBackupNudge(); // may have gone stale while backgrounded
       schedulePushWatchConfig(); // 2026-09-18 — foreground counts as "app open" for keeping the rolling non-travel window fresh
       // Same ordering as startup — the watch may have resolved
       // something while the phone was locked/backgrounded.
