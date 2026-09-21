@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-19.23:09'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-21.19:59'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -8568,10 +8568,40 @@ function getLengthOnlyFormationLetters(service){
 // edge touching coach A) and slopes down to a low point at the front,
 // matching a Pendolino/Avanti-style nose rather than a centred point.
 // This also settles what used to be an explicit unknown in tier 1 below
-// (which physical end is the "front") — both tiers now always put the
-// nose on coach A / idx 0.
+// (which physical end is the "front") — both tiers put the nose at the
+// leading (left-hand) end of whatever order is displayed. In tier 2 that
+// is NOT always coach A any more: on Wayne's PM (Wigan→Crewe) trains A
+// is the rear coach, so the fallback letters are displayed reversed and
+// the nose sits beside the last letter (see shouldReverseFallbackLetters).
 function buildNoseSvg(){
   return `<div style="flex:0 0 auto; margin-right:2px; display:flex; align-items:center;"><svg width="22" height="34" viewBox="0 0 22 34" style="display:block;"><path d="M22,0 L5,32 Q3,34 6,34 L22,34 Z" fill="color-mix(in srgb, var(--ink) 45%, var(--tile))" stroke="var(--line)" stroke-width="1"/></svg></div>`;
+}
+
+// Whether the tier-2 (length-only) coach letters should be displayed in
+// reverse (last letter first, A at the rear). Wayne's rule (2026-09-21):
+// on AM trains (Crewe→Wigan) coach A normally leads; on PM trains
+// (Wigan→Crewe) coach A is normally the rear coach. Darwin's own
+// `isReverseFormation` flag inverts whichever default applies — an AM
+// train in reverse formation shows A last, a PM train in reverse
+// formation shows A first. Only used for the fallback: real
+// formation.coaches[] data is displayed exactly as Darwin sends it.
+//
+// Direction comes from train.direction ('AM'|'PM') when the caller has
+// it (the configured-train path does), otherwise it's inferred from the
+// CRS pair — the tracked-train and recovery paths pass fromLoc/toLoc
+// but no direction tag. Anything that isn't the Wigan/Crewe commute
+// (unknown direction) is left in the natural A-first order rather than
+// guessed at.
+function shouldReverseFallbackLetters(train, service){
+  let dir = train && (train.direction === 'AM' || train.direction === 'PM') ? train.direction : null;
+  if (!dir && train){
+    const from = train.fromLoc, to = train.toLoc;
+    if (from === 'CRE' && (!to || to === 'WGN')) dir = 'AM';
+    else if (from === 'WGN' && (!to || to === 'CRE')) dir = 'PM';
+  }
+  if (!dir) return false;
+  const isReverseFormation = !!(service && service.isReverseFormation);
+  return (dir === 'PM') !== isReverseFormation;
 }
 
 // Coach formation strip, side-on view (Wayne's steer, 2026-09-17):
@@ -8595,7 +8625,7 @@ function buildNoseSvg(){
 //    AVANTI_LENGTH_LETTERS via getLengthOnlyFormationLetters above.
 //    This only labels the coaches; there's no class/loading info in
 //    this tier, since that genuinely isn't in this data.
-function buildFormationHtml(service){
+function buildFormationHtml(service, train){
   const coaches = service && service.formation && Array.isArray(service.formation.coaches) ? service.formation.coaches : null;
   if (coaches && coaches.length){
     const anyFirstClass = coaches.some(c => c.coachClass && /first/i.test(c.coachClass));
@@ -8617,10 +8647,11 @@ function buildFormationHtml(service){
       </div>`;
   }
 
-  const letters = getLengthOnlyFormationLetters(service);
-  if (!letters){
+  const baseLetters = getLengthOnlyFormationLetters(service);
+  if (!baseLetters){
     return `<div id="train-progress-formation" style="margin-bottom:10px; font-size:11px; color:var(--ink-dim);">Coach information not available for this service</div>`;
   }
+  const letters = shouldReverseFallbackLetters(train, service) ? baseLetters.slice().reverse() : baseLetters;
   const boxes = letters.map((letter) => {
     return `<div style="flex:0 0 auto; position:relative; width:36px; height:34px; margin-right:2px; background:var(--tile); border:1px solid var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${letter}</div>`;
   }).join('');
@@ -9541,7 +9572,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
   // between polls, not just staying alive for the rest of this session.
   saveConfirmedPointStatusCache();
 
-  let formationHtml = buildFormationHtml(service);
+  let formationHtml = buildFormationHtml(service, train);
   const formationDebugHtml = buildFormationDebugHtml(service, showRawDebug, train && train.serviceId);
   const formationIsEstimated = !!getLengthOnlyFormationLetters(service);
 
