@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-22.20:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-22.20:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2051,19 +2051,21 @@ let notifiedLikelyTrainKeys = new Set(); // avoids re-sending the push notificat
 // again for that direction once it's set.
 let silentConfirmBanner = null; // { dateKey, direction, trainKey, label, source: 'phone'|'watch' } | null — source added 2026-09-01, temporary visibility aid, see renderSilentConfirmBanner
 
-// 2026-09-22 code review: loadData() used to repeat this same read/parse/fallback shape
-// 55 times, one per persisted key — the whole function was 275 lines of near-identical
-// try/catch blocks. This collapses each to one call. Identical behaviour to before: a
-// missing key or one that fails to JSON.parse both fall back to [fallback], exactly as
-// every one of the original try/catch blocks did. The optional [validate] callback covers
-// the handful of keys that also checked the parsed value's shape (not just whether it
-// parsed) before accepting it — it receives the successfully-parsed value and returning
-// false falls back the same way a missing/corrupt value does.
+// Reads one persisted key: missing, unparseable, or wrong-shaped values all
+// fall back to [fallback]. "Wrong-shaped" covers two cases automatically — a
+// stored literal null, and an object/array fallback receiving the other kind
+// (or a primitive) — so a corrupted key can't hand loadData() a value that
+// crashes later on first use. [validate] is for keys that need a stricter,
+// key-specific check on top; returning false falls back the same way.
 function loadJSON(key, fallback, validate){
   try{
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
+    if (parsed === null) return fallback;
+    if (fallback !== null && typeof fallback === 'object'){
+      if (typeof parsed !== 'object' || Array.isArray(parsed) !== Array.isArray(fallback)) return fallback;
+    }
     if (validate && !validate(parsed)) return fallback;
     return parsed;
   }catch(e){ return fallback; }
@@ -5878,35 +5880,38 @@ async function fetchLiveBoards(){
 // always uses the combined arr+dep method used everywhere else in the
 // app, this asks Darwin for a genuine single-purpose board matching
 // what a real physical board at that station would actually show.
-// 2026-09-22 code review: fetchPureBoard, fetchDebugBoard, fetchStationBoardForService and
-// fetchStaffBoardComparison all built a { queries: [...] } POST to the Worker and unwrapped
-// the result the same way, with the error wording drifted slightly different between them
-// (written in different sessions). This is that shared shape; each of those four below is
-// now a thin wrapper around it. fetchServiceDetails keeps its own retry logic and isn't
-// converted — it wraps a call shaped like this one, not this one itself. requestFailedLabel
-// lets a caller keep its own wording for a non-2xx HTTP response (fetchStaffBoardComparison
-// used "Staff board request failed" rather than "Darwin request failed") — the only wording
-// that does change here is fetchDebugBoard's !r.ok message, which used to drop the status
-// code ("No board data returned"); it now includes it like the other three, a small genuine
-// improvement rather than something worth a parameter of its own to preserve verbatim.
+// Shared POST-to-Worker for single Darwin queries, used by fetchPureBoard,
+// fetchDebugBoard, fetchStationBoardForService and fetchStaffBoardComparison
+// (fetchServiceDetails keeps its own retry logic). [requestFailedLabel] sets
+// the wording for a non-2xx response. Requests are aborted after
+// DARWIN_QUERY_TIMEOUT_MS so a stalled Worker call fails with a readable
+// error instead of leaving the screen waiting indefinitely — every caller
+// already handles a thrown error.
+const DARWIN_QUERY_TIMEOUT_MS = 20000;
 async function queryDarwin(queryObj, requestFailedLabel = 'Darwin request failed'){
-  const resp = await fetch(DARWIN_WORKER_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ queries: [queryObj] })
-  });
-  if (!resp.ok) throw new Error(`${requestFailedLabel}: ${resp.status}`);
-  const data = await resp.json();
-  const r = (data.results || [])[0];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DARWIN_QUERY_TIMEOUT_MS);
+  let resp, data;
+  try{
+    resp = await fetch(DARWIN_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queries: [queryObj] }),
+      signal: controller.signal
+    });
+    if (!resp.ok) throw new Error(`${requestFailedLabel}: ${resp.status}`);
+    data = await resp.json();
+  }catch(e){
+    if (e && e.name === 'AbortError') throw new Error(`${requestFailedLabel}: timed out after ${DARWIN_QUERY_TIMEOUT_MS / 1000}s`);
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
+  const r = ((data && data.results) || [])[0];
   if (!r || !r.ok){
-    // The worker deliberately no longer echoes Darwin's raw upstream
-    // error body back to the browser (a security hardening pass) — full
-    // detail is logged server-side in the Worker's own logs instead, so
-    // this can only ever show the status code and a short controlled
-    // reason now. Genuinely useful for spotting *that* something failed
-    // and roughly what kind of failure; checking Cloudflare's Worker
-    // logs is the way to see exactly *why* if this ever needs debugging
-    // again the way the original routing-error diagnosis did.
+    // The Worker deliberately doesn't echo Darwin's raw upstream error body
+    // (security hardening) — full detail is in the Worker's own logs, so this
+    // only ever shows a short controlled reason and the status code.
     const detail = r
       ? `${r.reason || 'request failed'}${r.status ? ` (status ${r.status})` : ''}`
       : 'no response from worker';
@@ -5919,7 +5924,6 @@ async function fetchPureBoard(crs, boardType, numRows){
   const data = await queryDarwin({ crs, boardType, numRows: numRows || 30 });
   return (data && data.trainServices) || [];
 }
-
 
 async function fetchDebugBoard(fromCrs, toCrs){
   const query = toCrs ? { crs: fromCrs, filterCrs: toCrs, filterType: 'to' } : { crs: fromCrs };
@@ -12136,14 +12140,105 @@ function openROIDashboardView(){
         <div class="rail-detail-row"><span>Total spent</span><span style="color:var(--amber); font-weight:600;">${money(parkingSpentTotal)}</span></div>
         <div class="rail-detail-row"><span>Total saved</span><span style="color:var(--amber); font-weight:600;">${money(parkingSavedTotal)}</span></div>
 
+        <div class="rail-col-header">What if — office days (next 12 months)</div>
+        <div class="sub" style="margin:4px 0 8px;">Tap the days you're in the office. Holidays, bank holidays and planned WFH days you've already marked still apply.</div>
+        <div id="roi-whatif"></div>
+
       </div>
       <div class="modal-close" id="roi-dashboard-close-btn" style="margin:10px 18px; background:var(--board-2); border:1px solid var(--line); border-radius:10px; padding:10px; flex-shrink:0;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
+  renderROIWhatIf(today);
   document.getElementById('roi-dashboard-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
+}
+
+// "What if" office-days section. Selections live in memory only for the
+// session (reopening the dashboard keeps them; a reload resets to the
+// defaults) — it's an exploration tool, so nothing is persisted, synced
+// to the Worker/watch, or included in the Drive backup.
+const ROI_WHATIF_DAY_LABELS = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri']];
+let roiWhatIfNow = new Set([1,2,3,4]);
+let roiWhatIfAlt = new Set([1,2,3]);
+
+function renderROIWhatIf(today){
+  const host = document.getElementById('roi-whatif');
+  if (!host) return;
+  const HORIZON = 365;
+  const price = lastKnownPrice || 0;
+  const money = n => `£${n.toFixed(2)}`;
+  const nowR = projectOfficePattern(roiWhatIfNow, today, HORIZON);
+  const altR = projectOfficePattern(roiWhatIfAlt, today, HORIZON);
+  const nowCost = nowR.tickets * price;
+  const altCost = altR.tickets * price;
+  const diff = nowCost - altCost;
+  const chips = (set, row) => ROI_WHATIF_DAY_LABELS.map(([n, lbl]) => {
+    const on = set.has(n);
+    return `<span data-whatif-row="${row}" data-whatif-day="${n}" style="display:inline-block; cursor:pointer; padding:5px 9px; margin:0 4px 4px 0; border-radius:8px; font-size:12px; border:1px solid ${on ? 'var(--amber)' : 'var(--line)'}; color:${on ? 'var(--amber)' : 'var(--ink-dim)'}; background:var(--board-2);">${lbl}</span>`;
+  }).join('');
+  const summary = r => `${r.tickets} ticket${r.tickets === 1 ? '' : 's'} · ${r.travelDays} day${r.travelDays === 1 ? '' : 's'}`;
+  const diffLabel = diff > 0.005 ? 'Saving' : (diff < -0.005 ? 'Extra cost' : 'Difference');
+  host.innerHTML = `
+    <div class="rail-detail-row" style="align-items:flex-start;"><span>Now</span><span style="text-align:right;">${chips(roiWhatIfNow, 'now')}</span></div>
+    <div class="rail-detail-row"><span style="color:var(--ink-dim);">${summary(nowR)}</span><span style="color:var(--amber); font-weight:600;">${money(nowCost)}</span></div>
+    <div class="rail-detail-row" style="align-items:flex-start;"><span>What if</span><span style="text-align:right;">${chips(roiWhatIfAlt, 'alt')}</span></div>
+    <div class="rail-detail-row"><span style="color:var(--ink-dim);">${summary(altR)}</span><span style="color:var(--amber); font-weight:600;">${money(altCost)}</span></div>
+    <div class="rail-detail-row"><span>${diffLabel}</span><span style="color:var(--amber); font-weight:600;">${money(Math.abs(diff))} / yr · ${money(Math.abs(diff) / 12)} / mo</span></div>
+    ${(nowR.unusedDays || altR.unusedDays) ? `<div class="sub" style="margin:4px 0 0;">Days lost to expiry: ${nowR.unusedDays} now, ${altR.unusedDays} what-if.</div>` : ''}
+    <div class="sub" style="margin:4px 0 0;">At £${price.toFixed(2)} per Flexi 8. Ticket cost only — parking isn't counted, since it's only spent on days you actually drive.</div>
+  `;
+  host.querySelectorAll('[data-whatif-day]').forEach(el => {
+    el.addEventListener('click', () => {
+      const set = el.dataset.whatifRow === 'now' ? roiWhatIfNow : roiWhatIfAlt;
+      const day = Number(el.dataset.whatifDay);
+      if (set.has(day)) set.delete(day); else set.add(day);
+      renderROIWhatIf(today);
+    });
+  });
+}
+
+// 2026-09-22 — "What if" office-days projection for the ROI dashboard.
+// Projects the next [horizonDays] from [startDate] under a given weekly
+// office pattern ([officeWeekdays]: a Set of JS getDay() numbers, 1=Mon
+// .. 5=Fri) and counts how many Flexi tickets that would need. A day is
+// a travel day when it's an office weekday in the pattern AND has no
+// comment (holiday, bank holiday, ad-hoc WFH etc. all still apply), or
+// when it carries a travel override — an explicitly planned trip counts
+// regardless of pattern. Existing WFH comments on days outside the
+// pattern are simply irrelevant. Ticket segmentation mirrors
+// computeStates(): a ticket starts on the next travel day, and ends at
+// USES_PER_PERIOD uses or PERIOD_LENGTH calendar days, whichever first.
+// Deliberately starts from a fresh ticket for BOTH scenarios rather than
+// the real current ticket's part-used state — this is a comparison, and
+// that offset affects both sides equally.
+function projectOfficePattern(officeWeekdays, startDate, horizonDays){
+  const endKey = fmtKey(addDays(startDate, horizonDays - 1));
+  const isTravelDay = d => {
+    if (isWeekend(d)) return false;
+    const key = fmtKey(d);
+    if (travelOverrides[key]) return true;
+    if (!officeWeekdays.has(d.getDay())) return false;
+    return (comments[key] || '').trim() === '';
+  };
+  let tickets = 0, travelDays = 0, unusedDays = 0;
+  let cursor = new Date(startDate);
+  while (fmtKey(cursor) <= endKey){
+    if (!isTravelDay(cursor)){ cursor = addDays(cursor, 1); continue; }
+    // new ticket starts here
+    tickets += 1;
+    let used = 0, elapsed = 0;
+    while (fmtKey(cursor) <= endKey && used < USES_PER_PERIOD && elapsed < PERIOD_LENGTH){
+      if (isTravelDay(cursor)){ used += 1; travelDays += 1; }
+      elapsed += 1;
+      cursor = addDays(cursor, 1);
+    }
+    // Only a ticket that genuinely ran out of calendar days counts as
+    // wasted — one cut short by the end of the projection window isn't.
+    if (elapsed >= PERIOD_LENGTH && used < USES_PER_PERIOD) unusedDays += USES_PER_PERIOD - used;
+  }
+  return { tickets, travelDays, unusedDays };
 }
 
 function estimateTravelDaysInWindow(startDateStr, windowLength){
