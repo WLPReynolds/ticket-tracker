@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-21.19:59'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-22.20:21'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2051,182 +2051,79 @@ let notifiedLikelyTrainKeys = new Set(); // avoids re-sending the push notificat
 // again for that direction once it's set.
 let silentConfirmBanner = null; // { dateKey, direction, trainKey, label, source: 'phone'|'watch' } | null — source added 2026-09-01, temporary visibility aid, see renderSilentConfirmBanner
 
+// 2026-09-22 code review: loadData() used to repeat this same read/parse/fallback shape
+// 55 times, one per persisted key — the whole function was 275 lines of near-identical
+// try/catch blocks. This collapses each to one call. Identical behaviour to before: a
+// missing key or one that fails to JSON.parse both fall back to [fallback], exactly as
+// every one of the original try/catch blocks did. The optional [validate] callback covers
+// the handful of keys that also checked the parsed value's shape (not just whether it
+// parsed) before accepting it — it receives the successfully-parsed value and returning
+// false falls back the same way a missing/corrupt value does.
+function loadJSON(key, fallback, validate){
+  try{
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    if (validate && !validate(parsed)) return fallback;
+    return parsed;
+  }catch(e){ return fallback; }
+}
+
 async function loadData(){
-  try{
-    const c = localStorage.getItem('ticket-comments');
-    comments = c ? JSON.parse(c) : {};
-  }catch(e){ comments = {}; }
-  try{
-    const o = localStorage.getItem('ticket-travel-overrides');
-    travelOverrides = o ? JSON.parse(o) : {};
-  }catch(e){ travelOverrides = {}; }
-  try{
-    const pu = localStorage.getItem('ticket-purchases');
-    purchases = pu ? JSON.parse(pu) : [];
-  }catch(e){ purchases = []; }
-  try{
-    const lp = localStorage.getItem('ticket-last-price');
-    lastKnownPrice = lp ? JSON.parse(lp) : 153.60;
-  }catch(e){ lastKnownPrice = 153.60; }
-  try{
-    const pc = localStorage.getItem('ticket-parking-cost');
-    parkingCost = pc ? JSON.parse(pc) : 6.39;
-  }catch(e){ parkingCost = 6.39; }
-  try{
-    const sc = localStorage.getItem('smartcard-number');
-    smartcardNumber = sc ? JSON.parse(sc) : '';
-  }catch(e){ smartcardNumber = ''; }
-  try{
-    const pcdf = localStorage.getItem('produce-claim-details-file');
-    produceClaimDetailsFile = pcdf ? JSON.parse(pcdf) : true;
-  }catch(e){ produceClaimDetailsFile = true; }
-  try{
-    const pes = localStorage.getItem('payday-estimate-snapshots');
-    paydayEstimateSnapshots = pes ? JSON.parse(pes) : {};
-  }catch(e){ paydayEstimateSnapshots = {}; }
-  try{
-    const pd = localStorage.getItem('parked-days');
-    parkedDays = pd ? JSON.parse(pd) : {};
-  }catch(e){ parkedDays = {}; }
-  try{
-    const dps = localStorage.getItem('dismissed-parking-savings-periods');
-    dismissedParkingSavingsPeriods = dps ? JSON.parse(dps) : {};
-  }catch(e){ dismissedParkingSavingsPeriods = {}; }
-  try{
-    const pss = localStorage.getItem('parking-savings-snapshots');
-    parkingSavingsSnapshots = pss ? JSON.parse(pss) : {};
-  }catch(e){ parkingSavingsSnapshots = {}; }
-  try{
-    const pbd2 = localStorage.getItem('parking-budget-days');
-    parkingBudgetDays = pbd2 ? JSON.parse(pbd2) : {};
-  }catch(e){ parkingBudgetDays = {}; }
-  try{
-    const tscd = localStorage.getItem('tickets-spent-card-dismissed');
-    ticketsSpentCardDismissed = tscd ? JSON.parse(tscd) : false;
-  }catch(e){ ticketsSpentCardDismissed = false; }
-  try{
-    const pbd = localStorage.getItem('poll-before-departure-min');
-    pollBeforeDepartureMin = clampPollBeforeDepartureMin(pbd ? JSON.parse(pbd) : 5);
-  }catch(e){ pollBeforeDepartureMin = 5; }
-  try{
-    const pci = localStorage.getItem('poll-check-in-interval-min');
-    pollCheckInIntervalMin = clampPollCheckInIntervalMin(pci ? JSON.parse(pci) : 15);
-  }catch(e){ pollCheckInIntervalMin = 15; }
-  try{
-    const grc = localStorage.getItem('geofence-radius-crewe');
-    geofenceRadiusCrewe = clampGeofenceRadius(grc ? JSON.parse(grc) : DEFAULT_GEOFENCE_RADIUS_M);
-  }catch(e){ geofenceRadiusCrewe = DEFAULT_GEOFENCE_RADIUS_M; }
-  try{
-    const grw = localStorage.getItem('geofence-radius-wigan');
-    geofenceRadiusWigan = clampGeofenceRadius(grw ? JSON.parse(grw) : DEFAULT_GEOFENCE_RADIUS_M);
-  }catch(e){ geofenceRadiusWigan = DEFAULT_GEOFENCE_RADIUS_M; }
-  try{
-    const gcmw = localStorage.getItem('geofence-crewe-matches-wigan');
-    geofenceCreweMatchesWigan = gcmw ? JSON.parse(gcmw) : false;
-  }catch(e){ geofenceCreweMatchesWigan = false; }
-  try{
-    const gwmc = localStorage.getItem('geofence-wigan-matches-crewe');
-    geofenceWiganMatchesCrewe = gwmc ? JSON.parse(gwmc) : false;
-  }catch(e){ geofenceWiganMatchesCrewe = false; }
-  try{
-    const dr = localStorage.getItem('ticket-day-return-price');
-    dayReturnPrice = dr ? JSON.parse(dr) : 21.00;
-  }catch(e){ dayReturnPrice = 21.00; }
-  try{
-    const fcy = localStorage.getItem('ticket-fare-checked-year');
-    fareCheckedYear = fcy ? JSON.parse(fcy) : null;
-  }catch(e){ fareCheckedYear = null; }
-  try{
-    const dm = localStorage.getItem('ticket-dismissed-months');
-    dismissedMonths = dm ? JSON.parse(dm) : {};
-  }catch(e){ dismissedMonths = {}; }
-  try{
-    const ge = localStorage.getItem('gcal-enabled');
-    gcalEnabled = ge ? JSON.parse(ge) : false;
-  }catch(e){ gcalEnabled = false; }
-  try{
-    const pe = localStorage.getItem('preferred-google-email');
-    preferredGoogleEmail = pe ? JSON.parse(pe) : '';
-  }catch(e){ preferredGoogleEmail = ''; }
-  try{
-    const dm = localStorage.getItem('debug-mode-enabled');
-    debugModeEnabled = dm ? JSON.parse(dm) : false;
-  }catch(e){ debugModeEnabled = false; }
-  try{
-    const we = localStorage.getItem('weather-enabled');
-    weatherEnabled = we ? JSON.parse(we) : true;
-  }catch(e){ weatherEnabled = true; }
-  try{
-    const ar = localStorage.getItem('alternative-routes');
-    alternativeRoutes = ar ? JSON.parse(ar) : [];
-  }catch(e){ alternativeRoutes = []; }
-  try{
-    const etv = localStorage.getItem('emergency-tab-visible');
-    emergencyTabVisible = etv ? JSON.parse(etv) : false;
-  }catch(e){ emergencyTabVisible = false; }
-  try{
-    const hs = localStorage.getItem('home-station');
-    homeStation = hs ? JSON.parse(hs) : { code: 'CRE', name: 'Crewe' };
-  }catch(e){ homeStation = { code: 'CRE', name: 'Crewe' }; }
-  try{
-    const ws = localStorage.getItem('work-station');
-    workStation = ws ? JSON.parse(ws) : { code: 'WGN', name: 'Wigan North Western' };
-  }catch(e){ workStation = { code: 'WGN', name: 'Wigan North Western' }; }
-  try{
-    const dbe = localStorage.getItem('drive-backup-enabled');
-    driveBackupEnabled = dbe ? JSON.parse(dbe) : false;
-  }catch(e){ driveBackupEnabled = false; }
-  try{
-    const dbd = localStorage.getItem('drive-backup-dirty');
-    driveBackupDirty = dbd ? JSON.parse(dbd) : false;
-  }catch(e){ driveBackupDirty = false; }
-  try{
-    const dbt = localStorage.getItem('drive-backup-last-time');
-    lastDriveBackupTime = dbt ? JSON.parse(dbt) : 0;
-  }catch(e){ lastDriveBackupTime = 0; }
-  try{
-    const dbf = localStorage.getItem('drive-backup-folder-id');
-    driveBackupFolderId = dbf ? JSON.parse(dbf) : null;
-  }catch(e){ driveBackupFolderId = null; }
-  try{
-    const gi = localStorage.getItem('gcal-event-id');
-    gcalEventId = gi ? JSON.parse(gi) : null;
-  }catch(e){ gcalEventId = null; }
-  try{
-    const gp = localStorage.getItem('gcal-pending-sync');
-    gcalPendingSync = gp ? JSON.parse(gp) : false;
-  }catch(e){ gcalPendingSync = false; }
-  try{
-    const ln = localStorage.getItem('ticket-last-notified-buy-key');
-    lastNotifiedBuyKey = ln ? JSON.parse(ln) : null;
-  }catch(e){ lastNotifiedBuyKey = null; }
-  try{
-    const rt = localStorage.getItem('rail-trains');
-    railTrains = rt ? JSON.parse(rt) : DEFAULT_RAIL_TRAINS.slice();
-  }catch(e){ railTrains = DEFAULT_RAIL_TRAINS.slice(); }
+  comments = loadJSON('ticket-comments', {});
+  travelOverrides = loadJSON('ticket-travel-overrides', {});
+  purchases = loadJSON('ticket-purchases', []);
+  lastKnownPrice = loadJSON('ticket-last-price', 153.60);
+  parkingCost = loadJSON('ticket-parking-cost', 6.39);
+  smartcardNumber = loadJSON('smartcard-number', '');
+  produceClaimDetailsFile = loadJSON('produce-claim-details-file', true);
+  paydayEstimateSnapshots = loadJSON('payday-estimate-snapshots', {});
+  parkedDays = loadJSON('parked-days', {});
+  dismissedParkingSavingsPeriods = loadJSON('dismissed-parking-savings-periods', {});
+  parkingSavingsSnapshots = loadJSON('parking-savings-snapshots', {});
+  parkingBudgetDays = loadJSON('parking-budget-days', {});
+  ticketsSpentCardDismissed = loadJSON('tickets-spent-card-dismissed', false);
+  pollBeforeDepartureMin = clampPollBeforeDepartureMin(loadJSON('poll-before-departure-min', 5));
+  pollCheckInIntervalMin = clampPollCheckInIntervalMin(loadJSON('poll-check-in-interval-min', 15));
+  geofenceRadiusCrewe = clampGeofenceRadius(loadJSON('geofence-radius-crewe', DEFAULT_GEOFENCE_RADIUS_M));
+  geofenceRadiusWigan = clampGeofenceRadius(loadJSON('geofence-radius-wigan', DEFAULT_GEOFENCE_RADIUS_M));
+  geofenceCreweMatchesWigan = loadJSON('geofence-crewe-matches-wigan', false);
+  geofenceWiganMatchesCrewe = loadJSON('geofence-wigan-matches-crewe', false);
+  dayReturnPrice = loadJSON('ticket-day-return-price', 21.00);
+  fareCheckedYear = loadJSON('ticket-fare-checked-year', null);
+  dismissedMonths = loadJSON('ticket-dismissed-months', {});
+  gcalEnabled = loadJSON('gcal-enabled', false);
+  preferredGoogleEmail = loadJSON('preferred-google-email', '');
+  debugModeEnabled = loadJSON('debug-mode-enabled', false);
+  weatherEnabled = loadJSON('weather-enabled', true);
+  alternativeRoutes = loadJSON('alternative-routes', []);
+  emergencyTabVisible = loadJSON('emergency-tab-visible', false);
+  homeStation = loadJSON('home-station', { code: 'CRE', name: 'Crewe' });
+  workStation = loadJSON('work-station', { code: 'WGN', name: 'Wigan North Western' });
+  driveBackupEnabled = loadJSON('drive-backup-enabled', false);
+  driveBackupDirty = loadJSON('drive-backup-dirty', false);
+  lastDriveBackupTime = loadJSON('drive-backup-last-time', 0);
+  driveBackupFolderId = loadJSON('drive-backup-folder-id', null);
+  gcalEventId = loadJSON('gcal-event-id', null);
+  gcalPendingSync = loadJSON('gcal-pending-sync', false);
+  lastNotifiedBuyKey = loadJSON('ticket-last-notified-buy-key', null);
+  railTrains = loadJSON('rail-trains', DEFAULT_RAIL_TRAINS.slice());
   // 2026-09-18 — target-train alert settings (see the block after
   // DEFAULT_RAIL_TRAINS). Nothing stored yet -> the spec's defaults; a
   // stored value, even an empty one, is respected as-is.
-  try{
-    const tac = localStorage.getItem('train-alert-config');
-    const parsed = tac ? JSON.parse(tac) : null;
-    trainAlertConfig = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : defaultTrainAlertConfigFor(railTrains);
-  }catch(e){ trainAlertConfig = defaultTrainAlertConfigFor(railTrains); }
-  try{
-    const tt = localStorage.getItem('target-trains');
-    const parsed = tt ? JSON.parse(tt) : null;
-    defaultTargetTrains = (parsed && parsed.defaultTargetTrains && typeof parsed.defaultTargetTrains === 'object') ? parsed.defaultTargetTrains : defaultTargetTrainsFor(railTrains);
-    targetTrainOverrides = (parsed && parsed.targetTrainOverrides && typeof parsed.targetTrainOverrides === 'object') ? parsed.targetTrainOverrides : {};
-  }catch(e){ defaultTargetTrains = defaultTargetTrainsFor(railTrains); targetTrainOverrides = {}; }
+  trainAlertConfig = loadJSON(
+    'train-alert-config',
+    defaultTrainAlertConfigFor(railTrains),
+    v => v && typeof v === 'object' && !Array.isArray(v)
+  );
+  {
+    const parsedTT = loadJSON('target-trains', null);
+    defaultTargetTrains = (parsedTT && parsedTT.defaultTargetTrains && typeof parsedTT.defaultTargetTrains === 'object') ? parsedTT.defaultTargetTrains : defaultTargetTrainsFor(railTrains);
+    targetTrainOverrides = (parsedTT && parsedTT.targetTrainOverrides && typeof parsedTT.targetTrainOverrides === 'object') ? parsedTT.targetTrainOverrides : {};
+  }
   pruneTargetTrainOverrides();
-  try{
-    const rc = localStorage.getItem('rail-perf-cache');
-    railPerfCache = rc ? JSON.parse(rc) : {};
-  }catch(e){ railPerfCache = {}; }
-  try{
-    const rsd = localStorage.getItem('rail-synced-days');
-    railSyncedDays = rsd ? JSON.parse(rsd) : {};
-  }catch(e){ railSyncedDays = {}; }
+  railPerfCache = loadJSON('rail-perf-cache', {});
+  railSyncedDays = loadJSON('rail-synced-days', {});
   // One-time reset: an earlier version of railSyncedDays could mark a
   // train as "synced" for a date based on a DIFFERENT train's result for
   // that same date (a since-fixed proxy/client bug — see
@@ -2242,76 +2139,53 @@ async function loadData(){
       localStorage.setItem('rail-synced-days-reset-v2', '1');
     }
   }catch(e){ /* not critical if this flag can't be set — worst case it resets again next load */ }
-  try{
-    const rhd = localStorage.getItem('rail-history-days-back');
-    railHistoryDaysBack = rhd ? JSON.parse(rhd) : 90;
-  }catch(e){ railHistoryDaysBack = 90; }
-  try{
-    const rcc = localStorage.getItem('reason-codes-cache');
-    reasonCodesCache = rcc ? JSON.parse(rcc) : { fetchedAt: 0, codes: {} };
-  }catch(e){ reasonCodesCache = { fetchedAt: 0, codes: {} }; }
-  try{
-    const ct = localStorage.getItem('confirmed-trains');
-    confirmedTrains = ct ? JSON.parse(ct) : {};
-  }catch(e){ confirmedTrains = {}; }
-  try{
-    const scb = localStorage.getItem('silent-confirm-banner');
-    const parsed = scb ? JSON.parse(scb) : null;
-    // Only meaningful for today — a leftover banner from a previous day
-    // (e.g. the app wasn't opened again before the day rolled over) has
-    // nothing left to dismiss; it should just be gone, not show up
-    // referencing yesterday's train.
-    silentConfirmBanner = (parsed && parsed.dateKey === fmtKey(new Date())) ? parsed : null;
-  }catch(e){ silentConfirmBanner = null; }
-  try{
-    const dc = localStorage.getItem('delay-claims');
-    delayClaims = dc ? JSON.parse(dc) : {};
-  }catch(e){ delayClaims = {}; }
-  try{
-    const tt = localStorage.getItem('tracked-trains');
-    trackedTrains = tt ? JSON.parse(tt) : [];
-    // Elapsed-time expiry only — deliberately not tied to the calendar
-    // day. A previous version also cleared the whole list outright on
-    // the first app open of a new day, on the reasoning that a train
-    // tracked yesterday evening has no business surviving into this
-    // morning's commute. But that only ever fired at app-load, so a
-    // genuinely overnight service tracked at 23:00 and still running
-    // when the app was reopened at 00:05 would be wiped outright, not
-    // just stale-looking — the exact case this app's own midnight-aware
-    // date logic elsewhere is built to handle correctly. Tracked-train
-    // persistence should follow the journey's actual lifetime, which
-    // this age check already does correctly across a midnight crossing,
-    // not the calendar date.
+  railHistoryDaysBack = loadJSON('rail-history-days-back', 90);
+  reasonCodesCache = loadJSON('reason-codes-cache', { fetchedAt: 0, codes: {} });
+  confirmedTrains = loadJSON('confirmed-trains', {});
+  // Only meaningful for today — a leftover banner from a previous day
+  // (e.g. the app wasn't opened again before the day rolled over) has
+  // nothing left to dismiss; it should just be gone, not show up
+  // referencing yesterday's train.
+  silentConfirmBanner = loadJSON('silent-confirm-banner', null, v => v && v.dateKey === fmtKey(new Date()));
+  delayClaims = loadJSON('delay-claims', {});
+  trackedTrains = loadJSON('tracked-trains', []);
+  // Elapsed-time expiry only — deliberately not tied to the calendar
+  // day. A previous version also cleared the whole list outright on
+  // the first app open of a new day, on the reasoning that a train
+  // tracked yesterday evening has no business surviving into this
+  // morning's commute. But that only ever fired at app-load, so a
+  // genuinely overnight service tracked at 23:00 and still running
+  // when the app was reopened at 00:05 would be wiped outright, not
+  // just stale-looking — the exact case this app's own midnight-aware
+  // date logic elsewhere is built to handle correctly. Tracked-train
+  // persistence should follow the journey's actual lifetime, which
+  // this age check already does correctly across a midnight crossing,
+  // not the calendar date.
+  {
     const now = Date.now();
     trackedTrains = trackedTrains.filter(t => (now - t.addedAt) < TRACKED_TRAIN_MAX_AGE_MS);
-  }catch(e){ trackedTrains = []; }
+  }
+  // These three still need their own try/catch: new Map(...) throws on a value that
+  // parsed fine as JSON but isn't iterable as entries (e.g. a plain object rather than
+  // an array of pairs) — a failure loadJSON's own try/catch can't see, since it happens
+  // after loadJSON has already returned successfully.
   try{
-    const cpsc = localStorage.getItem('confirmed-point-status-cache');
-    confirmedPointStatusCache = cpsc ? new Map(JSON.parse(cpsc)) : new Map();
+    confirmedPointStatusCache = new Map(loadJSON('confirmed-point-status-cache', []));
     pruneConfirmedPointStatusCache(); // trackedTrains is already fully loaded/filtered by this point above
   }catch(e){ confirmedPointStatusCache = new Map(); }
   try{
-    const lsjs = localStorage.getItem('last-seen-journey-state');
-    lastSeenJourneyState = lsjs ? new Map(JSON.parse(lsjs)) : new Map();
+    lastSeenJourneyState = new Map(loadJSON('last-seen-journey-state', []));
     pruneLastSeenJourneyState(); // trackedTrains is already fully loaded/filtered by this point above
   }catch(e){ lastSeenJourneyState = new Map(); }
   try{
-    const lssm = localStorage.getItem('last-seen-staff-match');
-    lastSeenStaffMatch = lssm ? new Map(JSON.parse(lssm)) : new Map();
+    lastSeenStaffMatch = new Map(loadJSON('last-seen-staff-match', []));
     pruneLastSeenStaffMatch();
   }catch(e){ lastSeenStaffMatch = new Map(); }
-  try{
-    const p = localStorage.getItem('ticket-period-start');
-    periodStart = p ? JSON.parse(p) : DEFAULT_PERIOD_START;
-  }catch(e){ periodStart = DEFAULT_PERIOD_START; }
+  periodStart = loadJSON('ticket-period-start', DEFAULT_PERIOD_START);
 
   // One-time import of the comments from the original spreadsheet.
   // Only fills in dates that don't already have a comment, and only runs once.
-  let alreadySeeded = false;
-  try{
-    const s = localStorage.getItem('ticket-seed-imported');
-    alreadySeeded = !!(s && JSON.parse(s));
-  }catch(e){ alreadySeeded = false; /* key not found yet — expected on first run */ }
+  const alreadySeeded = !!loadJSON('ticket-seed-imported', false);
 
   if (!alreadySeeded){
     let changed = false;
@@ -6004,13 +5878,24 @@ async function fetchLiveBoards(){
 // always uses the combined arr+dep method used everywhere else in the
 // app, this asks Darwin for a genuine single-purpose board matching
 // what a real physical board at that station would actually show.
-async function fetchPureBoard(crs, boardType, numRows){
+// 2026-09-22 code review: fetchPureBoard, fetchDebugBoard, fetchStationBoardForService and
+// fetchStaffBoardComparison all built a { queries: [...] } POST to the Worker and unwrapped
+// the result the same way, with the error wording drifted slightly different between them
+// (written in different sessions). This is that shared shape; each of those four below is
+// now a thin wrapper around it. fetchServiceDetails keeps its own retry logic and isn't
+// converted — it wraps a call shaped like this one, not this one itself. requestFailedLabel
+// lets a caller keep its own wording for a non-2xx HTTP response (fetchStaffBoardComparison
+// used "Staff board request failed" rather than "Darwin request failed") — the only wording
+// that does change here is fetchDebugBoard's !r.ok message, which used to drop the status
+// code ("No board data returned"); it now includes it like the other three, a small genuine
+// improvement rather than something worth a parameter of its own to preserve verbatim.
+async function queryDarwin(queryObj, requestFailedLabel = 'Darwin request failed'){
   const resp = await fetch(DARWIN_WORKER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ queries: [{ crs, boardType, numRows: numRows || 30 }] })
+    body: JSON.stringify({ queries: [queryObj] })
   });
-  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
+  if (!resp.ok) throw new Error(`${requestFailedLabel}: ${resp.status}`);
   const data = await resp.json();
   const r = (data.results || [])[0];
   if (!r || !r.ok){
@@ -6027,43 +5912,21 @@ async function fetchPureBoard(crs, boardType, numRows){
       : 'no response from worker';
     throw new Error(detail);
   }
-  return (r.data && r.data.trainServices) || [];
+  return r.data;
+}
+
+async function fetchPureBoard(crs, boardType, numRows){
+  const data = await queryDarwin({ crs, boardType, numRows: numRows || 30 });
+  return (data && data.trainServices) || [];
 }
 
 
 async function fetchDebugBoard(fromCrs, toCrs){
   const query = toCrs ? { crs: fromCrs, filterCrs: toCrs, filterType: 'to' } : { crs: fromCrs };
-  const resp = await fetch(DARWIN_WORKER_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ queries: [query] })
-  });
-  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
-  const data = await resp.json();
-  const r = (data.results || [])[0];
-  if (!r || !r.ok) throw new Error((r && r.reason) || 'No board data returned');
-  return (r.data && r.data.trainServices) || [];
+  const data = await queryDarwin(query);
+  return (data && data.trainServices) || [];
 }
 
-// Tracks one specific train by its serviceID, independent of any
-// station's rolling board window — works for as long as Darwin still
-// has the service, regardless of how far past its departure station
-// the train has travelled.
-//
-// `recoveryHint`, when supplied by a caller that has one, is
-// { crs, boardType, schedTime } describing where this exact service can
-// still be found on a PURE dep/arr board right now (e.g. the station and
-// scheduled time it was searched under). GetServiceDetails is its own
-// separate Darwin product from the board endpoints, and confirmed via
-// live testing (2026-09-04) that its serviceID isn't always portable
-// from a serviceID minted by a board product — most of the time it is,
-// which is why this only shows up occasionally rather than on every
-// lookup. When the first attempt is a definitive rejection (not a
-// network/Worker-level hiccup) and a recoveryHint is available, this
-// re-resolves the service against that pure board to get a fresh,
-// board-scoped serviceID and retries once. No fallback is attempted
-// without a recoveryHint — callers that don't have one (nothing else to
-// go on) get the original behaviour unchanged.
 async function fetchServiceDetails(serviceId, recoveryHint){
   async function callGetServiceDetails(id){
     let resp;
@@ -8198,21 +8061,8 @@ async function saveLastSeenStaffMatch(){
 // logic only ever needs to exist once, in the Worker, rather than being
 // duplicated here and there.
 async function fetchStationBoardForService(crs, boardType, schedTime, serviceId){
-  const resp = await fetch(DARWIN_WORKER_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ queries: [{ type: 'stationBoardForService', crs, boardType, schedTime, serviceId }] })
-  });
-  if (!resp.ok) throw new Error(`Darwin request failed: ${resp.status}`);
-  const data = await resp.json();
-  const r = (data.results || [])[0];
-  if (!r || !r.ok){
-    const detail = r
-      ? `${r.reason || 'request failed'}${r.status ? ` (status ${r.status})` : ''}`
-      : 'no response from worker';
-    throw new Error(detail);
-  }
-  return r.data || null; // null here means "not currently on this board" — see docblock above, not a failure
+  const data = await queryDarwin({ type: 'stationBoardForService', crs, boardType, schedTime, serviceId });
+  return data || null; // null here means "not currently on this board" — see docblock above, not a failure
 }
 
 // Phase 2 (staff-board-scoping.md) — Staff board (LDBSVWS) read-only
@@ -8260,27 +8110,14 @@ function buildStaffTargetTime(sdd, hhmm){
 // kind of thing Phase 2 exists to surface, not something to hide).
 async function fetchStaffBoardComparison(crs, filterCrs, filterType, boardType, schedTime, sdd){
   const targetTime = buildStaffTargetTime(sdd, schedTime);
-  const resp = await fetch(DARWIN_WORKER_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ queries: [{ type: 'staffBoard', crs, targetTime, filterCrs, filterType }] })
-  });
-  if (!resp.ok) throw new Error(`Staff board request failed: ${resp.status}`);
-  const data = await resp.json();
-  const r = (data.results || [])[0];
-  if (!r || !r.ok){
-    const detail = r
-      ? `${r.reason || 'request failed'}${r.status ? ` (status ${r.status})` : ''}`
-      : 'no response from worker';
-    throw new Error(detail);
-  }
-  const services = (r.data && r.data.trainServices) || [];
+  const data = await queryDarwin({ type: 'staffBoard', crs, targetTime, filterCrs, filterType }, 'Staff board request failed');
+  const services = (data && data.trainServices) || [];
   const timeField = boardType === 'dep' ? 'std' : 'sta';
   // Compare to the minute only — the service's own top-level std/sta
   // carries seconds ("...T16:31:00"), targetTime doesn't need to.
   const wantedPrefix = `${targetTime.slice(0, 8)}T${targetTime.slice(9, 13)}`;
   const match = services.find(s => typeof s[timeField] === 'string' && s[timeField].replace(/[-:]/g, '').startsWith(wantedPrefix)) || null;
-  return { raw: r.data, match, serviceCount: services.length, targetTime };
+  return { raw: data, match, serviceCount: services.length, targetTime };
 }
 
 // Pulls out the arrival/departure fields for one specific station
