@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-23.21:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-23.21:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1689,12 +1689,17 @@ function distanceKm(lat1, lon1, lat2, lon2){
 let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
 let confirmedTrains = {}; // "YYYY-MM-DD" -> { AM: trainKey, PM: trainKey } — which specific train you actually caught, manually confirmed for now
 
-// Delay Repay claim tracking — dateKey -> { AM: {status, minutesLate, amount, claimRef}, PM: {...} }
+// Delay Repay claim tracking — dateKey -> { AM: {status, minutesLate, amount, claimRef, trainKey}, PM: {...} }
 // claimRef is the Avanti-issued reference (e.g. "AWC-1234-567-890"), added
 // once you have it via the input on the claims manager screen — absent
 // until then, and absent entirely on claims created before this field
 // existed. minutesLate is null for a cancelled train (no delay figure
-// applies), shown as "Cancelled" rather than "null min late".
+// applies), shown as "Cancelled" rather than "null min late". trainKey
+// (e.g. "pm-1731") is only set on claims backfilled via the import
+// screen, which have no confirmedTrains entry to resolve a label from —
+// it's a fallback lookup into the same static railTrains list, so a
+// backfilled claim's row shows a real scheduled time ("17:31 (PM)")
+// rather than falling back to the bare direction.
 // status is 'started' (link tapped, submission not confirmed) or 'confirmed'
 // (manually marked as actually submitted/completed). Only ever set for the
 // CONFIRMED train on a given direction, never for other trains that also
@@ -11162,7 +11167,7 @@ function openDelayClaimsManager(){
     for (const dir in delayClaims[dateKey]){
       const claim = delayClaims[dateKey][dir];
       if (!claim) continue;
-      const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
+      const confirmedKey = (confirmedTrains[dateKey] || {})[dir] || claim.trainKey;
       const train = railTrains.find(t => t.key === confirmedKey);
       entries.push({ dateKey, dir, claim, label: train ? train.label : dir });
     }
@@ -12548,8 +12553,8 @@ function openDelayClaimsImport(){
   overlay.innerHTML = `
     <div class="modal">
       <h3>Import delay repay claims</h3>
-      <div class="sub">Paste a JSON array of claims from Avanti's claims history — each already verified as paid. Existing entries for the same date/direction are updated (claim ref, minutes late, amount corrected if needed); new ones are added. All entries are marked Confirmed.</div>
-      <textarea id="claims-import-textarea" rows="8" style="width:100%; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:'Courier New',monospace; font-size:12px; margin-bottom:12px;" placeholder='[{"date":"2026-09-14","dir":"AM","claimRef":"AWC-3242-966-216","amount":2.4,"minutesLate":16}]'></textarea>
+      <div class="sub">Paste a JSON array of claims from Avanti's claims history — each already verified as paid. Existing entries for the same date/direction are updated (claim ref, minutes late, amount corrected if needed); new ones are added. All entries are marked Confirmed. Include "trainKey" (e.g. "pm-1731") so the claim shows a scheduled time rather than just a direction.</div>
+      <textarea id="claims-import-textarea" rows="8" style="width:100%; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:'Courier New',monospace; font-size:12px; margin-bottom:12px;" placeholder='[{"date":"2026-09-14","dir":"AM","claimRef":"AWC-3242-966-216","amount":2.4,"minutesLate":16,"trainKey":"am-0727"}]'></textarea>
       <div id="claims-import-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;"></div>
       <button class="save-btn" id="claims-import-save-btn">Import</button>
       <div class="modal-close" id="claims-import-close-btn">Cancel</div>
@@ -12591,6 +12596,7 @@ function openDelayClaimsImport(){
         minutesLate: (entry.minutesLate === null || entry.minutesLate === undefined) ? null : Number(entry.minutesLate),
         amount: Number(entry.amount) || existing.amount || 0,
         claimRef: entry.claimRef || existing.claimRef || '',
+        trainKey: entry.trainKey || existing.trainKey || undefined,
         expiredAcknowledged: existing.expiredAcknowledged || false,
       };
       if (isNew) added++; else updated++;
