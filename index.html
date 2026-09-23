@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-23.21:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-23.22:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -9771,9 +9771,14 @@ function openTrainProgress(train, service){
     const wanted = entry.wanted; // this station's own fields specifically — see extractStaffLocationFields
     if (!wanted) return `${tag}  matched a service, but ${entry.crs} isn't one of its own calling points (unexpected — worth a closer look)`;
     const fields = entry.boardType === 'dep' ? ['std', 'etd', 'atd'] : ['sta', 'eta', 'ata'];
-    const staffVals = fields.map(f => `${f}=${wanted[f] ?? '·'}`).join('  ');
+    // platform appended separately, not folded into `fields` — wanted.platform
+    // reads straight off the same matched object buildStaffPlatformOverrides
+    // already uses live (see its own comment), so this is a display-only
+    // addition; the Darwin side falls back the same way the board-debug panel
+    // (formatBoardDebugLine) already does, for consistency between the two.
+    const staffVals = fields.map(f => `${f}=${wanted[f] ?? '·'}`).join('  ') + `  platform=${wanted.platform ?? '·'}`;
     const darwinVals = (boardEntry && boardEntry.data)
-      ? fields.map(f => `${f}=${boardEntry.data[f] ?? '·'}`).join('  ')
+      ? fields.map(f => `${f}=${boardEntry.data[f] ?? '·'}`).join('  ') + `  platform=${boardEntry.data.platform ?? '·'}`
       : '(no Darwin pure-board result yet)';
     const flags = [
       wanted.isCancelled ? 'CANCELLED' : null,
