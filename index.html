@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-22.20:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-23.21:10'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1689,7 +1689,12 @@ function distanceKm(lat1, lon1, lat2, lon2){
 let estimateOffset = 0; // 0 = current pay period, 1 = next, 2 = the one after, etc. (not persisted)
 let confirmedTrains = {}; // "YYYY-MM-DD" -> { AM: trainKey, PM: trainKey } — which specific train you actually caught, manually confirmed for now
 
-// Delay Repay claim tracking — dateKey -> { AM: {status, minutesLate, amount}, PM: {...} }
+// Delay Repay claim tracking — dateKey -> { AM: {status, minutesLate, amount, claimRef}, PM: {...} }
+// claimRef is the Avanti-issued reference (e.g. "AWC-1234-567-890"), added
+// once you have it via the input on the claims manager screen — absent
+// until then, and absent entirely on claims created before this field
+// existed. minutesLate is null for a cancelled train (no delay figure
+// applies), shown as "Cancelled" rather than "null min late".
 // status is 'started' (link tapped, submission not confirmed) or 'confirmed'
 // (manually marked as actually submitted/completed). Only ever set for the
 // CONFIRMED train on a given direction, never for other trains that also
@@ -3825,6 +3830,7 @@ function render(){
   menuItems.push({ id: 'help-link', label: 'Help', weight: 55 });
   menuItems.push({ id: 'backlog-link', label: 'Backlog', weight: 56 });
   menuItems.push({ id: 'import-history-link', label: 'Bulk import comments', weight: 100 });
+  menuItems.push({ id: 'claims-import-link', label: 'Import delay repay claims', weight: 100 });
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
 
@@ -4404,6 +4410,9 @@ function render(){
 
   const importHistoryLink = document.getElementById('import-history-link');
   if (importHistoryLink) importHistoryLink.addEventListener('click', () => { menuOpen = false; render(); openImportHistory(); });
+
+  const claimsImportLink = document.getElementById('claims-import-link');
+  if (claimsImportLink) claimsImportLink.addEventListener('click', () => { menuOpen = false; render(); openDelayClaimsImport(); });
 
   const helpLink = document.getElementById('help-link');
   if (helpLink) helpLink.addEventListener('click', () => { menuOpen = false; render(); openHelpGuide(); });
@@ -11162,9 +11171,10 @@ function openDelayClaimsManager(){
 
   const rowsHtml = entries.length ? entries.map(e => `
     <div class="rail-detail-row" style="align-items:flex-start; padding:10px 0;">
-      <div>
+      <div style="flex:1; min-width:0;">
         <div style="font-weight:600;">${dateLabel(parseKey(e.dateKey))}</div>
-        <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate} min late — £${(e.claim.amount || 0).toFixed(2)}</div>
+        <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate === null || e.claim.minutesLate === undefined ? 'Cancelled' : `${e.claim.minutesLate} min late`} — £${(e.claim.amount || 0).toFixed(2)}</div>
+        <input type="text" class="claim-ref-input" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" value="${escapeHtml(e.claim.claimRef || '')}" placeholder="AWC reference" style="margin-top:6px; width:100%; max-width:220px; font-size:12px; font-family:monospace; padding:6px 8px; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:6px;" />
       </div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
         ${e.claim.status === 'expired' ? `
@@ -11213,6 +11223,21 @@ function openDelayClaimsManager(){
       await saveDelayClaims();
       document.body.removeChild(overlay);
       openDelayClaimsManager();
+    });
+  });
+  // Saved on blur rather than per-keystroke — matches the checkbox/undo
+  // handlers' full-remount pattern, and blur already means the person has
+  // moved on from the field so there's no cursor position to preserve.
+  overlay.querySelectorAll('.claim-ref-input').forEach(input => {
+    input.addEventListener('blur', async () => {
+      const dateKey = input.dataset.claimDate;
+      const dir = input.dataset.claimDirection;
+      if (!delayClaims[dateKey] || !delayClaims[dateKey][dir]) return;
+      const trimmed = input.value.trim();
+      const existing = delayClaims[dateKey][dir].claimRef || '';
+      if (trimmed === existing) return; // no change — don't re-save/re-render
+      delayClaims[dateKey][dir].claimRef = trimmed;
+      await saveDelayClaims();
     });
   });
   document.getElementById('delay-claims-close-btn').addEventListener('click', () => {
@@ -12502,6 +12527,80 @@ function openImportHistory(){
   });
 
   document.getElementById('import-close-btn').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+}
+
+// Bulk-inserts/updates delayClaims from Avanti's own claims-history table —
+// used for the 2026-09 backfill against real bank/Avanti records, and
+// reusable for any future top-up. Always sets status: 'confirmed', since
+// the whole point of this screen is entering claims you've already
+// verified as paid — it is not for logging a claim you've just started.
+// Matches an existing delayClaims[date][dir] entry and updates it in
+// place (adding claimRef/minutesLate, correcting amount if it differs)
+// rather than creating a duplicate; entries with no existing match are
+// added fresh. minutesLate: null marks a cancelled train, shown as
+// "Cancelled" rather than a delay figure on the claims manager screen.
+function openDelayClaimsImport(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Import delay repay claims</h3>
+      <div class="sub">Paste a JSON array of claims from Avanti's claims history — each already verified as paid. Existing entries for the same date/direction are updated (claim ref, minutes late, amount corrected if needed); new ones are added. All entries are marked Confirmed.</div>
+      <textarea id="claims-import-textarea" rows="8" style="width:100%; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:'Courier New',monospace; font-size:12px; margin-bottom:12px;" placeholder='[{"date":"2026-09-14","dir":"AM","claimRef":"AWC-3242-966-216","amount":2.4,"minutesLate":16}]'></textarea>
+      <div id="claims-import-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;"></div>
+      <button class="save-btn" id="claims-import-save-btn">Import</button>
+      <div class="modal-close" id="claims-import-close-btn">Cancel</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('claims-import-save-btn').addEventListener('click', async () => {
+    const raw = document.getElementById('claims-import-textarea').value.trim();
+    const status = document.getElementById('claims-import-status');
+    if (!raw){
+      status.textContent = 'Paste some JSON first.';
+      status.style.color = 'var(--danger)';
+      return;
+    }
+    let parsed;
+    try{
+      parsed = JSON.parse(raw);
+    }catch(e){
+      status.textContent = 'That is not valid JSON — check for missing quotes or commas.';
+      status.style.color = 'var(--danger)';
+      return;
+    }
+    if (!Array.isArray(parsed)){
+      status.textContent = 'Expected a JSON array of claim entries.';
+      status.style.color = 'var(--danger)';
+      return;
+    }
+    let added = 0, updated = 0, skipped = 0;
+    for (const entry of parsed){
+      const dateKey = entry && entry.date;
+      const dir = entry && entry.dir;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey) || (dir !== 'AM' && dir !== 'PM')){ skipped++; continue; }
+      if (!delayClaims[dateKey]) delayClaims[dateKey] = {};
+      const isNew = !delayClaims[dateKey][dir];
+      const existing = delayClaims[dateKey][dir] || {};
+      delayClaims[dateKey][dir] = {
+        status: 'confirmed',
+        minutesLate: (entry.minutesLate === null || entry.minutesLate === undefined) ? null : Number(entry.minutesLate),
+        amount: Number(entry.amount) || existing.amount || 0,
+        claimRef: entry.claimRef || existing.claimRef || '',
+        expiredAcknowledged: existing.expiredAcknowledged || false,
+      };
+      if (isNew) added++; else updated++;
+    }
+    await saveDelayClaims();
+    status.textContent = `${added} added, ${updated} updated${skipped ? `, ${skipped} skipped (bad date/dir)` : ''}.`;
+    status.style.color = 'var(--good)';
+  });
+
+  document.getElementById('claims-import-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
