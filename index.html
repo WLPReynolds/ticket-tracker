@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-23.22:40'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-24.11:53'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2015,6 +2015,11 @@ function clampGeofenceRadius(v){
 // two plain numbers, not the sync relationship that produced them.
 let geofenceRadiusCrewe = DEFAULT_GEOFENCE_RADIUS_M;
 let geofenceRadiusWigan = DEFAULT_GEOFENCE_RADIUS_M;
+// 2026-09-24: shared secret sent as X-PWA-Secret on PUT /api/watch-config
+// (Worker's PWA_SHARED_SECRET). Lives only in this device's localStorage,
+// entered via Settings > Write secret — deliberately never hardcoded in this
+// file, since index.html is public and anything in it is readable by anyone.
+let pwaWriteSecret = '';
 // UI memory only — which direction of sync (if any) the settings editor
 // should show as ticked next time it's opened. At most one of these is
 // ever true; the editor enforces that mutual exclusion on tick, not just
@@ -2101,6 +2106,7 @@ async function loadData(){
   geofenceRadiusWigan = clampGeofenceRadius(loadJSON('geofence-radius-wigan', DEFAULT_GEOFENCE_RADIUS_M));
   geofenceCreweMatchesWigan = loadJSON('geofence-crewe-matches-wigan', false);
   geofenceWiganMatchesCrewe = loadJSON('geofence-wigan-matches-crewe', false);
+  pwaWriteSecret = loadJSON('pwa-write-secret', '', (v) => typeof v === 'string');
   dayReturnPrice = loadJSON('ticket-day-return-price', 21.00);
   fareCheckedYear = loadJSON('ticket-fare-checked-year', null);
   dismissedMonths = loadJSON('ticket-dismissed-months', {});
@@ -2282,6 +2288,10 @@ async function saveGeofenceSettings(){
   }catch(e){ /* save failed silently; will retry next change */ }
   pushWatchConfig();
 }
+async function savePwaWriteSecret(){
+  try{ localStorage.setItem('pwa-write-secret', JSON.stringify(pwaWriteSecret)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
 async function saveDayReturnPrice(){
   try{ localStorage.setItem('ticket-day-return-price', JSON.stringify(dayReturnPrice)); }
   catch(e){ /* save failed silently; will retry next change */ }
@@ -2422,14 +2432,24 @@ function buildWatchConfigBody(){
 function pushWatchConfig(){
   fetch(`${DARWIN_WORKER_URL}/api/watch-config`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    // 2026-09-24: X-PWA-Secret — the Worker now rejects this PUT without it.
+    // Sent as '' when unset, which the Worker refuses with a 401.
+    headers: { 'Content-Type': 'application/json', 'X-PWA-Secret': pwaWriteSecret || '' },
     body: JSON.stringify(buildWatchConfigBody()),
     keepalive: true
   })
     .then(async (resp) => {
       if (!resp.ok){
-        const text = await resp.text().catch(()=> '');
-        showToast(`Watch config not accepted: ${resp.status} ${text}`.slice(0, 200));
+        // 2026-09-24: a 401 means this device has no (or the wrong) write
+        // secret — point at the fix rather than a bare status code. This is
+        // also what now stops a fresh/unconfigured browser from silently
+        // overwriting calibrated config (the 24 Sep radius reset).
+        if (resp.status === 401){
+          showToast('Watch config not saved — set the write secret in Settings (key icon).');
+        } else {
+          const text = await resp.text().catch(()=> '');
+          showToast(`Watch config not accepted: ${resp.status} ${text}`.slice(0, 200));
+        }
       }
     })
     .catch((e) => {
@@ -5079,6 +5099,7 @@ const SETTINGS_ICONS = {
   bug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="10" rx="4"/><path d="M12 8V5M8 11H4M20 11h-4M9 6 7.5 4.5M15 6l1.5-1.5M8 18l-2 2M16 18l2 2M9 13h6"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
   geo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-7.5 7-12a7 7 0 1 0-14 0c0 4.5 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>',
+  key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M17 6l3 3M14.5 8.5l2 2"/></svg>',
   warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
 };
 
@@ -5114,6 +5135,7 @@ function openSettingsMenu(){
         <div class="settings-grid-item" id="settings-emergency-routes-link">${SETTINGS_ICONS.warning}<span class="cat-label">Emergency routes</span></div>
         <div class="settings-grid-item${emergencyTabVisible ? ' active' : ''}" id="settings-emergency-tab-link">${SETTINGS_ICONS.warning}<span class="cat-label">Emergency tab</span><span class="status-label">${emergencyTabVisible ? 'Shown' : 'Hidden'}</span></div>
         <div class="settings-grid-item" id="settings-home-work-link">${SETTINGS_ICONS.geo}<span class="cat-label">Home & Work stations</span><span class="status-label">${escapeHtml(homeStation.code)} / ${escapeHtml(workStation.code)}</span></div>
+        <div class="settings-grid-item${pwaWriteSecret ? ' active' : ''}" id="settings-write-secret-link">${SETTINGS_ICONS.key}<span class="cat-label">Write secret</span><span class="status-label">${pwaWriteSecret ? 'Set' : 'Not set'}</span></div>
       </div>
       <div class="modal-close" id="settings-close-btn" style="margin-top:20px;">Close</div>
     </div>
@@ -5152,6 +5174,7 @@ function openSettingsMenu(){
     toggleStatus('settings-emergency-tab-link', emergencyTabVisible, emergencyTabVisible ? 'Shown' : 'Hidden');
   });
   document.getElementById('settings-home-work-link').addEventListener('click', () => { close(); openHomeWorkStationsManager(); });
+  document.getElementById('settings-write-secret-link').addEventListener('click', () => { close(); openPwaWriteSecretEditor(true); });
   document.getElementById('settings-debug-link').addEventListener('click', async () => {
     debugModeEnabled = !debugModeEnabled;
     await saveDebugMode();
@@ -5292,6 +5315,50 @@ function openPollingSettingsEditor(cameFromSettings){
     }
   });
   document.getElementById('poll-settings-close').addEventListener('click', () => {
+    document.body.removeChild(overlay);
+    if (cameFromSettings) openSettingsMenu();
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay){
+      document.body.removeChild(overlay);
+      if (cameFromSettings) openSettingsMenu();
+    }
+  });
+}
+
+// 2026-09-24: per-device entry for the Worker's PWA_SHARED_SECRET. Stored in
+// localStorage only. Saving triggers an immediate push, so a wrong value
+// shows up straight away as the 401 toast rather than on the next app open.
+function openPwaWriteSecretEditor(cameFromSettings){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Write secret</h3>
+      <div class="sub">Lets this device save settings to the Worker (watch config, geofence radii, trains). Needed once per browser or phone. The value is in Bitwarden (PWA_SHARED_SECRET).</div>
+      <input type="password" id="pwa-write-secret-input" value="${escapeHtml(pwaWriteSecret)}" autocomplete="off" autocapitalize="off" spellcheck="false" style="margin-top:14px; margin-bottom:6px;" />
+      <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-dim); margin-bottom:16px; cursor:pointer; -webkit-user-select:none; user-select:none;">
+        <input type="checkbox" id="pwa-write-secret-show" /> Show
+      </label>
+      <button class="save-btn" id="pwa-write-secret-save">Save</button>
+      <div class="modal-close" id="pwa-write-secret-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const input = document.getElementById('pwa-write-secret-input');
+  document.getElementById('pwa-write-secret-show').addEventListener('change', (e) => {
+    input.type = e.target.checked ? 'text' : 'password';
+  });
+
+  document.getElementById('pwa-write-secret-save').addEventListener('click', async () => {
+    pwaWriteSecret = input.value.trim();
+    await savePwaWriteSecret();
+    document.body.removeChild(overlay);
+    if (pwaWriteSecret) pushWatchConfig();
+    if (cameFromSettings) openSettingsMenu(); else render();
+  });
+  document.getElementById('pwa-write-secret-close').addEventListener('click', () => {
     document.body.removeChild(overlay);
     if (cameFromSettings) openSettingsMenu();
   });
