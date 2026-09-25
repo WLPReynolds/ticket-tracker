@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-24.11:53'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-25.06:37'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2487,6 +2487,23 @@ function pushConfirmedTrain(dateKey, direction, trainKey, label){
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ date: dateKey, direction, trainKey, label })
+  }).catch(()=>{});
+}
+
+// 2026-09-25: the manual "Confirm train used" modal's equivalent of the
+// above. It never used to tell the Worker anything, so on 24 Sep a
+// manual pm-1731 entry left the Worker's confirmed:{date}:PM empty and a
+// still-running CRE ping retry went on to confirm pm-1831 there. A
+// manual entry overrides whatever the Worker holds (override:true, gated
+// on X-PWA-Secret); an empty trainKey is a "None / didn't travel"
+// tombstone that still blocks retries but is ignored by
+// checkPendingConfirmation below. Fire-and-forget, like pushConfirmedTrain.
+function pushManualConfirmedTrain(dateKey, direction, trainKey){
+  const t = trainKey ? railTrains.find(r => r.key === trainKey) : null;
+  fetch(`${DARWIN_WORKER_URL}/api/confirm-train`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-PWA-Secret': pwaWriteSecret || '' },
+    body: JSON.stringify({ date: dateKey, direction, trainKey: trainKey || '', label: t ? t.label : '', override: true })
   }).catch(()=>{});
 }
 
@@ -6821,9 +6838,18 @@ function openConfirmTrain(){
     const amKey = document.getElementById('confirm-am-select').value;
     const pmKey = document.getElementById('confirm-pm-select').value;
     if (!dateKey) return;
+    const before = confirmedTrains[dateKey] || {};
     const entry = {};
     if (amKey) entry.AM = amKey;
     if (pmKey) entry.PM = pmKey;
+    // 2026-09-25: tell the Worker — today only (the only date its
+    // confirmed:{date} records and ping retries still matter for), and
+    // only for a direction you actually changed, so saving an AM entry
+    // in the morning can't tombstone PM before the evening ping runs.
+    if (dateKey === fmtKey(new Date())){
+      if ((before.AM || '') !== (amKey || '')) pushManualConfirmedTrain(dateKey, 'AM', amKey);
+      if ((before.PM || '') !== (pmKey || '')) pushManualConfirmedTrain(dateKey, 'PM', pmKey);
+    }
     if (Object.keys(entry).length === 0){
       delete confirmedTrains[dateKey];
     } else {
