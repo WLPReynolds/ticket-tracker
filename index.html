@@ -1239,7 +1239,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-25.06:37'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-25.08:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2065,6 +2065,17 @@ let notifiedLikelyTrainKeys = new Set(); // avoids re-sending the push notificat
 // since confirmedTrains itself blocks the underlying check from firing
 // again for that direction once it's set.
 let silentConfirmBanner = null; // { dateKey, direction, trainKey, label, source: 'phone'|'watch' } | null — source added 2026-09-01, temporary visibility aid, see renderSilentConfirmBanner
+// 2026-09-25: catch-up summary — watch confirmations for a PAST date
+// (not today) picked up by checkPendingConfirmation because the app
+// wasn't opened that day. Deliberately session-only (not persisted to
+// localStorage, unlike silentConfirmBanner above): it only ever holds
+// entries actually applied in THIS run, so a dismiss-without-reading
+// costs nothing but the notice — the underlying confirmedTrains write
+// already happened and survives regardless. Reappears next time there's
+// something genuinely new to report, never resurrects an old one.
+// { entries: [{dateKey, direction, trainKey, label}], expanded: bool } | null
+let catchupBanner = null;
+const CONFIRMED_CATCHUP_LOOKBACK_DAYS = 7; // matches the Worker's CONFIRMED_TRAIN_TTL_SECONDS — no point asking further back than it keeps
 
 // Reads one persisted key: missing, unparseable, or wrong-shaped values all
 // fall back to [fallback]. "Wrong-shaped" covers two cases automatically — a
@@ -2529,26 +2540,59 @@ function pushManualConfirmedTrain(dateKey, direction, trainKey){
 // function from re-applying the same entry twice, so the explicit
 // clear was never actually needed for that purpose; the 36h TTL is
 // sufficient cleanup on its own.
+// 2026-09-25: was a single GET for today only — rewritten to the
+// catch-up endpoint (one call, CONFIRMED_CATCHUP_LOOKBACK_DAYS back) so
+// a watch confirmation from a day the app was never opened still
+// reaches it (previously only today's date was ever asked for; see
+// learnings-and-ways-of-working.md). Today's own entry keeps the exact
+// same immediate green-banner behaviour as before; anything from an
+// earlier date is new and goes into catchupBanner instead.
+//
+// Never overwrites an existing local value — a direction already set
+// for a date (by the phone's own live check, a manual confirm, or an
+// earlier run of this same function) is left alone, whatever the
+// Worker holds. This is deliberate, not just the pre-existing today-
+// only guard extended: it's what stops a stale/wrong Worker record
+// (see 24 Sep's pm-1831) ever overwriting a value already trusted
+// locally, for any of the 7 days now in scope, not just today.
 async function checkPendingConfirmation(){
   const todayKeyLocal = fmtKey(new Date());
-  let pending;
+  const sinceKey = fmtKey(addDays(new Date(), -CONFIRMED_CATCHUP_LOOKBACK_DAYS));
+  let data;
   try{
-    const resp = await fetch(`${DARWIN_WORKER_URL}/api/pending-confirmation?date=${todayKeyLocal}`);
+    const resp = await fetch(`${DARWIN_WORKER_URL}/api/pending-confirmations?since=${sinceKey}`);
     if (!resp.ok) return;
-    pending = await resp.json();
+    data = await resp.json();
   }catch(e){ return; } // offline or Worker unreachable — live checks remain the fallback, as always
 
-  for (const direction of ['AM','PM']){
-    const entry = pending && pending[direction];
-    if (!entry || !entry.trainKey) continue;
-    if (confirmedTrains[todayKeyLocal] && confirmedTrains[todayKeyLocal][direction] !== undefined) continue;
+  const confirmations = (data && data.confirmations) || {};
+  const catchupEntries = [];
+  let changed = false;
 
-    if (!confirmedTrains[todayKeyLocal]) confirmedTrains[todayKeyLocal] = {};
-    confirmedTrains[todayKeyLocal][direction] = entry.trainKey;
-    saveConfirmedTrains();
-    silentConfirmBanner = { dateKey: todayKeyLocal, direction, trainKey: entry.trainKey, label: entry.label, source: 'watch' };
-    saveSilentConfirmBanner();
-    renderSilentConfirmBanner();
+  for (const dateKey of Object.keys(confirmations).sort()){
+    for (const direction of ['AM','PM']){
+      const entry = confirmations[dateKey][direction];
+      if (!entry || !entry.trainKey) continue; // no entry, or a manual "None" tombstone — nothing to apply
+      if (confirmedTrains[dateKey] && confirmedTrains[dateKey][direction] !== undefined) continue; // never overwrite an existing local value
+
+      if (!confirmedTrains[dateKey]) confirmedTrains[dateKey] = {};
+      confirmedTrains[dateKey][direction] = entry.trainKey;
+      changed = true;
+
+      if (dateKey === todayKeyLocal){
+        silentConfirmBanner = { dateKey, direction, trainKey: entry.trainKey, label: entry.label, source: 'watch' };
+        saveSilentConfirmBanner();
+        renderSilentConfirmBanner();
+      } else {
+        catchupEntries.push({ dateKey, direction, trainKey: entry.trainKey, label: entry.label });
+      }
+    }
+  }
+
+  if (changed) saveConfirmedTrains();
+  if (catchupEntries.length){
+    catchupBanner = { entries: catchupEntries, expanded: catchupEntries.length === 1 };
+    renderCatchupBanner();
   }
 }
 async function saveRailPerfCache(){
@@ -3296,10 +3340,15 @@ function renderBackupNudge(){
     textEl.textContent = 'No Drive backup yet — tap to back up now';
   }
   el.style.display = 'flex';
-  // Sit below the green silent-confirm banner if that's showing, rather than over it.
+  // Sit below whichever of the green silent-confirm banner and the blue
+  // catch-up banner are currently showing, rather than over them.
   const green = document.getElementById('silent-confirm-banner');
-  if (green && green.style.display !== 'none' && green.offsetHeight > 0){
-    el.style.top = green.offsetHeight + 'px';
+  const catchup = document.getElementById('catchup-banner');
+  let stackTop = 0;
+  if (green && green.style.display !== 'none' && green.offsetHeight > 0) stackTop += green.offsetHeight;
+  if (catchup && catchup.style.display !== 'none' && catchup.offsetHeight > 0) stackTop += catchup.offsetHeight;
+  if (stackTop > 0){
+    el.style.top = stackTop + 'px';
     el.style.paddingTop = '10px';
   } else {
     el.style.top = '0';
@@ -4814,147 +4863,170 @@ function openDayEditor(key){
 }
 
 // ---- Help guide ----
-// Content maintained externally (currently drafted/edited via Gemini,
-// based on the app's own code) and pasted in here as Markdown, rather
+// 2026-09-25: maintained here, against the app itself — the app is the
+// source of truth (the earlier Gemini-drafted copy is no longer kept in
+// step). {{TOKENS}} are filled from live settings/constants when Help
+// opens — see buildHelpGuideMd — so numbers like geofence radii can't go
+// stale again. Written as Markdown rather
 // than hand-converted to HTML each time it changes — this parser only
 // covers the specific subset of Markdown this particular guide actually
 // uses (headers, bold, bullet/numbered lists, tables, links, hr), not
 // Markdown in general, so a future revision using something outside
 // that subset may need the parser extended too.
 const HELP_GUIDE_MD = `
-Welcome to your **8-Day Ticket Tracker**. This app tracks your Flexi Season Ticket usage, keeps an eye on live train journeys, checks historical performance for Delay Repay claims, syncs reminders to Google Calendar, and backs up your data automatically to Google Drive.
+Welcome to your **8-Day Ticket Tracker**. This app tracks your Flexi Season Ticket usage, follows your trains live, detects which train you actually caught (on your phone and your Wear OS watch), checks performance for Delay Repay claims, syncs reminders to Google Calendar, and backs up your data to Google Drive.
 
 ---
 
 ## 1. How Your Ticket Is Tracked
 
-Your Flexi Season Ticket gives you **8 day-passes** to use within a **28-calendar-day window**.
+Your Flexi Season Ticket gives you **{{USES}} day-passes** to use within a **{{PERIOD}}-calendar-day window**.
 
-* **Automatic Pass Allowance:** Every weekday (Monday to Thursday) automatically uses 1 pass from your 8-pass allowance unless you tag the day as a non-travel day.
+* **Automatic Pass Allowance:** Every weekday (Monday to Friday) automatically uses 1 pass unless you tag it as a non-travel day.
 * **Weekends:** Weekends are automatically skipped and never consume a pass.
-* **The 28-Day Window:** Your 28-day validity period starts on the date you set when logging a new season ticket. The progress bar on the Home tab shows how many days have elapsed out of 28.
-* **Ticket Expiry:** A ticket period finishes as soon as you either **use all 8 passes** OR **reach the 28th calendar day**, whichever happens first. Any unused passes remaining after 28 days expire and cannot be carried over.
-* **Gap Days & Smart Renewal Prompts:** Once a ticket period ends, the app calculates when you next need to commute. It flags the evening before your next actual travel day as your "Buy Ticket" day — skipping non-working days or weekends in between so you never buy a ticket earlier than necessary.
+* **The {{PERIOD}}-Day Window:** Your validity period starts on the date you set when logging a new season ticket. The progress bar on the Home tab shows how many days have elapsed out of {{PERIOD}}.
+* **Ticket Expiry:** A ticket period finishes as soon as you either **use all {{USES}} passes** OR **reach day {{PERIOD}}**, whichever happens first. Unused passes can't be carried over.
+* **Gap Days & Smart Renewal Prompts:** Once a ticket period ends, the app works out when you next need to commute and flags the evening before that day as your "Buy Ticket" day — skipping non-working days and weekends in between.
 
 ---
 
 ## 2. Managing Your Daily Schedule
 
 ### Tagging Non-Travel Days
-If you aren't commuting on a scheduled work day:
 1. Tap any weekday on the Home tab or in the upcoming day list.
-2. Choose a preset chip tag (**WFH**, **HOLIDAY**, **DENTIST**, **SICK**) or type a custom reason.
-3. Tap **Save**. The pass allowance for that day is immediately restored, and your predicted renewal date adjusts automatically.
+2. Choose a preset tag (**WFH**, **HOLIDAY**, **DENTIST**, **SICK**) or type your own reason.
+3. Tap **Save**. That day's pass is restored and your renewal date adjusts automatically.
 
 ### Working Day Overrides
-If you previously tagged a day as WFH or Holiday but ended up commuting anyway, tick the **"I still used the ticket today"** box on that day's editor. The app keeps your note on record while correctly deducting a pass.
+If you tagged a day but commuted anyway, tick **"I still used the ticket this day"** in that day's editor. Your note is kept and a pass is still deducted.
+
+### Parking
+Tick **"I parked today"** in a day's editor to record what you actually paid (it defaults to your daily parking cost from **Settings → Costs**).
 
 ### UK Bank Holidays
-The app checks the official gov.uk bank holiday feed. Any public holiday falling on a weekday is automatically tagged as **BANK HOLIDAY** so you don't accidentally waste a pass on a public holiday.
+The app checks the official gov.uk bank holiday feed and tags weekday public holidays as **BANK HOLIDAY** automatically.
+
+### Holiday Countdown
+When a holiday is coming up, a Home tab card counts down the working days left. On your last working day it switches to an hour countdown to home time, then shows **"Enjoy your holiday!"** with your return date for the whole break.
 
 ---
 
 ## 3. Live Trains & Station Boards
 
-The app connects directly to National Rail Darwin live feeds via a private proxy Worker.
+The app connects to National Rail's Darwin live feeds via a private proxy Worker.
 
 ### Live Trains Tab ("My Trains" & "Tracked")
-Tap the **Live** tab on the bottom navigation bar to switch between two views:
-
-1. **My Trains:** Displays real-time departure boards for your saved usual morning (Crewe to Wigan) and evening (Wigan to Crewe) commute times.
-   * Shows departure times, platforms, delay minutes, and cancellation notices.
-   * Tap any train row to open its full live journey timeline.
-
-2. **Tracked Trains:** Shows up to 5 specific train services you are currently following.
-   * Tap **Track a train** to search live departures or arrivals from any UK station by name or 3-letter station code (e.g. \`CRE\`, \`WGN\`, \`EUS\`).
-   * Tap a train from the search results to start watching it. It remains in your Tracked list for up to 6 hours, allowing you to follow its progress long after it leaves your station.
+1. **My Trains:** Live departures for your usual morning (Crewe → Wigan) and evening (Wigan → Crewe) trains — times, platforms, delays and cancellations. Tap a row for its full live journey.
+2. **Tracked Trains:** Follow up to **{{TRACKED_MAX}}** specific services. Tap **Track a train** to search any UK station by name or 3-letter code (e.g. \`CRE\`, \`WGN\`, \`EUS\`). A tracked train stays in the list for up to {{TRACKED_HOURS}} hours.
 
 ### Real-Time Journey Progress
-When you tap into any live train, the app opens a detailed timeline:
-* **Live Progress Line & Blob:** An animated indicator moves down the station list based on real-time station departure reports.
-* **Station Weather:** Real-time weather icons (sun, moon, clouds, rain, snow) and temperatures are fetched from Open-Meteo for upcoming stops. Clear sky icons switch to a moon at night using astronomical sunrise/sunset calculations.
-* **Delay Explanations:** Real-time delay or cancellation reasons from National Rail are shown inline. The app filters out stale, repeated reasons from earlier stops, but you can tap *Show all reasons* to reveal everything.
-* **Smart Adaptive Polling:** To save battery and data, the progress screen automatically slows its check-ins when departure is still far off, and speeds up polling when approaching the final destination. You can adjust these timing thresholds under **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Live progress polling**.
+Tapping a live train opens a detailed timeline:
+* **Live Progress Line:** An animated marker moves down the stops based on real departure reports, and pins at a platform while the train is actually standing there.
+* **Platforms & Status:** Platform numbers and an **AT PLATFORM** / **NOT YET DEPARTED** pill come from the rail industry's staff data where available, which is often more precise than public boards.
+* **Coach Formation:** A side-on strip shows the train's coaches, with class and loading where the operator sends them. When only the train's length is reported (usual for Avanti), coaches are labelled from that alone, and an estimated count is marked with an asterisk.
+* **Station Weather:** Weather icons and temperatures for upcoming stops (can be turned off in **Settings → Weather**).
+* **Delay Explanations:** Delay and cancellation reasons are shown inline. Stale or repeated reasons are hidden, but you can tap **Show all reasons**.
+* **Adaptive Polling:** Checks slow down when departure is far off and speed up near your destination. Tune this in **Settings → Polling**.
 
 ### Retro Station Board
-For a full-screen, station-style departure and arrival display:
-1. Tap **More** $\\rightarrow$ **Station board**.
-2. Choose any UK station by name or 3-letter code.
-3. The app renders a split-flap style board showing real-time departures and arrivals that automatically cycles through pages and updates every 30 seconds.
-
-### Automatic Location Detection ("Is this your train?")
-When you are within 500 metres of Crewe or Wigan station around your commute time, the app checks live departure boards:
-* **Delayed / Unexpected Train (Mismatch Prompt):** If an earlier or delayed train is leaving right when you arrive, a banner asks: **"Is this your train?"** Tapping **"Yes, that's me"** updates your confirmed train record.
-* **Automatic Silent Confirmation (Within 5 Minutes):** If you are at the station and your usual scheduled train is due to depart or arrive **within 5 minutes**, the app quietly confirms that train for you automatically — no manual tap required. A brief green banner appears at the top of the screen to let you know it has logged the journey. *(Note: If you arrive at the station more than 5 minutes before departure, the app holds off on auto-confirming until that 5-minute window opens, ensuring an early arrival doesn't lock in the wrong train prematurely).*
+Open **More → Station board**, choose any UK station, and get a split-flap style board of departures and arrivals that cycles pages and refreshes every 30 seconds.
 
 ### Emergency Routes
 For real disruption, not everyday delays:
-1. In **Settings → Emergency routes**, author fallback journeys while things are calm — each one is a chain of legs between stations (e.g. "Via Liverpool": Wigan North Western → Liverpool Lime Street → Crewe).
-2. Turn on **Settings → Emergency tab** when you actually want to see it. It's hidden by default so it doesn't clutter the Live screen day-to-day — this is a "only show this when it's actually useful" switch, not something that appears automatically.
-3. When disruption hits, open the **Emergency** tab on the Live screen. It checks every saved route live against Darwin and shows either a full chained plan or however far it gets before a leg dies, allowing a 5-minute minimum interchange buffer between legs.
-4. Routes are grouped and sorted for whichever direction you're travelling in — set your **Settings → Home & Work stations** once, and from 12:00 the routes that get you home sort first, before 12:00 the ones that get you to work do, in both cases soonest-arriving full plan at the top and any dead/partial route pushed to the bottom.
-5. Once a route resolves to a full plan, tap **Add to Tracked** to start following its actual trains — this respects your usual 5-train tracking limit and will ask which trains to drop rather than silently bumping anything.
+1. In **Settings → Emergency routes**, set up fallback journeys while things are calm — each is a chain of legs (e.g. "Via Liverpool": Wigan North Western → Liverpool Lime Street → Crewe).
+2. Turn on **Settings → Emergency tab** when you want to see it on the Live screen; it's hidden by default.
+3. The tab checks every saved route live and shows a full chained plan, or how far it gets before a leg fails, allowing a 5-minute minimum interchange.
+4. Routes sort by direction using **Settings → Home & Work stations** — routes home first from 12:00, routes to work first before then.
+5. Tap **Add to Tracked** on a full plan to follow its trains — it respects the {{TRACKED_MAX}}-train limit and asks before dropping anything.
 
 ---
 
-## 4. Delay Repay & Claims
+## 4. Knowing Which Train You Caught
 
-The app automatically cross-references your past travel days against historical performance records via the Historical Service Performance (HSP) proxy Worker.
+Confirmed trains make Delay Repay matching accurate. There are three ways a train gets confirmed.
+
+### On Your Phone ("Is this your train?")
+When you're near Crewe or Wigan around a commute time — within **{{CRE_RADIUS}} m** of Crewe or **{{WGN_RADIUS}} m** of Wigan (adjust in **Settings → Geofence**) — the app checks the live boards:
+* **Silent Confirmation:** If your usual train is departing or arriving within **{{SILENT_MIN}} minutes**, it's confirmed automatically and a green banner says so. Arrive earlier than that and it waits until the window opens, so an early arrival can't lock in the wrong train.
+* **"Is this your train?":** If a different or delayed train is leaving as you arrive, a banner asks. Tap **"Yes, that's me"** to confirm it.
+
+### On Your Watch
+The Wear OS companion app detects arriving at either station using the same geofence sizes, even with your phone in your pocket. The matching is done server-side and keeps retrying for up to 90 minutes, so arriving early or a delayed train doesn't cause a miss. Confirmations made this way show **"(via watch)"**.
+* Open the app on the same day and the watch's confirmation appears in the usual green banner.
+* **Catch-up summary:** If the app wasn't opened for a day or more, it picks up anything the watch confirmed in the last 7 days and shows a summary banner — tap it to see each journey. It stays until you dismiss it, so you can check nothing was matched wrongly.
+
+### Manually
+Use **More → Confirm train used** to set or correct the train for any date. A manual entry always wins — it overrides a watch or phone confirmation, and choosing "None" stops any further automatic matching for that direction today.
+
+### Watch Train Alerts
+At a time you set per train in **Settings → Trains** ("Watch alert at"), your watch checks how the day's target train is running and buzzes with on time / delayed / cancelled and the platform. Leave a train's time blank for no alert. To report on a different train tomorrow, use the **Watch alert target** strip on the Live tab's My Trains view — it defaults to Today in the morning and Tomorrow from midday. Non-travel days get no alerts.
+
+---
+
+## 5. Delay Repay & Claims
+
+The app cross-references your travel days against Historical Service Performance (HSP) records.
 
 ### Delay Indicators
-* **Orange Dot:** Indicates that at least one of your configured usual trains suffered a delay of **15 minutes or more** on that date.
-* **Red Dot:** Confirms a 15+ minute delay on a train you explicitly confirmed catching.
+* **Orange Dot:** At least one of your usual trains was **15+ minutes** late that day.
+* **Red Dot:** The train you were confirmed as catching was 15+ minutes late.
 
-### Smartcard Pass (Photo and Number, for Delay Claims)
-Avanti West Coast requires a photo of your ticket, and asks for your smartcard number, when submitting a Delay Repay claim.
-1. Go to **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Smartcard pass**.
-2. Upload a photo of your Flexi Season Ticket once. It is stored privately in your browser's IndexedDB storage.
-3. Enter your smartcard number once — it's printed on the card itself.
+### Claim Expiry Badge
+Avanti allows 28 days from travel to claim. A badge on the Home tab header shows the days left on your soonest unconfirmed claim. If a claim runs out, it's marked **Expired** and the badge shows that until you acknowledge it.
+
+### Smartcard Pass
+Avanti asks for a photo of your ticket and your smartcard number. Add both once in **Settings → Smartcard** — the photo is stored privately on this device.
 
 ### Submitting & Managing Claims
-1. Tap a day with a delay indicator, or open **More** $\\rightarrow$ **Delay repay claims**.
-2. Tap the highlighted red delay row. The app calculates your estimated payout based on standard Flexi 8 delay bands. (Note: Because a Flexi 8 ticket covers 16 individual single journeys, calculations are based on one-way leg values — so 15–29 mins pays 25%, 30–59 mins pays 50%, and 60+ mins pays 100% of a single leg's value).
-3. Several things happen at once: Avanti's Delay Repay website opens in a new tab, your saved pass photo downloads to your device's Downloads folder, a **claim-details.txt** file also downloads there (train, delay, ticket price, and payout for whichever of your AM/PM journeys applied that day, plus your smartcard number) — and your smartcard number is copied straight to your clipboard, ready to paste into Avanti's form the moment its page loads.
-4. A **Claim details** screen also appears in the app itself, showing the same information at a glance right away.
-5. After submitting your claim on Avanti's site, check the **Confirmed** box in the app's Delay Repay manager to mark the claim as paid.
+1. Tap a day with a delay indicator, or open **More → Delay repay claims**.
+2. Tap the highlighted delay row. The app estimates your payout per single leg (a Flexi 8 covers 16 single journeys): 15–29 mins pays 25%, 30–59 mins 50%, and 60+ mins 100% of one leg's value.
+3. Avanti's Delay Repay site opens, your pass photo downloads, and your smartcard number is copied to the clipboard ready to paste. If **Settings → Claim file** is on, a **claim-details.txt** summary downloads too.
+4. A **Claim details** screen shows the same information in the app.
+5. Once submitted and paid, tick **Confirmed** in the Delay Repay manager.
 
 ---
 
-## 5. Logging Purchases & Ticket Advisor
+## 6. Performance & Money
+
+### Performance History
+**More → Performance history** shows how your usual trains ran on every weekday, not just days you travelled, starting with the last 90 days — tap **Load more history** to go further back (about a year). The stats icon at the top shows the most common delay and cancellation reasons and which weekdays tend to run latest, morning and evening.
+
+### ROI Dashboard
+**More → ROI dashboard** shows what the commute has cost and clawed back: Delay Repay totals (confirmed, pending and expired), claims recovered against ticket spend over a rolling 12 months, monthly claims, parking spent and saved, and a **What if** projection of how many tickets a different pattern of office days would need over the next 12 months.
+
+### Home Tab Cards
+* **Set aside on payday:** Counts the tickets and parking days in your pay period (paid on the 28th, moved earlier for weekends and bank holidays) and totals what to set aside. Use the **‹** and **›** arrows to preview future periods.
+* **Savings card:** What parking has saved you this ticket period.
+* **Spending card:** What you've spent on tickets this year.
+
+Any of these cards can be hidden or shown again in **Settings** (**Payday card**, **Savings card**, **Spending card**). Daily parking cost and day-return price live in **Settings → Costs**.
+
+---
+
+## 7. Logging Purchases & Ticket Advisor
 
 ### Logging Tickets
-Open the **Buy** tab at the bottom of the screen:
-* **Season Ticket:** Sets a new 8-use/28-day tracking cycle starting from your chosen date and records the cost.
-* **Single Ticket:** Logs an individual day-return purchase without resetting or disturbing your main 8-pass cycle.
+Open the **Buy** tab:
+* **Season Ticket:** Starts a new {{USES}}-use / {{PERIOD}}-day cycle from your chosen date and records the cost.
+* **Single Ticket:** Logs an individual day-return without disturbing your season ticket cycle.
 
 ### Ticket Purchase Advisor
-Before you buy a new season ticket, the advisor checks your upcoming calendar (accounting for WFH, holidays, and bank holidays). If you have fewer than 8 travel days planned in the next 28 days, it calculates whether buying individual day-return tickets would be cheaper than a full season ticket and gives you a clear recommendation.
+Before you buy, the advisor checks your upcoming days (WFH, holidays and bank holidays included). If you have fewer than {{USES}} travel days planned in the next {{PERIOD}}, it tells you whether day returns would be cheaper.
 
 ---
 
-## 6. Calendar Sync & Google Drive Backups
+## 8. Calendar Sync & Google Drive Backups
 
 ### Google Calendar Reminders
-1. Tap **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Connect Google Calendar**.
-2. The app syncs a single calendar event titled **"Buy train ticket"** set for 8:00 PM on the exact evening you need to buy your next pass.
-3. If your predicted travel schedule shifts, the app automatically updates the event date.
+1. Go to **Settings → Calendar** to connect.
+2. The app keeps a single **"Buy train ticket"** event at 8:00 PM on the evening you next need to buy.
+3. If your plans change, the event moves automatically.
 
-### Automatic Google Drive Backups
-1. Tap **More** $\\rightarrow$ **Backup & Restore**.
-2. Enable **Automatically back up to Google Drive**.
-3. Whenever you switch away from or close the app, it quietly checks if any data has changed. If changes were made and at least 30 minutes have passed since the last backup, it uploads a JSON file to a \`Ticket Tracker Backups\` folder in your Google Drive. It automatically keeps the 2 most recent backups and cleans up older ones.
-   Google's sign-in only lasts about an hour, and the app can't renew it without a tap. If the last Drive backup is over 2 days old and something has changed, a red banner appears at the top — tap it to back up (and re-authorise if asked).
-4. You can also manually export or restore a backup \`.json\` file at any time.
-
----
-
-## 7. Budgeting & Payday Planning
-
-Under **Set aside on payday** on the Home tab:
-* The app calculates your monthly pay period (taking the 28th of the month and adjusting backward for weekends or bank holidays).
-* It counts how many season tickets and parking days fall within that pay window, multiplying them by your daily parking cost and ticket price.
-* Use the **$\\langle$** and **$\\rangle$** arrows to preview future pay periods.
-* You can update daily parking costs or day-return prices anytime under **More** $\\rightarrow$ **Settings** $\\rightarrow$ **Costs**.
+### Google Drive Backups
+1. Open **More → Backup & restore** and turn on automatic Google Drive backup.
+2. When you leave or close the app, it backs up if anything has changed and at least 30 minutes have passed since the last backup. Files go to a \`Ticket Tracker Backups\` folder, keeping the {{BACKUP_KEEP}} most recent.
+3. Google's sign-in lasts about an hour and can't renew without a tap. If the last backup is over 2 days old and something has changed, a red banner appears — tap it to back up.
+4. You can also export or restore a \`.json\` backup manually at any time.
 
 ---
 
@@ -4962,13 +5034,16 @@ Under **Set aside on payday** on the Home tab:
 
 | Nav / Menu Item | Primary Function |
 | :--- | :--- |
-| **Home Tab** | Main flip-card counter, 28-day bar, payday planner, and day list. |
-| **Live Tab** | View saved commute trains ("My trains") or track any UK service ("Tracked"). |
-| **Buy Tab** | Log new season or single tickets; view smart cost recommendations. |
-| **Calendar Tab** | Monthly grid displaying logged notes, travel days, and delay indicators. |
-| **Station Board** | Retro full-screen live departure and arrival board for any UK station. |
-| **Delay Repay Claims** | Log, manage, and confirm compensation claims for delayed journeys. |
-| **Settings** | Configure usual train times, costs, polling frequency, pass photo, and Google sync. |
+| **Home Tab** | Pass counter, {{PERIOD}}-day bar, claim badge, payday/savings/spending cards, holiday countdown, day list. |
+| **Live Tab** | Your usual trains, watch alert target, tracked trains, and the optional Emergency tab. |
+| **Buy Tab** | Log season or single tickets; purchase advisor. |
+| **Calendar Tab** | Monthly grid of notes, travel days, and delay indicators. |
+| **More → Station board** | Retro full-screen live board for any UK station. |
+| **More → Confirm train used** | Set or correct which train you caught. |
+| **More → ROI dashboard** | Claims, ticket spend, parking and office-day projections. |
+| **More → Performance history** | How your usual trains have run, plus reason and weekday stats. |
+| **More → Delay repay claims** | Manage and confirm claims. |
+| **Settings** | Costs, polling, geofence, account, calendar, trains & watch alerts, smartcard, claim file, weather, card visibility, emergency routes, Home & Work stations, and the write secret. |
 `;
 
 // Minimal, purpose-built Markdown renderer — covers exactly the subset
@@ -5047,7 +5122,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-09-19.06:22*
+*Last updated: v2026-09-25.08:24*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
@@ -5061,6 +5136,7 @@ const BACKLOG_MD = `
 10. **Remove the Staff (LDBSVWS) debug/comparison plumbing once it's no longer needed** — \`lastStaffDebugFrom\`/\`lastStaffDebugTo\`, \`formatStaffCompareLine\`, \`updateStaffDebugPanel\`, the \`#train-progress-staff-debug\` panel, and the "Copy raw JSON" button were all built purely to validate the Staff board against Darwin side-by-side (see \`staff-board-scoping.md\`), and are being kept around only so a real response can still be copied out for analysis while the AT PLATFORM and blob-position work is ongoing. The genuinely load-bearing pieces — \`fetchStaffBoardComparison\`, \`extractStaffLocationFields\`, \`findServiceOriginPoint\`, \`buildStaffPlatformOverrides\`, \`buildStaffLiveStatusOverrides\`, \`isoTimeToHHMM\`, and the override maps themselves — are NOT part of this cleanup and should stay; only the debug-display layer around them is temporary. Safe to remove once the Staff integration is settled and there's no further need to eyeball a live raw response.
 11. **Blob position: use Staff's junction/pass-points for smoother in-transit interpolation, not just the AT PLATFORM correction already built** — currently the blob's fraction between two calling points is one flat straight line, timed off just those two points' own liveDates; the Staff response already contains every junction/pass-point in between (e.g. WIGASJN, SPRBJN, GOLBRNJ — often only 1–3 minutes apart on the WCML) with their own etd/atd, which could place the blob far more precisely mid-gap. No new polling needed for this — the origin-anchored fetch already returns every pass-point on every regular refresh (60s normally, 20s on the final leg toward your own stop; see \`computeNextRefreshDelay\`), so whichever pass-points the most recent poll happened to confirm can just be used as they arrive, same permissive pattern as everything else — there's no discrete "did it pass yet" gate to design. The actual work: \`buildStaffPlatformOverrides\`/\`buildStaffLiveStatusOverrides\` both explicitly skip anything without a \`crs\` (i.e. every junction/pass-point, by design — correct for platforms and the AT PLATFORM badge, since those aren't real stations), so none of this timing is captured anywhere yet. Needs (a) a separate extraction keeping pass-points between two calling points, keyed by \`tiploc\`/array position rather than \`crs\` since they have none, and (b) interpolation logic that picks the fraction against whichever pass-point is most relevant to "now" within a gap, rather than the current flat line across the whole thing. Deliberately scoped as its own future piece, separate from the AT PLATFORM/overrun pin already shipped (2026-08-26) — that fix only stops the blob claiming progress that didn't happen while genuinely stationary; this would additionally sharpen it while genuinely moving.
 12. **Buying a ticket that starts tomorrow skips next-buy notification/calendar sync until the next day** — the next-buy calculation, 10-second debounce timer, local notification, and Google Calendar sync all live inside \`render()\`'s \`if (!beforePeriod)\` block, gated on \`todayState\` existing for today's date key. When a season ticket is logged with a start date of tomorrow, \`periodStart > today\`, so \`beforePeriod\` is \`true\` tonight and the entire block is skipped — no next-buy date is even computed, let alone notified/synced. It self-corrects the following day once \`periodStart\` matches \`today\` and the app is opened (triggering \`render()\` again), but there's currently no immediate feedback on the purchase night itself. Possible fix: after saving a new season ticket in the Buy screen, independently compute the next-buy date for the *new* period and schedule/sync then, rather than relying on tomorrow's \`render()\` to pick it up.
+13. **Catch-up banner doesn't persist across a reload** — deliberate for now (session-only, see checkPendingConfirmation's 2026-09-25 doc comment): dismissing loses the notice but not the underlying confirmedTrains write, and it never resurrects an already-applied entry. Worth a persisted/acknowledged version if a catch-up notice ever needs to survive an accidental dismiss or an app restart before being seen.
 `;
 // Deliberately NOT listed above — these are easter eggs, and the whole
 // point is Wayne forgetting they exist and being surprised. Left as a
@@ -5071,13 +5147,30 @@ const BACKLOG_MD = `
 // bursts on Bonfire Night (see runSeasonalEasterEgg and friends, near the
 // bottom of the file, just above the init() IIFE).
 
+// 2026-09-25: fills HELP_GUIDE_MD's {{TOKENS}} from live settings and
+// constants at the moment Help opens. An unknown token is left visible
+// rather than silently blanked, so a typo shows up on screen.
+function buildHelpGuideMd(){
+  const values = {
+    CRE_RADIUS: geofenceRadiusCrewe,
+    WGN_RADIUS: geofenceRadiusWigan,
+    SILENT_MIN: SILENT_CONFIRM_MAX_DIFF_MIN,
+    TRACKED_MAX: TRACKED_TRAIN_MAX,
+    TRACKED_HOURS: Math.round(TRACKED_TRAIN_MAX_AGE_MS / 3600000),
+    BACKUP_KEEP: DRIVE_BACKUP_KEEP_COUNT,
+    USES: USES_PER_PERIOD,
+    PERIOD: PERIOD_LENGTH,
+  };
+  return HELP_GUIDE_MD.replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (k in values ? String(values[k]) : m));
+}
+
 function openHelpGuide(){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay modal-overlay-nav-safe';
   overlay.innerHTML = `
     <div class="modal">
       <h3>Help</h3>
-      <div class="help-content">${renderHelpMarkdown(HELP_GUIDE_MD)}</div>
+      <div class="help-content">${renderHelpMarkdown(buildHelpGuideMd())}</div>
       <div class="modal-close" id="help-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
@@ -12751,7 +12844,69 @@ function renderSilentConfirmBanner(){
   } else {
     el.style.display = 'none';
   }
-  renderBackupNudge(); // restack (or re-show) the red backup nudge relative to this banner
+  renderCatchupBanner(); // restacks itself below this banner, and cascades into renderBackupNudge below that
+}
+
+// ---- Catch-up summary banner ----
+// Same fixed-position pattern as the green silent-confirm banner above,
+// mounted once and left alone by render(). Sits directly below it (or
+// at the top if the green banner isn't showing) — see the restacking
+// logic at the end of this function and in renderBackupNudge.
+// Deliberately a different colour (blue, not green) so a catch-up
+// notice about a PAST day is never mistaken for today's own immediate
+// confirmation.
+function mountCatchupBanner(){
+  const el = document.createElement('div');
+  el.id = 'catchup-banner';
+  el.style.cssText = 'position:fixed; left:0; right:0; z-index:199; display:none; flex-direction:column; gap:6px; padding:10px 14px; background:rgba(90,140,205,0.94); color:#0d1f33; font-size:13.5px; font-weight:600; box-shadow:0 2px 8px rgba(0,0,0,0.25);';
+  document.body.appendChild(el);
+  renderCatchupBanner(); // reflect whatever's already set (none, on a fresh load — this state is never persisted)
+}
+function renderCatchupBanner(){
+  const el = document.getElementById('catchup-banner');
+  if (!el) return;
+  if (!catchupBanner || !catchupBanner.entries.length){
+    el.style.display = 'none';
+    renderBackupNudge();
+    return;
+  }
+  const entries = catchupBanner.entries;
+  const summaryLine = entries.length === 1
+    ? `Watch confirmed ${escapeHtml(entries[0].label)} on ${dayNameShort(parseKey(entries[0].dateKey))} ${escapeHtml(dateLabelShort(parseKey(entries[0].dateKey)))}`
+    : `Watch confirmed ${entries.length} journeys while you were away`;
+  const detailHtml = entries.length > 1 && catchupBanner.expanded
+    ? `<div style="font-weight:500; font-size:12.5px; opacity:0.9;">${entries.map(e =>
+        `${dayNameShort(parseKey(e.dateKey))} ${e.direction} ${escapeHtml(e.label)}`
+      ).join(' · ')}</div>`
+    : '';
+  el.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <span id="catchup-banner-text" style="cursor:${entries.length > 1 ? 'pointer' : 'default'};">${summaryLine}</span>
+      <span id="catchup-banner-dismiss" style="cursor:pointer; font-weight:800; font-size:16px; line-height:1; padding:6px 8px; margin:-6px -6px -6px 0; -webkit-user-select:none; user-select:none; touch-action:manipulation;">×</span>
+    </div>
+    ${detailHtml}
+  `;
+  if (entries.length > 1){
+    document.getElementById('catchup-banner-text').addEventListener('click', () => {
+      catchupBanner.expanded = !catchupBanner.expanded;
+      renderCatchupBanner();
+    });
+  }
+  document.getElementById('catchup-banner-dismiss').addEventListener('click', () => {
+    catchupBanner = null;
+    renderCatchupBanner();
+  });
+  el.style.display = 'flex';
+  // Sit below the green silent-confirm banner if that's showing, rather than over it.
+  const green = document.getElementById('silent-confirm-banner');
+  if (green && green.style.display !== 'none' && green.offsetHeight > 0){
+    el.style.top = green.offsetHeight + 'px';
+    el.style.paddingTop = '10px';
+  } else {
+    el.style.top = '0';
+    el.style.paddingTop = 'calc(10px + env(safe-area-inset-top))';
+  }
+  renderBackupNudge(); // restack the red backup nudge below this one too
 }
 
 // One-off transient toast, e.g. for showing a decoded delay reason after
@@ -12917,6 +13072,7 @@ function spawnFireworkBurst(container, colors){
   schedulePushWatchConfig();
   runSeasonalEasterEgg();
   mountSilentConfirmBanner();
+  mountCatchupBanner();
   mountBackupNudge();
   setInterval(renderBackupNudge, 5 * 60 * 1000); // stale-ness is time-based, so re-check while the app stays open
 
