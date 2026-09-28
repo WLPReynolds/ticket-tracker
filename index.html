@@ -1242,7 +1242,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-28.16:12'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-28.17:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -4979,7 +4979,7 @@ The Wear OS companion app detects arriving at either station using the same geof
 Use **More → Confirm train used** to set or correct the train for any date. A manual entry always wins — it overrides a watch or phone confirmation, and choosing "None" stops any further automatic matching for that direction today.
 
 ### Copy for WhatsApp
-Once today's evening train is known, the app can put a ready-made message on the clipboard for pasting into WhatsApp — e.g. *"🚆 On the 17:31 (running ~6 min late). Should be into Crewe around 18:15."* The arrival time is rounded **up** to the next 5 minutes.
+Once today's evening train is known, the app can put a ready-made message on the clipboard for pasting into WhatsApp — e.g. *"🚆 On the 17:31 (running ~6 min late). Should be into Crewe around 18:15."* The arrival time errs on the late side: it takes the later of the live Crewe estimate and the train's current delay carried through to Crewe, then rounds **up** to the next 5 minutes.
 * **Green banner:** tap **Copy for WhatsApp**. The button goes once it's copied.
 * **"Yes, that's me"** and **Confirm train used → Save** (today, evening train changed) copy it automatically.
 * It's only offered while live times are available and the train hasn't reached Crewe. If a copy fails, the banner's button gives you one more try; after that it's left for you to type.
@@ -5148,7 +5148,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-09-27.18:32*
+*Last updated: v2026-09-28.17:41*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
@@ -12965,8 +12965,43 @@ function findJourneyArrivalService(arrivals, train){
   return matches.length === 1 ? matches[0] : null;
 }
 
+// Current running delay carried forward from the train's most recent
+// calling point before the destination: the last one with an actual time,
+// else the first one with a live estimate. Null when nothing usable.
+// Darwin's "On time" counts as 0; "Delayed"/"No report"/"Cancelled" skip.
+function journeyPointDelay(stTime, liveTime){
+  if (!journeyIsClockTime(stTime)) return null;
+  if (liveTime === 'On time') return 0;
+  if (!journeyIsClockTime(liveTime)) return null;
+  let d = journeyClockMinutes(liveTime) - journeyClockMinutes(stTime);
+  if (d < -720) d += 1440;
+  if (d > 720) d -= 1440;
+  return d;
+}
+function journeyCarriedDelay(prevPoints){
+  let lastActual = null;
+  for (const cp of prevPoints){
+    const d = journeyPointDelay(cp.st, cp.at);
+    if (d !== null) lastActual = d;
+  }
+  if (lastActual !== null) return lastActual;
+  for (const cp of prevPoints){
+    const d = journeyPointDelay(cp.st, cp.et);
+    if (d !== null) return d;
+  }
+  return null;
+}
+
 // The single place the wording lives. Returns null whenever nothing should
 // be offered: no match, cancelled, already arrived, or no usable estimate.
+//
+// 2026-09-28 (first field test): the ETA is deliberately PESSIMISTIC —
+// the later of Darwin's own destination estimate and the train's current
+// delay carried through to the destination's schedule. Darwin often
+// predicts the train recovering time before Crewe (on 28 Sep it showed
+// Crewe "on time" while the train was 4–5 min late at Wigan, then moved
+// to 3 late minutes later), which made the message say "on time" about a
+// visibly late train. Better the family wait than Wayne does.
 function buildJourneyShareText(train, service){
   if (!train || !service) return null;
   if (service.ata) return null; // already at the destination
@@ -12981,17 +13016,17 @@ function buildJourneyShareText(train, service){
   const eta = service.eta;
   if (eta === 'Delayed') return `${head} (delayed, no new time yet).`;
 
-  let estimate;
-  if (eta === 'On time' || eta === sta) estimate = sta;
-  else if (journeyIsClockTime(eta)) estimate = eta;
-  else return null; // "No report" or anything unrecognised — no reliable live picture
+  const destDelay = journeyPointDelay(sta, eta); // Darwin's own view of the destination
+  if (destDelay === null) return null; // "No report" or anything unrecognised — no reliable live picture
+  const carried = journeyCarriedDelay(prev);
+  const delay = Math.max(destDelay, carried !== null ? carried : 0, 0);
 
-  let delay = journeyClockMinutes(estimate) - journeyClockMinutes(sta);
-  if (delay < -720) delay += 1440; // crossed midnight
-  if (delay > 720) delay -= 1440;
+  const estimateMin = journeyClockMinutes(sta) + delay;
   const status = delay > 0 ? `running ~${delay} min late` : 'on time';
-  const roundedUp = journeyMinutesToClock(Math.ceil(journeyClockMinutes(estimate) / 5) * 5); // better they wait than you do
-  const destName = service.locationName || train.toLoc;
+  const roundedUp = journeyMinutesToClock(Math.ceil(estimateMin / 5) * 5);
+  // The arrivals board only names its station once, at board level — not
+  // per service — so the name comes from the app's own station data.
+  const destName = (STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || stationNameForCrs(train.toLoc) || train.toLoc;
   return `${head} (${status}). Should be into ${destName} around ${roundedUp}.`;
 }
 
