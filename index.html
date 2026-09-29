@@ -1242,7 +1242,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-29.08:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-29.16:04'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5148,7 +5148,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-09-29.08:32*
+*Last updated: v2026-09-29.16:04*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
@@ -8406,6 +8406,15 @@ function extractStaffLocationFields(raw, match, wantedCrs){
 // use everywhere else in this file. Top-level (not inside
 // openTrainProgress) because buildTrainProgress, a separate top-level
 // function, needs it too — see its use there, closing backlog #7.
+// True when HH:MM clock time a is earlier than b, folding a midnight
+// wrap the same way describePointStatus does. False if either isn't a time.
+function isClockTimeEarlier(a, b){
+  if (typeof a !== 'string' || typeof b !== 'string' || !a.includes(':') || !b.includes(':')) return false;
+  let diff = (parseInt(a.slice(0,2),10)*60 + parseInt(a.slice(3,5),10))
+           - (parseInt(b.slice(0,2),10)*60 + parseInt(b.slice(3,5),10));
+  if (diff > 720) diff -= 1440; else if (diff < -720) diff += 1440;
+  return diff < 0;
+}
 function isoTimeToHHMM(iso){
   return (typeof iso === 'string' && iso.length >= 16) ? iso.slice(11, 16) : null;
 }
@@ -8938,7 +8947,14 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       : (status.atdSpecified ? status.atd : null);
     const precise = preciseIso ? isoTimeToHHMM(preciseIso) : null;
     if (!precise) return p;
-    const correctedLiveTime = precise === p.schedTime ? 'On time' : precise;
+    // Only ever moves Darwin's "On time" LATER, never earlier (2026-09-29,
+    // found live at Lancaster: at=On time, Staff atd 15:57:xx vs a
+    // 15:58 public time). isoTimeToHHMM drops the seconds, and public
+    // times are themselves rounded from half-minute working times, so a
+    // departure Darwin rightly calls on time could read as "1 min early".
+    // This correction exists to surface hidden lateness only.
+    // Destination (final point) keeps its previous behaviour: an early arrival there is genuine.
+    const correctedLiveTime = (precise === p.schedTime || (!isFinalPointRow && isClockTimeEarlier(precise, p.schedTime))) ? 'On time' : precise;
     return { ...p, liveTime: correctedLiveTime, hasConfirmedActual: true };
   });
   // Early ARRIVAL mistaken for an early DEPARTURE (2026-09-29, found live
@@ -8968,7 +8984,10 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     const status = p.crs ? staffLiveStatusOverrides[p.crs] : null;
     const staffAtd = (status && status.atdSpecified && status.atd) ? isoTimeToHHMM(status.atd) : null;
     if (staffAtd){
-      return { ...p, liveTime: staffAtd === p.schedTime ? 'On time' : staffAtd, hasConfirmedActual: true };
+      // Same rule as the correction above: a Staff departure time that
+      // (seconds dropped) reads earlier than schedule is "On time", never early.
+      const onTime = staffAtd === p.schedTime || isClockTimeEarlier(staffAtd, p.schedTime);
+      return { ...p, liveTime: onTime ? 'On time' : staffAtd, hasConfirmedActual: true };
     }
     return { ...p, liveTime: 'On time' };
   });
