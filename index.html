@@ -1242,7 +1242,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-28.17:41'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-29.08:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5148,7 +5148,7 @@ function renderHelpMarkdown(md){
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-09-28.17:41*
+*Last updated: v2026-09-29.08:32*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **GitHub Actions deploy automation** — currently manual, now covers two files (PWA + Worker) whenever the Worker changes too.
@@ -8390,6 +8390,9 @@ async function fetchStaffBoardComparison(crs, filterCrs, filterType, boardType, 
 // genuinely stale data lingers noticeably once the train's actually
 // moved on.
 const STAFF_DATA_MAX_AGE_MS = 5 * 60 * 1000;
+// How long past Darwin's etd a Staff arrived-not-departed point may sit
+// before it counts as overrunning — see staffPlatformStatusFor.
+const STAFF_OVERRUN_GRACE_MS = 90 * 1000;
 
 function extractStaffLocationFields(raw, match, wantedCrs){
   if (!match) return null;
@@ -8473,8 +8476,16 @@ function staffPlatformStatusFor(crs, staffLiveStatusOverrides, now, staffDataAge
   // stores match.etd even when Staff didn't actually specify it for this
   // poll, so an unspecified/stale etd shouldn't be trusted as a real
   // prediction to compare "now" against.
+  // Grace period (2026-09-29): Staff routinely takes several seconds to
+  // log a departure, so "now > etd" alone fired within seconds of an
+  // on-time departure (found live at Warrington Bank Quay, 16s past
+  // etd) and latched a NOT YET DEPARTED pill onto a train that left on
+  // time. Overrun now only counts once etd is STAFF_OVERRUN_GRACE_MS
+  // behind us; until then it stays the calmer AT PLATFORM pill. Being
+  // the single shared check, this covers the row pill and the summary
+  // banner together.
   const etdDate = (s.etdSpecified && s.etd) ? new Date(s.etd) : null;
-  let overrun = etdDate ? now > etdDate : false;
+  let overrun = etdDate ? (now - etdDate) > STAFF_OVERRUN_GRACE_MS : false;
   if (overrunLatch){
     if (overrun) overrunLatch.add(crs);
     else if (overrunLatch.has(crs)) overrun = true;
@@ -8929,6 +8940,37 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     if (!precise) return p;
     const correctedLiveTime = precise === p.schedTime ? 'On time' : precise;
     return { ...p, liveTime: correctedLiveTime, hasConfirmedActual: true };
+  });
+  // Early ARRIVAL mistaken for an early DEPARTURE (2026-09-29, found live
+  // at Warrington Bank Quay): a calling point's st is its scheduled
+  // departure, but while the train is still standing there Darwin's `at`
+  // holds the actual ARRIVAL time (st=08:26, at=08:24). Compared
+  // directly, that read as "2 min early" on the row and "Running 2 min
+  // early" in the summary, for a train that then left on time.
+  // Only ever touches a point whose live time is EARLIER than schedule,
+  // and never the final point (an early arrival there is real and is
+  // exactly what that row reports) or your own boarding station (its
+  // time is the board's departure-specific atd/etd). For those points:
+  //   - Staff has a confirmed departure (atd) -> use that instead;
+  //   - otherwise -> 'On time'. A passenger train doesn't leave a public
+  //     stop ahead of time, so the early figure is the arrival, and the
+  //     departure is still due at schedule. If it then leaves late, the
+  //     NOT YET DEPARTED / "X min late" handling takes over as usual.
+  // hasConfirmedActual is deliberately left as it was: the train really
+  // has reached this point, so lastPassedIdx's walkback is unchanged.
+  points = points.map((p, i, arr) => {
+    if (p.isYourStation || i === arr.length - 1) return p;
+    if (!p.liveTime || !p.liveTime.includes(':') || !p.schedTime || !p.schedTime.includes(':')) return p;
+    let diff = (parseInt(p.liveTime.slice(0,2),10)*60 + parseInt(p.liveTime.slice(3,5),10))
+             - (parseInt(p.schedTime.slice(0,2),10)*60 + parseInt(p.schedTime.slice(3,5),10));
+    if (diff > 720) diff -= 1440; else if (diff < -720) diff += 1440; // midnight wrap, same as describePointStatus
+    if (diff >= 0) return p;
+    const status = p.crs ? staffLiveStatusOverrides[p.crs] : null;
+    const staffAtd = (status && status.atdSpecified && status.atd) ? isoTimeToHHMM(status.atd) : null;
+    if (staffAtd){
+      return { ...p, liveTime: staffAtd === p.schedTime ? 'On time' : staffAtd, hasConfirmedActual: true };
+    }
+    return { ...p, liveTime: 'On time' };
   });
   // Darwin attaches one reason to a service and doesn't seem to clear or
   // refresh it as the journey continues — a reason first seen on an
@@ -9576,18 +9618,12 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
         if (minutesLateNow !== null && minutesLateNow > 0){
           statusText = `${minutesLateNow} min late`;
           statusColor = '#ff8b7e';
-        } else {
-          // pointDates[i] missing, or the schedule has only just passed
-          // (rounds to zero minutes) or hasn't passed at all yet (etd
-          // earlier than schedule, a real if unusual case) — none of
-          // these are an actual known delay, just confirmation lag on a
-          // departure that may well have happened exactly on time
-          // (2026-09-16, found live on an on-time 17:31 departure).
-          // "Delayed" would be asserting something not yet known; stays
-          // neutral instead, same wording as the summary banner.
-          statusText = 'Not yet departed';
-          statusColor = '#ff8b7e';
         }
+        // Otherwise (pointDates[i] missing, or no whole minute past
+        // schedule yet) statusText is left as the row's normal status.
+        // It used to be set to "Not yet departed" here (2026-09-16), but
+        // that just repeated the NOT YET DEPARTED pill beside it word for
+        // word (found live 2026-09-29) — the pill already says it.
       }
       const atPlatformPill = (isAtPlatformViaStaff && !staffOverrun)
         ? ` <span style="background:#2fa360; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">AT PLATFORM</span>`
