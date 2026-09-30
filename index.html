@@ -68,6 +68,44 @@
     background: rgba(224,90,78,0.22);
     color: var(--danger);
   }
+  /* 2026-09-30 — Claim available: the same salmon as the red day-list blob
+     it announces, so the two read as one thing; kept distinct from
+     Expired's harder var(--danger). */
+  .delay-repay-badge.available{
+    background: rgba(255,139,126,0.18);
+    color: #ff8b7e;
+    box-shadow: inset 0 0 0 1px rgba(255,139,126,0.45);
+  }
+  /* Confirm train: quieter than Started's solid amber — a dashed outline
+     and lighter tint, since it's a "check this" rather than money waiting. */
+  .delay-repay-badge.confirm{
+    background: rgba(242,169,59,0.08);
+    color: var(--amber);
+    border: 1px dashed rgba(242,169,59,0.5);
+  }
+  .delay-repay-badge.confirm .delay-repay-badge-line{
+    font-size: 15px;
+  }
+  .delay-repay-badge-sub{
+    font-size: 10.5px;
+    opacity: 0.85;
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+  /* 2026-09-30: on narrower phones the pill ran into the "Season Ticket
+     Tracker" eyebrow (the Expired badge already did before this build) —
+     tighten it up rather than let it overlap. */
+  @media (max-width: 390px){
+    .delay-repay-badge-wrap{ right: 10px; top: 12px; }
+    .delay-repay-badge{ padding: 7px 10px; min-width: 0; border-radius: 12px; }
+    .delay-repay-badge-caption{ font-size: 8.5px; letter-spacing: 0.03em; }
+    .delay-repay-badge-line{ font-size: 16px; gap: 4px; }
+    .delay-repay-badge-line svg{ width: 14px; height: 14px; }
+    .delay-repay-badge.confirm .delay-repay-badge-line{ font-size: 13px; }
+    .delay-repay-badge-sub{ font-size: 9.5px; }
+    .delay-repay-badge-more{ font-size: 9px; max-width: 110px; }
+    header.top .eyebrow{ letter-spacing: 1.8px; }
+  }
   .delay-repay-badge-caption{
     font-size: 10px;
     text-transform: uppercase;
@@ -281,6 +319,12 @@
     width: 5px; height: 5px;
     border-radius: 50%;
     background: #ff8b7e;
+    margin-top: 3px;
+  }
+  .cal-dot-declined{
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--ink-dim);
     margin-top: 3px;
   }
   /* "Buy Ticket" day — off-white (same tone as the day numbers) rather than
@@ -598,6 +642,28 @@
   }
   .rail-blob-confirmed{
     background: #ff8b7e;
+  }
+  /* 2026-09-30 — a delay Wayne chose not to claim */
+  .rail-blob-declined{
+    background: var(--ink-dim);
+  }
+  .not-claiming-btn{
+    display: inline-block;
+    margin-top: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-dim);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
+  .not-claiming-btn:active{
+    background: rgba(255,255,255,0.06);
   }
   .rail-detail-row{
     display: flex;
@@ -1242,7 +1308,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-30.20:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-30.21:53'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1462,6 +1528,10 @@ const DELAY_REPAY_THRESHOLD_MINUTES = 15;
 let railDaysBack = 3; // how far back the day list currently scrolls; grows via "Show earlier days"
 const RAIL_DAYS_BACK_STEP = 7;
 const RAIL_MAX_DAYS_BACK = 28; // matches Avanti's Delay Repay claim deadline
+// 2026-09-30: an empty HSP answer for a date this recent isn't treated as
+// final — see railSyncDatesBatch. HSP normally has a day's record by the
+// next morning; 3 days covers a weekend-length lag with room to spare.
+const RAIL_RECENT_RETRY_DAYS = 3;
 let railTrains = []; // [{ key, direction: 'AM'|'PM', fromLoc, toLoc, time, label }]
 let railPerfCache = {}; // { "YYYY-MM-DD": { trainKey: { delayMinutes, onTime, cancelled, reason } } } — delayMinutes/onTime are null/false when cancelled is true
 
@@ -1807,6 +1877,16 @@ let confirmedTrains = {}; // "YYYY-MM-DD" -> { AM: trainKey, PM: trainKey } — 
 // (manually marked as actually submitted/completed). Only ever set for the
 // CONFIRMED train on a given direction, never for other trains that also
 // happened to be delayed that day but weren't the one actually ridden.
+//
+// 2026-09-30 (claude/delay-repay-badge-rework-spec.md): two more statuses —
+//   'expired'  — also written for an UNCLAIMED delay once its 28 days lapse
+//                ({ unclaimed: true, ... }), so lost money shows up in the
+//                claims manager and the ROI dashboard, not just silently.
+//   'declined' — written by the "Not claiming" button. Never expires, never
+//                badges, left out of every ROI total; the day's blob/dot
+//                turns grey.
+// A 'started' claim with a claimRef counts as submitted: it stops counting
+// down on the badge and never expires.
 let delayClaims = {};
 const AVANTI_CLAIM_URL = 'https://delayrepay.avantiwestcoast.co.uk/';
 
@@ -1905,6 +1985,12 @@ function delayRepayBandLabel(minutes){
   if (minutes >= 15) return '15-29 min';
   return `${minutes} min`; // claims are only ever created at/above the 15-min threshold — this is just a safe fallback, not expected in practice
 }
+// 2026-09-30: the claim notification and claim-details file describe what's
+// being claimed right now — a direction marked Not claiming, or one that
+// expired, isn't part of that and would just confuse the form-filling.
+function isClaimBeingMade(claim){
+  return !!claim && claim.status !== 'declined' && claim.status !== 'expired';
+}
 // A plain, read-only notification — deliberately no action buttons, no
 // attempt to copy anything from within it. Notification bodies aren't
 // reliably text-selectable on Android, and a Service Worker (which is
@@ -1920,7 +2006,7 @@ async function showClaimBandNotification(dateKey){
     if (!('serviceWorker' in navigator)) return;
     const dayClaims = delayClaims[dateKey] || {};
     const lines = ['AM', 'PM']
-      .map(dir => dayClaims[dir] ? `${dir}: ${delayRepayBandLabel(dayClaims[dir].minutesLate)}` : null)
+      .map(dir => isClaimBeingMade(dayClaims[dir]) ? `${dir}: ${delayRepayBandLabel(dayClaims[dir].minutesLate)}` : null)
       .filter(Boolean);
     if (!lines.length) return;
     // Ticket price added alongside the band(s) — genuinely redundant
@@ -1950,7 +2036,7 @@ function triggerClaimDetailsDownload(dateKey){
     const lines = [`Delay repay claim — ${dateLabel(parseKey(dateKey))}`, ''];
     ['AM', 'PM'].forEach(dir => {
       const claim = dayClaims[dir];
-      if (!claim) return;
+      if (!isClaimBeingMade(claim)) return;
       const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
       const train = railTrains.find(t => t.key === confirmedKey);
       const trainLabel = train ? train.label : dir;
@@ -2798,6 +2884,9 @@ function isEligibleRailDay(d, todayKeyParam){
 // known to have breached the delay threshold — a near-certain claim.
 // Returns 'maybe' if no confirmation exists but at least one configured
 // train that day did breach it — the existing general indicator.
+// Returns 'declined' (2026-09-30) when the only confirmed breaches that day
+// were marked "Not claiming" — shown as a grey blob/dot. A real claim on
+// the other direction still wins and keeps the day red.
 // Returns null if there's nothing to flag, including when every
 // confirmed train for the day is known to have been on time (a
 // confirmation should rule the day out, not just add to the guesswork).
@@ -2805,7 +2894,9 @@ function getDelayStatus(dateKey){
   const dayPerf = railPerfCache[dateKey];
   if (!dayPerf) return null;
   const confirmed = confirmedTrains[dateKey] || {};
+  const dayClaims = delayClaims[dateKey] || {};
   let anyConfirmedDelay = false;
+  let anyDeclinedDelay = false;
   let anyUnconfirmedDirection = false;
 
   ['AM', 'PM'].forEach(direction => {
@@ -2815,7 +2906,10 @@ function getDelayStatus(dateKey){
     if (confirmedKey !== undefined){
       if (confirmedKey === '') return; // explicitly didn't travel that leg — ignore
       const perf = dayPerf[confirmedKey];
-      if (perf && perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES) anyConfirmedDelay = true;
+      if (perf && perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES){
+        if (dayClaims[direction] && dayClaims[direction].status === 'declined') anyDeclinedDelay = true;
+        else anyConfirmedDelay = true;
+      }
     } else {
       anyUnconfirmedDirection = true;
     }
@@ -2824,7 +2918,69 @@ function getDelayStatus(dateKey){
   if (anyConfirmedDelay) return 'confirmed';
   const anyDelayAtAll = railTrains.some(t => dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
   if (anyUnconfirmedDirection && anyDelayAtAll) return 'maybe';
+  if (anyDeclinedDelay) return 'declined';
   return null;
+}
+
+// ---------------------------------------------------------------------
+// Delay repay claim window helpers (2026-09-30,
+// claude/delay-repay-badge-rework-spec.md). Shared by render()'s expiry
+// sweep and header badge, the day-detail views' Not claiming buttons, and
+// the claims manager, so they can never disagree about what's claimable.
+// ---------------------------------------------------------------------
+const DELAY_REPAY_WINDOW_DAYS = 28; // Avanti: 28 days from date of travel
+// Unclaimed delays only get auto-expired from this date onwards. Without a
+// floor, the first run would stamp every unclaimed delay in the whole
+// performance history (back to 2025) as Expired at once — those predate
+// this feature and were never tracked here. 28 days before the build date.
+const DELAY_REPAY_UNCLAIMED_EXPIRY_FROM = '2026-09-02';
+
+// Whole calendar days from a travel date to `today` (both local midnights).
+// Math.round, not floor: across a BST/GMT change the gap is 23h or 25h,
+// and floor would lose a day on the 23h side.
+function delayRepayDaysSince(dateKey, today){
+  return Math.round((today - parseKey(dateKey)) / 86400000);
+}
+
+// The directions on a date whose CONFIRMED train breached the delay
+// threshold — each one a claim opportunity, whatever its claim status.
+// [{ dir, trainKey, minutesLate, claim }] — claim is the delayClaims record
+// or null. Cancelled trains (delayMinutes null) aren't included, matching
+// the existing claim pill; see backlog item 1.
+function delayRepayOpportunities(dateKey){
+  const dayPerf = railPerfCache[dateKey];
+  if (!dayPerf) return [];
+  const confirmed = confirmedTrains[dateKey] || {};
+  const dayClaims = delayClaims[dateKey] || {};
+  const out = [];
+  ['AM', 'PM'].forEach(dir => {
+    const trainKey = confirmed[dir];
+    if (!trainKey) return; // unconfirmed, or '' = didn't travel
+    const perf = dayPerf[trainKey];
+    if (!perf || !(perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES)) return;
+    out.push({ dir, trainKey, minutesLate: perf.delayMinutes, claim: dayClaims[dir] || null });
+  });
+  return out;
+}
+
+// True if this direction has a claimable delay with nothing recorded yet —
+// exactly when the day-detail views show the red claim pill and the Not
+// claiming button.
+function isDirectionClaimable(dateKey, dir){
+  return delayRepayOpportunities(dateKey).some(o => o.dir === dir && !o.claim);
+}
+
+// Directions with no confirmed train where one of that direction's usual
+// trains breached the threshold — the "Confirm train" badge. Per direction,
+// so a late 07:27 doesn't prompt for an unconfirmed evening.
+function delayRepayUnconfirmedDirections(dateKey){
+  const dayPerf = railPerfCache[dateKey];
+  if (!dayPerf) return [];
+  const confirmed = confirmedTrains[dateKey] || {};
+  return ['AM', 'PM'].filter(dir => {
+    if (confirmed[dir] !== undefined) return false;
+    return railTrains.some(t => t.direction === dir && dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
+  });
 }
 
 // True if HSP has never been asked about this date for one or more of
@@ -2877,11 +3033,21 @@ async function railSyncDatesBatch(neededByTrain, trains){
 
     const attemptedDates = response.attemptedDates || {};
     let anyProgress = false;
+    // 2026-09-30: HSP only publishes a day's record some hours after the
+    // train ran, and the proxy reports "no service found" as a definitive
+    // answer. Asked too early (e.g. first app open just after midnight),
+    // yesterday's delayed train would be marked synced-with-nothing and
+    // never asked about again — no blob, no claim. So an empty answer for
+    // the last few days isn't recorded as final: it's dropped from this
+    // round, and asked again on the next sync until a real result arrives.
+    const recentCutoffKey = fmtKey(addDays(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()), -RAIL_RECENT_RETRY_DAYS));
     for (const trainKey in neededByTrain){
       const attempted = new Set(attemptedDates[trainKey] || []);
       if (attempted.size > 0) anyProgress = true;
       neededByTrain[trainKey] = (neededByTrain[trainKey] || []).filter(d => !attempted.has(d));
       for (const d of attempted){
+        const gotResult = !!(railPerfCache[d] && railPerfCache[d][trainKey]);
+        if (!gotResult && d >= recentCutoffKey) continue; // not final yet — see above
         const already = railSyncedDays[d] || [];
         if (!already.includes(trainKey)) railSyncedDays[d] = [...already, trainKey];
       }
@@ -2896,13 +3062,16 @@ async function railSyncDatesBatch(neededByTrain, trains){
   }
 }
 
-// Checks the currently visible past-day window for any eligible travel
-// days that don't yet have performance data cached, and fetches just
-// those from the Worker. Stays scoped to actual travel days
-// (isEligibleRailDay) since this feeds the delay-repay claims flow,
-// where a day you didn't travel is simply irrelevant. For the broader
-// "how punctual is this train generally" picture, see
-// railSyncFullHistory below.
+// Checks the past-day window for any eligible travel days that don't yet
+// have performance data cached, and fetches just those from the Worker.
+// Stays scoped to actual travel days (isEligibleRailDay) since this feeds
+// the delay-repay claims flow, where a day you didn't travel is simply
+// irrelevant. For the broader "how punctual is this train generally"
+// picture, see railSyncFullHistory below.
+// 2026-09-30: always covers the full 28-day claim window, not just the
+// rows the day list currently shows — the header badge (Claim available /
+// Confirm train) and the unclaimed-expiry sweep look across all 28 days.
+// railDaysBack still controls only what the list displays.
 async function railSyncMissingDates(){
   if (railSyncInProgress) return;
   if (!railTrains || railTrains.length === 0) return;
@@ -2910,7 +3079,7 @@ async function railSyncMissingDates(){
 
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const todayKeyLocal = fmtKey(today);
-  const oldestVisible = addDays(today, -railDaysBack);
+  const oldestVisible = addDays(today, -Math.max(railDaysBack, RAIL_MAX_DAYS_BACK));
 
   const neededByTrain = {};
   for (const t of railTrains) neededByTrain[t.key] = [];
@@ -3952,13 +4121,15 @@ function render(){
   // the app has no background process; the next time Wayne opens it after
   // the window lapses is when it flips to 'expired'. Fire-and-forget save —
   // render() isn't async and this is low-stakes enough not to need to be.
+  // 2026-09-30: a 'started' claim with an AWC reference was submitted, so it
+  // never expires; and an UNCLAIMED delay (no record at all) now expires too,
+  // from DELAY_REPAY_UNCLAIMED_EXPIRY_FROM onwards.
   let anyClaimJustExpired = false;
   for (const dKey in delayClaims){
     for (const dir in delayClaims[dKey]){
       const c = delayClaims[dKey][dir];
-      if (c && c.status === 'started'){
-        const daysSinceTravel = Math.floor((today - parseKey(dKey)) / 86400000);
-        if (daysSinceTravel >= 28){
+      if (c && c.status === 'started' && !c.claimRef){
+        if (delayRepayDaysSince(dKey, today) >= DELAY_REPAY_WINDOW_DAYS){
           c.status = 'expired';
           if (typeof c.expiredAcknowledged !== 'boolean') c.expiredAcknowledged = false;
           anyClaimJustExpired = true;
@@ -3966,51 +4137,116 @@ function render(){
       }
     }
   }
+  for (const dKey in railPerfCache){
+    if (dKey < DELAY_REPAY_UNCLAIMED_EXPIRY_FROM) continue;
+    if (delayRepayDaysSince(dKey, today) < DELAY_REPAY_WINDOW_DAYS) continue;
+    if (!isEligibleRailDay(parseKey(dKey), todayKey)) continue;
+    for (const o of delayRepayOpportunities(dKey)){
+      if (o.claim) continue;
+      if (!delayClaims[dKey]) delayClaims[dKey] = {};
+      delayClaims[dKey][o.dir] = {
+        status: 'expired',
+        unclaimed: true,
+        minutesLate: o.minutesLate,
+        amount: computeDelayRepayAmount(o.minutesLate, dKey),
+        trainKey: o.trainKey,
+        expiredAcknowledged: false,
+      };
+      anyClaimJustExpired = true;
+    }
+  }
   if (anyClaimJustExpired) saveDelayClaims();
 
-  // Delay repay badge — see delay-repay-expiry-badge-spec.md. Expired mode
-  // (unacknowledged) always wins over normal mode; within a mode, AM+PM
-  // claims on the same date count as one entry, since openDayEditor opens
-  // by date, not by direction.
+  // Delay repay badge — see claude/delay-repay-badge-rework-spec.md, which
+  // supersedes the badge logic in delay-repay-expiry-badge-spec.md.
+  // Priority: Expired → Claim available → Started → Confirm train. Each state
+  // is looked at by date: AM + PM on the same date count as one entry.
   let delayRepayBadgeHtml = '';
   {
-    const expiredByDate = new Map(); // dateKey -> true if any unacknowledged expired claim
-    const startedByDate = new Map(); // dateKey -> min days remaining across AM/PM
+    const expiredDates = new Set();          // unacknowledged expired claims
+    const availableByDate = new Map();       // dateKey -> { daysLeft, amount }
+    const startedByDate = new Map();         // dateKey -> daysLeft
+    const confirmTrainByDate = new Map();    // dateKey -> daysLeft
+
     for (const dKey in delayClaims){
       for (const dir in delayClaims[dKey]){
         const c = delayClaims[dKey][dir];
         if (!c) continue;
         if (c.status === 'expired' && !c.expiredAcknowledged){
-          expiredByDate.set(dKey, true);
-        } else if (c.status === 'started'){
-          const daysRemaining = 28 - Math.floor((today - parseKey(dKey)) / 86400000);
-          const prev = startedByDate.has(dKey) ? startedByDate.get(dKey) : Infinity;
-          startedByDate.set(dKey, Math.min(prev, daysRemaining));
+          expiredDates.add(dKey);
+        } else if (c.status === 'started' && !c.claimRef){
+          startedByDate.set(dKey, DELAY_REPAY_WINDOW_DAYS - delayRepayDaysSince(dKey, today));
         }
       }
     }
+    // Claim available / Confirm train: past eligible travel days still
+    // inside the 28-day window (yesterday back to day 27).
+    for (let back = 1; back < DELAY_REPAY_WINDOW_DAYS; back++){
+      const d = addDays(today, -back);
+      const dKey = fmtKey(d);
+      if (!isEligibleRailDay(d, todayKey)) continue;
+      const daysLeft = DELAY_REPAY_WINDOW_DAYS - back;
+      const open = delayRepayOpportunities(dKey).filter(o => !o.claim);
+      if (open.length){
+        const amount = open.reduce((sum, o) => sum + computeDelayRepayAmount(o.minutesLate, dKey), 0);
+        availableByDate.set(dKey, { daysLeft, amount });
+      }
+      if (delayRepayUnconfirmedDirections(dKey).length) confirmTrainByDate.set(dKey, daysLeft);
+    }
 
-    const expiredDates = Array.from(expiredByDate.keys());
-    const startedEntries = Array.from(startedByDate.entries()); // [dateKey, daysRemaining]
+    // "N more claims waiting" — real claims only (Expired, Claim available,
+    // Started), never Confirm train.
+    const pendingDates = new Set([...expiredDates, ...availableByDate.keys(), ...startedByDate.keys()]);
+    const soonest = (m) => Array.from(m.entries()).sort((a, b) => {
+      const da = typeof a[1] === 'number' ? a[1] : a[1].daysLeft;
+      const db = typeof b[1] === 'number' ? b[1] : b[1].daysLeft;
+      return da - db;
+    })[0];
+    const moreHtml = (shownDate) => {
+      const more = pendingDates.size - (pendingDates.has(shownDate) ? 1 : 0);
+      return more > 0 ? `<div class="delay-repay-badge-more">${more} more claim${more === 1 ? '' : 's'} waiting</div>` : '';
+    };
+    const daysLeftText = (n) => `${n} day${n === 1 ? '' : 's'} left`;
 
-    if (expiredDates.length > 0){
-      const remainingCount = expiredDates.length - 1 + startedEntries.length;
+    if (expiredDates.size > 0){
+      const shown = Array.from(expiredDates).sort()[0]; // oldest first
       delayRepayBadgeHtml = `
         <div class="delay-repay-badge-wrap">
-          <div class="delay-repay-badge expired" id="delay-repay-badge" data-mode="expired" data-date-key="${expiredDates[0]}">
+          <div class="delay-repay-badge expired" id="delay-repay-badge" data-mode="expired" data-date-key="${shown}">
             <div class="delay-repay-badge-caption">Delay repay</div>
             <div class="delay-repay-badge-line">${DELAY_REPAY_ICON_WARNING} Expired</div>
           </div>
-          ${remainingCount > 0 ? `<div class="delay-repay-badge-more">${remainingCount} more claim${remainingCount === 1 ? '' : 's'} waiting</div>` : ''}
+          ${moreHtml(shown)}
         </div>`;
-    } else if (startedEntries.length > 0){
-      startedEntries.sort((a, b) => a[1] - b[1]);
-      const [soonestDateKey, daysRemaining] = startedEntries[0];
+    } else if (availableByDate.size > 0){
+      const [shown, info] = soonest(availableByDate);
       delayRepayBadgeHtml = `
         <div class="delay-repay-badge-wrap">
-          <div class="delay-repay-badge normal" id="delay-repay-badge" data-mode="normal" data-date-key="${soonestDateKey}">
+          <div class="delay-repay-badge available" id="delay-repay-badge" data-mode="available" data-date-key="${shown}">
+            <div class="delay-repay-badge-caption">Claim available</div>
+            <div class="delay-repay-badge-line">${DELAY_REPAY_ICON_RECEIPT} £${info.amount.toFixed(2)}</div>
+            <div class="delay-repay-badge-sub">${daysLeftText(info.daysLeft)}</div>
+          </div>
+          ${moreHtml(shown)}
+        </div>`;
+    } else if (startedByDate.size > 0){
+      const [shown, daysRemaining] = soonest(startedByDate);
+      delayRepayBadgeHtml = `
+        <div class="delay-repay-badge-wrap">
+          <div class="delay-repay-badge normal" id="delay-repay-badge" data-mode="normal" data-date-key="${shown}">
             <div class="delay-repay-badge-caption">Delay repay</div>
             <div class="delay-repay-badge-line">${DELAY_REPAY_ICON_RECEIPT} ${daysRemaining} Day${daysRemaining === 1 ? '' : 's'}</div>
+          </div>
+          ${moreHtml(shown)}
+        </div>`;
+    } else if (confirmTrainByDate.size > 0){
+      const [shown, daysLeft] = soonest(confirmTrainByDate);
+      delayRepayBadgeHtml = `
+        <div class="delay-repay-badge-wrap">
+          <div class="delay-repay-badge confirm" id="delay-repay-badge" data-mode="confirm" data-date-key="${shown}">
+            <div class="delay-repay-badge-caption">Delay repay</div>
+            <div class="delay-repay-badge-line">Confirm train</div>
+            <div class="delay-repay-badge-sub">${dateLabelShort(parseKey(shown))} · ${daysLeftText(daysLeft)}</div>
           </div>
         </div>`;
     }
@@ -4347,6 +4583,8 @@ function render(){
         railBlobHtml = `<span class="rail-blob rail-blob-confirmed" data-rail-key="${key}" title="Confirmed delay repay claim"></span>`;
       } else if (status === 'maybe'){
         railBlobHtml = `<span class="rail-blob" data-rail-key="${key}" title="Possible delay repay claim"></span>`;
+      } else if (status === 'declined'){
+        railBlobHtml = `<span class="rail-blob rail-blob-declined" data-rail-key="${key}" title="Declined delay repay"></span>`;
       }
     }
 
@@ -4580,8 +4818,12 @@ function render(){
         }
         await saveDelayClaims();
         render();
+      } else if (mode === 'available'){
+        openRailDetail(dateKey); // the claim pill + Not claiming buttons live here
+      } else if (mode === 'confirm'){
+        openConfirmTrain(dateKey); // once saved, a real claim becomes Claim available
       } else {
-        openDayEditor(dateKey);
+        openDelayClaimsManager(); // Started — where the AWC reference goes
       }
     });
   }
@@ -5135,9 +5377,19 @@ The app cross-references your travel days against Historical Service Performance
 ### Delay Indicators
 * **Orange Dot:** At least one of your usual trains was **15+ minutes** late that day.
 * **Red Dot:** The train you were confirmed as catching was 15+ minutes late.
+* **Grey Dot:** A delay you chose not to claim (**Not claiming**).
 
-### Claim Expiry Badge
-Avanti allows 28 days from travel to claim. A badge on the Home tab header shows the days left on your soonest unconfirmed claim. If a claim runs out, it's marked **Expired** and the badge shows that until you acknowledge it.
+### Delay Repay Badge
+Avanti allows 28 days from travel to claim. A badge in the top-right of the Home tab shows the most urgent thing waiting, in this order:
+1. **Expired** — a claim ran out: either one you started but never submitted, or a delay you never claimed at all. Tap to acknowledge it.
+2. **Claim available** — a train you were confirmed on was 15+ minutes late and nothing has been claimed yet. Shows the estimated payout and the days left. Tap to go straight to that day's claim.
+3. **Started** — you've opened a claim but haven't entered its AWC reference yet. Counts down the days left. Tap to open **Delay repay claims** and add the reference; once it's in, the countdown stops (the claim was submitted, so it can't expire).
+4. **Confirm train** — one of your usual trains was late on a day with no confirmed train, so the app can't tell whether you're owed anything. Tap to confirm which train you caught; if it was the late one, the badge becomes **Claim available**.
+
+A small line under the badge counts any other claims still waiting.
+
+### Not Claiming
+If you decide not to claim a delay, open the day and tap **Not claiming** under its Morning or Evening list (it only appears where there's something to claim). The day turns grey, reads **Declined delay repay**, and drops off the badge. It's left out of the ROI dashboard's totals. Changed your mind? **Undo** it in **More → Delay repay claims**.
 
 ### Smartcard Pass
 Avanti asks for a photo of your ticket and your smartcard number. Add both once in **Settings → Smartcard** — the photo is stored privately on this device.
@@ -5147,7 +5399,7 @@ Avanti asks for a photo of your ticket and your smartcard number. Add both once 
 2. Tap the highlighted delay row. The app estimates your payout per single leg (a Flexi 8 covers 16 single journeys): 15–29 mins pays 25%, 30–59 mins 50%, and 60+ mins 100% of one leg's value.
 3. Avanti's Delay Repay site opens, your pass photo downloads, and your smartcard number is copied to the clipboard ready to paste. If **Settings → Claim file** is on, a **claim-details.txt** summary downloads too.
 4. A **Claim details** screen shows the same information in the app.
-5. Once submitted and paid, tick **Confirmed** in the Delay Repay manager.
+5. Once paid, tick **Confirmed** in the Delay Repay manager. Enter the **AWC reference** there as soon as you've submitted — that's what stops the badge counting down.
 
 ---
 
@@ -7316,9 +7568,11 @@ function stopLikelyTrainChecks(){
   if (likelyTrainCheckTimer){ clearTimeout(likelyTrainCheckTimer); likelyTrainCheckTimer = null; }
 }
 
-function openConfirmTrain(){
+// 2026-09-30: optional dateKey — the Confirm train badge opens this on the
+// delayed day. No argument (the menu) keeps opening on today as before.
+function openConfirmTrain(dateKey){
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
-  const suggested = fmtKey(today);
+  const suggested = (typeof dateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) ? dateKey : fmtKey(today);
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
 
@@ -11685,6 +11939,21 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
           <span style="color:#14161f;">${delayText}</span>
         </div>`;
       }
+      // 2026-09-30: Not claiming — the delay still happened, so the time
+      // stays, but the row goes quiet grey with the decision on it.
+      if (status === 'declined'){
+        return `<div class="rail-detail-row" style="flex-wrap:wrap; gap:2px 8px;">
+          <span style="color:var(--ink-dim); font-weight:600;">${t.label}</span>
+          <span style="color:var(--ink-dim);">Declined delay repay</span>
+        </div>`;
+      }
+      if (status === 'expired'){
+        const delayText = `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+        return `<div class="rail-detail-row">
+          <span style="color:#ff8b7e; font-weight:600;">${t.label} <span style="color:var(--danger); font-size:11px; font-weight:700; margin-left:4px;">EXPIRED</span></span>
+          <span style="color:#ff8b7e;">${delayText}</span>
+        </div>`;
+      }
       const checkColor = status === 'confirmed' ? '#3fb950' : '#8b949e';
       const delayText = `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
       return `<div class="rail-detail-row">
@@ -11695,14 +11964,42 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
     const color = late ? '#ff8b7e' : 'var(--good)';
     const text = perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
     return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
-  }).join('');
+  }).join('') + notClaimingButtonHtml(dateKey, direction);
+}
+
+// 2026-09-30 — sits under the Morning / Evening list, only when that
+// direction has an unclaimed pill (confirmed train 15+ late, no record).
+function notClaimingButtonHtml(dateKey, direction){
+  if (!isDirectionClaimable(dateKey, direction)) return '';
+  return `<div class="not-claiming-btn" data-claim-date="${dateKey}" data-claim-direction="${direction}">Not claiming</div>`;
 }
 
 // Wires up the claim pill inside a just-appended detail overlay. reopen()
 // should close this overlay and re-show the same detail view fresh, so a
 // tap is reflected immediately. Only fires for a train with no claim yet
 // — once started/confirmed the row is plain text, not clickable.
+// 2026-09-30: also wires the Not claiming buttons, and both now re-render
+// the Home screen underneath so the header badge and blob update straight
+// away (the overlay lives on document.body, so it survives render()).
 function wireClaimHandlers(overlay, reopen){
+  overlay.querySelectorAll('.not-claiming-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const dateKey = btn.dataset.claimDate;
+      const dir = btn.dataset.claimDirection;
+      const o = delayRepayOpportunities(dateKey).find(x => x.dir === dir);
+      if (!o || o.claim) return; // already recorded meanwhile — nothing to decline
+      if (!delayClaims[dateKey]) delayClaims[dateKey] = {};
+      delayClaims[dateKey][dir] = {
+        status: 'declined',
+        minutesLate: o.minutesLate,
+        amount: computeDelayRepayAmount(o.minutesLate, dateKey),
+        trainKey: o.trainKey,
+      };
+      await saveDelayClaims();
+      render();
+      reopen();
+    });
+  });
   overlay.querySelectorAll('.claimable-row').forEach(row => {
     row.addEventListener('click', async () => {
       const dateKey = row.dataset.claimDate;
@@ -11719,12 +12016,15 @@ function wireClaimHandlers(overlay, reopen){
         if (!confirmedKey) return;
         const perf = (railPerfCache[dateKey] || {})[confirmedKey];
         if (!perf || perf.delayMinutes < DELAY_REPAY_THRESHOLD_MINUTES) return;
-        const existing = delayClaims[dateKey][dir];
-        if (existing && existing.status === 'confirmed') return; // don't downgrade an already-confirmed claim
+        // 2026-09-30: leave ANY existing record alone — previously only a
+        // 'confirmed' one was protected, which would have flipped a
+        // direction marked Not claiming (or an expired one) back to started.
+        if (delayClaims[dateKey][dir]) return;
         delayClaims[dateKey][dir] = {
           status: 'started',
           minutesLate: perf.delayMinutes,
           amount: computeDelayRepayAmount(perf.delayMinutes, dateKey),
+          trainKey: confirmedKey,
           expiredAcknowledged: false,
         };
       });
@@ -11737,6 +12037,7 @@ function wireClaimHandlers(overlay, reopen){
       // right after instead.
       triggerAllClaimDownloads(dateKey);
       showClaimBandNotification(dateKey);
+      render();
       reopen();
     });
   });
@@ -11988,16 +12289,24 @@ function openDelayClaimsManager(){
   }
   entries.sort((a, b) => b.dateKey < a.dateKey ? -1 : (b.dateKey > a.dateKey ? 1 : 0));
 
-  const rowsHtml = entries.length ? entries.map(e => `
+  const rowsHtml = entries.length ? entries.map(e => {
+    // 2026-09-30: declined and never-claimed-then-expired entries have no
+    // Avanti reference to record, so no input for them.
+    const isDeclined = e.claim.status === 'declined';
+    const noRefField = isDeclined || !!e.claim.unclaimed;
+    return `
     <div class="rail-detail-row" style="align-items:flex-start; padding:10px 0;">
       <div style="flex:1; min-width:0;">
         <div style="font-weight:600;">${dateLabel(parseKey(e.dateKey))}</div>
-        <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate === null || e.claim.minutesLate === undefined ? 'Cancelled' : `${e.claim.minutesLate} min late`} — £${(e.claim.amount || 0).toFixed(2)}</div>
-        <input type="text" class="claim-ref-input" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" value="${escapeHtml(e.claim.claimRef || '')}" placeholder="AWC reference" style="margin-top:6px; width:100%; max-width:220px; font-size:12px; font-family:monospace; padding:6px 8px; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:6px;" />
+        <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate === null || e.claim.minutesLate === undefined ? 'Cancelled' : `${e.claim.minutesLate} min late`} — £${(e.claim.amount || 0).toFixed(2)}${e.claim.unclaimed ? ' — never claimed' : ''}</div>
+        ${noRefField ? '' : `<input type="text" class="claim-ref-input" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" value="${escapeHtml(e.claim.claimRef || '')}" placeholder="AWC reference" style="margin-top:6px; width:100%; max-width:220px; font-size:12px; font-family:monospace; padding:6px 8px; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:6px;" />`}
       </div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
         ${e.claim.status === 'expired' ? `
         <span style="font-size:12px; color:var(--danger); font-weight:600; white-space:nowrap;">Expired</span>
+        ` : isDeclined ? `
+        <span style="font-size:12px; color:var(--ink-dim); font-weight:600; white-space:nowrap;">Declined</span>
+        <span class="claim-undo-link" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" style="font-size:11px; color:var(--ink-dim); text-decoration:underline; cursor:pointer;">Undo</span>
         ` : `
         <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:${e.claim.status==='confirmed' ? 'var(--good)' : 'var(--ink-dim)'}; cursor:pointer; white-space:nowrap;">
           <input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" ${e.claim.status==='confirmed'?'checked':''} style="width:15px; height:15px;" />
@@ -12007,7 +12316,8 @@ function openDelayClaimsManager(){
         `}
       </div>
     </div>
-  `).join('') : `<div class="sub" style="margin-top:0;">No claims started yet — tap a red delay entry on any day to begin one.</div>`;
+  `;
+  }).join('') : `<div class="sub" style="margin-top:0;">No claims started yet — tap a red delay entry on any day to begin one.</div>`;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -12027,6 +12337,7 @@ function openDelayClaimsManager(){
       if (!delayClaims[dateKey] || !delayClaims[dateKey][dir]) return;
       delayClaims[dateKey][dir].status = cb.checked ? 'confirmed' : 'started';
       await saveDelayClaims();
+      render(); // 2026-09-30: keep the header badge in step
       document.body.removeChild(overlay);
       openDelayClaimsManager();
     });
@@ -12040,6 +12351,7 @@ function openDelayClaimsManager(){
         if (Object.keys(delayClaims[dateKey]).length === 0) delete delayClaims[dateKey];
       }
       await saveDelayClaims();
+      render();
       document.body.removeChild(overlay);
       openDelayClaimsManager();
     });
@@ -12047,6 +12359,8 @@ function openDelayClaimsManager(){
   // Saved on blur rather than per-keystroke — matches the checkbox/undo
   // handlers' full-remount pattern, and blur already means the person has
   // moved on from the field so there's no cursor position to preserve.
+  // 2026-09-30: a reference marks a started claim as submitted, which takes
+  // it off the badge countdown — re-render Home underneath so that shows.
   overlay.querySelectorAll('.claim-ref-input').forEach(input => {
     input.addEventListener('blur', async () => {
       const dateKey = input.dataset.claimDate;
@@ -12057,6 +12371,7 @@ function openDelayClaimsManager(){
       if (trimmed === existing) return; // no change — don't re-save/re-render
       delayClaims[dateKey][dir].claimRef = trimmed;
       await saveDelayClaims();
+      render();
     });
   });
   document.getElementById('delay-claims-close-btn').addEventListener('click', () => {
@@ -12669,6 +12984,7 @@ function openCalendarView(){
       }
       const delayDotHtml = delayStatus === 'confirmed' ? '<span class="cal-dot-confirmed"></span>'
         : delayStatus === 'maybe' ? '<span class="cal-dot-delay"></span>'
+        : delayStatus === 'declined' ? '<span class="cal-dot-declined"></span>'
         : '';
       const isBuyDay = key >= todayKeyLocal && !!(buyStates[key] && buyStates[key].buyFlag);
       const dots = (hasEntry || isBuyDay || delayStatus)
@@ -12889,6 +13205,8 @@ function openROIDashboardView(){
 
   // Section 1: Delay Repay breakdown — confirmed / pending / expired,
   // summed across every claim ever recorded.
+  // 2026-09-30: pending is 'started' only — 'declined' (Not claiming) is
+  // deliberately in none of these totals.
   let claimedConfirmed = 0, claimedPending = 0, claimedExpired = 0;
   for (const dateKey in delayClaims){
     for (const dir in delayClaims[dateKey]){
@@ -12896,7 +13214,7 @@ function openROIDashboardView(){
       const amt = c.amount || 0;
       if (c.status === 'confirmed') claimedConfirmed += amt;
       else if (c.status === 'expired') claimedExpired += amt;
-      else claimedPending += amt;
+      else if (c.status === 'started') claimedPending += amt;
     }
   }
 
@@ -12945,7 +13263,7 @@ function openROIDashboardView(){
         claimedConfirmedInWindow += amt;
         const mKey = dateKey.slice(0, 7);
         if (bucketByKey[mKey]) bucketByKey[mKey].total += amt;
-      } else if (c.status !== 'expired'){
+      } else if (c.status === 'started'){ // 2026-09-30: was "not expired", which would have counted declined as pending
         claimedPendingInWindow += amt;
       }
     }
@@ -14007,6 +14325,15 @@ function spawnFireworkBurst(container, colors){
       stopLikelyTrainChecks(); // no point polling while backgrounded — nothing can act on it anyway
       stopJourneyTextRefresh(); // 2026-09-27 — restarted fresh on return, below
     } else {
+      // 2026-09-30: state.today was only ever set at load, so an app left
+      // in memory overnight kept yesterday's date — yesterday's delay never
+      // became a "past" day, and no HSP sync ran for it. Roll the date on
+      // when the calendar day has changed, then look for fresh delay data
+      // (cheap when nothing's outstanding — railSyncMissingDates skips
+      // already-synced days, and only re-asks recent ones still empty).
+      const nowDate = new Date();
+      if (fmtKey(nowDate) !== fmtKey(state.today)) state.today = nowDate;
+      railSyncMissingDates();
       renderBackupNudge(); // may have gone stale while backgrounded
       schedulePushWatchConfig(); // 2026-09-18 — foreground counts as "app open" for keeping the rolling non-travel window fresh
       // Same ordering as startup — the watch may have resolved
