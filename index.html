@@ -1242,7 +1242,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-29.16:04'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-30.12:42'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1571,6 +1571,87 @@ const ALERT_CHECK_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 let trainAlertConfig = {};
 let defaultTargetTrains = {};
 let targetTrainOverrides = {};
+
+// ---------------------------------------------------------------------
+// Morning drive check (2026-09-30, drive-check-spec.md, slice 2)
+//
+// Before leaving home the watch asks the Worker how the drive to Crewe
+// station looks (Google Routes, traffic-aware) on each configured route, and
+// buzzes "Go via X" / "X slow" / "X clear". This file only holds the settings
+// and pushes them; the check itself runs in the Worker (/api/drive-check).
+//
+//   driveCheckConfig  localStorage 'drive-check-config' (backed up):
+//                     { enabled, checkTimesByTrain: { trainKey: 'HH:MM' },
+//                       station: {lat,lng}, delayThresholdMin, switchThresholdMin,
+//                       routes: [{ key, name, via: [{lat,lng}], usual }] }
+//   driveCheckHome    localStorage 'drive-check-home' — {lat,lng} or null.
+//                     Deliberately NOT in BACKUP_KEYS: the backup file gets
+//                     shared (Project Knowledge, peer review), and the home
+//                     location should only ever live on this device and in the
+//                     Worker's KV. A restore just means entering it once again.
+//
+// No coordinates are defaulted here — index.html is public on GitHub Pages.
+// The defaults carry route names, times and thresholds only; pins are pasted
+// in via Settings → Drive check.
+// ---------------------------------------------------------------------
+const DEFAULT_DRIVE_CHECK_CONFIG = {
+  enabled: false,
+  checkTimesByTrain: { 'am-0808': '07:35', 'am-0727': '06:55' },
+  station: null,
+  delayThresholdMin: 5,
+  switchThresholdMin: 5,
+  routes: [
+    { key: 'a500', name: 'A500', via: [], usual: true },
+    { key: 'weston', name: 'Weston Rd', via: [], usual: false },
+    { key: 'gresty', name: 'Gresty Rd', via: [], usual: false },
+  ],
+};
+const DRIVE_CHECK_MAX_ROUTES = 4;
+const DRIVE_CHECK_MAX_VIAS = 3;
+let driveCheckConfig = JSON.parse(JSON.stringify(DEFAULT_DRIVE_CHECK_CONFIG));
+let driveCheckHome = null;
+
+function isValidLatLng(p){
+  return !!p && typeof p.lat === 'number' && typeof p.lng === 'number' &&
+    Number.isFinite(p.lat) && Number.isFinite(p.lng) &&
+    p.lat >= 49 && p.lat <= 61 && p.lng >= -9 && p.lng <= 2.5; // same loose UK box the Worker checks
+}
+// Accepts "53.0886, -2.4305" (what Google Maps copies) or "53.0886 -2.4305".
+function parseLatLng(text){
+  const m = String(text || '').trim().match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  const p = { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+  return isValidLatLng(p) ? p : null;
+}
+function fmtLatLng(p){ return p ? `${p.lat}, ${p.lng}` : ''; }
+
+// What goes to the Worker as driveCheckConfig, or null if the settings aren't
+// complete enough to be valid there (no home, no station, a route with no via
+// point, not exactly one usual route). null means the field is simply left out
+// of the push, and the Worker keeps whatever it already had — so a fresh or
+// restored device can never wipe a working setup.
+function buildDriveCheckPayload(){
+  const c = driveCheckConfig;
+  if (!c || !isValidLatLng(driveCheckHome) || !isValidLatLng(c.station)) return null;
+  const routes = (c.routes || []).filter(r => r && r.name && Array.isArray(r.via) && r.via.length);
+  if (!routes.length || routes.length !== (c.routes || []).length) return null;
+  if (routes.filter(r => r.usual).length !== 1) return null;
+  if (routes.some(r => r.via.some(p => !isValidLatLng(p)))) return null;
+  const times = {};
+  Object.keys(c.checkTimesByTrain || {}).forEach(k => {
+    const t = c.checkTimesByTrain[k];
+    if (t && ALERT_CHECK_TIME_PATTERN.test(t) && railTrains.some(tr => tr.key === k && tr.direction === 'AM')) times[k] = t;
+  });
+  return {
+    enabled: !!c.enabled,
+    checkTimesByTrain: times,
+    home: { lat: driveCheckHome.lat, lng: driveCheckHome.lng },
+    station: { lat: c.station.lat, lng: c.station.lng },
+    delayThresholdMin: c.delayThresholdMin,
+    switchThresholdMin: c.switchThresholdMin,
+    routes: routes.map(r => ({ key: r.key, name: r.name, via: r.via.map(p => ({ lat: p.lat, lng: p.lng })), usual: !!r.usual })),
+  };
+}
 
 // First-run values (nothing stored yet): the spec's defaults, but only for
 // trains that actually exist in this install's railTrains.
@@ -2166,6 +2247,13 @@ async function loadData(){
     targetTrainOverrides = (parsedTT && parsedTT.targetTrainOverrides && typeof parsedTT.targetTrainOverrides === 'object') ? parsedTT.targetTrainOverrides : {};
   }
   pruneTargetTrainOverrides();
+  // 2026-09-30 — morning drive check (see DEFAULT_DRIVE_CHECK_CONFIG).
+  driveCheckConfig = loadJSON(
+    'drive-check-config',
+    JSON.parse(JSON.stringify(DEFAULT_DRIVE_CHECK_CONFIG)),
+    v => v && typeof v === 'object' && !Array.isArray(v) && Array.isArray(v.routes)
+  );
+  driveCheckHome = loadJSON('drive-check-home', null, v => v === null || isValidLatLng(v));
   railPerfCache = loadJSON('rail-perf-cache', {});
   railSyncedDays = loadJSON('rail-synced-days', {});
   // One-time reset: an earlier version of railSyncedDays could mark a
@@ -2398,6 +2486,15 @@ async function saveTargetTrains(){
   catch(e){ /* save failed silently; will retry next change */ }
   schedulePushWatchConfig();
 }
+// 2026-09-30 — morning drive check. No push here: the editor pushes
+// immediately itself (and waits for it before "Test now").
+function saveDriveCheckSettings(){
+  try{
+    localStorage.setItem('drive-check-config', JSON.stringify(driveCheckConfig));
+    localStorage.setItem('drive-check-home', JSON.stringify(driveCheckHome));
+  }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
 
 // Builds what the Worker's WATCH_KV holds for the watch: railTrains + both
 // geofence radii (as before) plus, since 2026-09-18, the target-train alert
@@ -2428,13 +2525,18 @@ function buildWatchConfigBody(){
     });
     if (Object.keys(per).length) overrides[dateKey] = per;
   });
-  return {
+  const body = {
     railTrains, geofenceRadiusCrewe, geofenceRadiusWigan,
     trainAlertConfig: alertCfg,
     defaultTargetTrains: targets,
     targetTrainOverrides: overrides,
     nonTravelDates: computeNonTravelDates(),
   };
+  // 2026-09-30: only sent once complete — omitted otherwise, so the Worker
+  // keeps what it has (see buildDriveCheckPayload).
+  const drive = buildDriveCheckPayload();
+  if (drive) body.driveCheckConfig = drive;
+  return body;
 }
 
 // Pushes the watch-relevant config to the Worker's WATCH_KV in one shot —
@@ -2456,7 +2558,10 @@ function buildWatchConfigBody(){
 // keepalive lets a push started as the app is being backgrounded still
 // complete.
 function pushWatchConfig(){
-  fetch(`${DARWIN_WORKER_URL}/api/watch-config`, {
+  // 2026-09-30: now returns the promise (resolving true/false for accepted or
+  // not) so the drive-check "Test now" can wait for its settings to land
+  // before asking the Worker to run a check. Every existing caller ignores it.
+  return fetch(`${DARWIN_WORKER_URL}/api/watch-config`, {
     method: 'PUT',
     // 2026-09-24: X-PWA-Secret — the Worker now rejects this PUT without it.
     // Sent as '' when unset, which the Worker refuses with a 401.
@@ -2477,9 +2582,11 @@ function pushWatchConfig(){
           showToast(`Watch config not accepted: ${resp.status} ${text}`.slice(0, 200));
         }
       }
+      return resp.ok;
     })
     .catch((e) => {
       console.warn('pushWatchConfig failed (offline?):', e && e.message);
+      return false;
     });
 }
 
@@ -4987,6 +5094,14 @@ Once today's evening train is known, the app can put a ready-made message on the
 ### Watch Train Alerts
 At a time you set per train in **Settings → Trains** ("Watch alert at"), your watch checks how the day's target train is running and buzzes with on time / delayed / cancelled and the platform. Leave a train's time blank for no alert. To report on a different train tomorrow, use the **Watch alert target** strip on the Live tab's My Trains view — it defaults to Today in the morning and Tomorrow from midday. Non-travel days get no alerts.
 
+### Morning Drive Check
+Just before you leave for the station, your watch checks live traffic on your driving routes and tells you which way to go. Set it up in **Settings → Drive check**.
+* **When:** each morning train has its own check time (e.g. 07:35 for the 08:08, 06:55 for the 07:27). The check follows that morning's watch-alert target, so switching tomorrow's train on the Live tab moves the drive check too. Weekends and tagged days (WFH, holiday, etc.) get no check.
+* **What you'll see:** **"Go via …"** when another route saves at least your "quicker route" minutes; **"… slow: +N min"** when your usual route is well over normal and nothing is much quicker; **"… clear"** when the usual way is fine. You always get one of these, so no buzz means the check didn't run.
+* **"Normal"** is Google's empty-road time plus 5 minutes. The "slow" alert fires when your usual route is over that by at least your "slow route" threshold.
+* **Locations:** paste "lat, lng" for home, the station car park, and each route's via points. On a computer, right-click the spot in Google Maps and click the numbers at the top of the menu. Your home location stays on this device and the Worker only — it isn't included in backups, so after restoring onto a new device, enter it again.
+* **Save & test now** runs a check straight away (any day, any time) and shows every route's time — use it to make sure each route's via points pick the roads you meant.
+
 ---
 
 ## 5. Delay Repay & Claims
@@ -5236,6 +5351,7 @@ const SETTINGS_ICONS = {
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
   geo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-7.5 7-12a7 7 0 1 0-14 0c0 4.5 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>',
   key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M17 6l3 3M14.5 8.5l2 2"/></svg>',
+  car: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V11l2-5h10l2 5v5"/><path d="M3 16h18v2H3z"/><path d="M5 11h14"/><circle cx="7.5" cy="18.5" r="1.5"/><circle cx="16.5" cy="18.5" r="1.5"/></svg>',
   warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
 };
 
@@ -5261,6 +5377,7 @@ function openSettingsMenu(){
         <div class="settings-grid-item${preferredGoogleEmail ? ' active' : ''}" id="settings-preferred-google-link">${SETTINGS_ICONS.account}<span class="cat-label">Account</span><span class="status-label">${preferredGoogleEmail ? 'Connected' : 'Not connected'}</span></div>
         <div class="settings-grid-item${gcalEnabled ? ' active' : ''}" id="settings-gcal-link">${SETTINGS_ICONS.calendar}<span class="cat-label">Calendar</span><span class="status-label">${gcalEnabled ? 'Connected' : 'Not connected'}</span></div>
         <div class="settings-grid-item" id="settings-rail-config-link">${SETTINGS_ICONS.train}<span class="cat-label">Trains</span></div>
+        <div class="settings-grid-item${driveCheckConfig.enabled ? ' active' : ''}" id="settings-drive-check-link">${SETTINGS_ICONS.car}<span class="cat-label">Drive check</span><span class="status-label">${driveCheckConfig.enabled ? 'On' : 'Off'}</span></div>
         <div class="settings-grid-item" id="settings-pass-photo-link">${SETTINGS_ICONS.card}<span class="cat-label">Smartcard</span></div>
         <div class="settings-grid-item${produceClaimDetailsFile ? ' active' : ''}" id="settings-claim-file-link">${SETTINGS_ICONS.file}<span class="cat-label">Claim file</span><span class="status-label">${produceClaimDetailsFile ? 'On' : 'Off'}</span></div>
         <div class="settings-grid-item${weatherEnabled ? ' active' : ''}" id="settings-weather-link">${SETTINGS_ICONS.cloud}<span class="cat-label">Weather</span><span class="status-label">${weatherEnabled ? 'On' : 'Off'}</span></div>
@@ -5292,6 +5409,7 @@ function openSettingsMenu(){
   document.getElementById('settings-geofence-link').addEventListener('click', () => { close(); openGeofenceSettingsEditor(true); });
   document.getElementById('settings-preferred-google-link').addEventListener('click', () => { close(); openPreferredGoogleEditor(true); });
   document.getElementById('settings-rail-config-link').addEventListener('click', () => { close(); openRailConfig(true); });
+  document.getElementById('settings-drive-check-link').addEventListener('click', () => { close(); openDriveCheckEditor(true); });
   document.getElementById('settings-pass-photo-link').addEventListener('click', () => { close(); openPassPhotoManager(true); });
   document.getElementById('settings-claim-file-link').addEventListener('click', async () => {
     produceClaimDetailsFile = !produceClaimDetailsFile;
@@ -5504,6 +5622,265 @@ function openPwaWriteSecretEditor(cameFromSettings){
       if (cameFromSettings) openSettingsMenu();
     }
   });
+}
+
+// ---------------------------------------------------------------------
+// Settings → Drive check (2026-09-30, drive-check-spec.md, slice 2).
+// Edits a draft; Save commits and pushes. "Save & test now" does the same,
+// waits for the push to be accepted, then asks the Worker to run a check
+// immediately (?force=1 — ignores the day, the slot and the On/Off switch)
+// and shows every route's time, so the via pins can be sanity-checked.
+// ---------------------------------------------------------------------
+function openDriveCheckEditor(cameFromSettings){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const draft = JSON.parse(JSON.stringify(driveCheckConfig));
+  if (!draft.checkTimesByTrain) draft.checkTimesByTrain = {};
+  const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
+
+  function routeRowHtml(r, i){
+    const vias = [0, 1, 2].map(n => `
+      <input type="text" class="dc-via" data-route="${i}" data-via="${n}" inputmode="decimal" autocomplete="off" spellcheck="false"
+        placeholder="Via point ${n + 1}${n === 0 ? '' : ' (optional)'} — lat, lng" value="${escapeHtml(fmtLatLng(r.via[n]))}" style="margin-bottom:6px;" />`).join('');
+    return `
+      <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <input type="text" class="dc-route-name" data-route="${i}" maxlength="24" value="${escapeHtml(r.name)}" placeholder="Route name" style="flex:1;" />
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:var(--ink-dim); white-space:nowrap;">
+            <input type="radio" name="dc-usual" class="dc-usual" data-route="${i}" ${r.usual ? 'checked' : ''} /> Usual
+          </label>
+          ${draft.routes.length > 1 ? `<span class="modal-close" data-dc-remove="${i}" style="margin:0; font-size:13px;">Remove</span>` : ''}
+        </div>
+        ${vias}
+      </div>`;
+  }
+
+  function readForm(){
+    draft.enabled = overlay.querySelector('#dc-enabled').checked;
+    overlay.querySelectorAll('.dc-slot').forEach(inp => {
+      if (inp.value) draft.checkTimesByTrain[inp.dataset.key] = inp.value;
+      else delete draft.checkTimesByTrain[inp.dataset.key];
+    });
+    draft._homeText = overlay.querySelector('#dc-home').value;
+    draft._stationText = overlay.querySelector('#dc-station').value;
+    draft.delayThresholdMin = parseInt(overlay.querySelector('#dc-delay').value, 10);
+    draft.switchThresholdMin = parseInt(overlay.querySelector('#dc-switch').value, 10);
+    overlay.querySelectorAll('.dc-route-name').forEach(inp => { draft.routes[+inp.dataset.route].name = inp.value.trim(); });
+    overlay.querySelectorAll('.dc-usual').forEach(inp => { draft.routes[+inp.dataset.route].usual = inp.checked; });
+    draft.routes.forEach(r => { r._viaText = []; });
+    overlay.querySelectorAll('.dc-via').forEach(inp => { draft.routes[+inp.dataset.route]._viaText[+inp.dataset.via] = inp.value; });
+  }
+
+  // Returns an error message, or null and commits the draft into the live
+  // settings (not yet saved/pushed — the caller does that).
+  function validateAndCommit(){
+    readForm();
+    const home = draft._homeText.trim() ? parseLatLng(draft._homeText) : null;
+    if (draft._homeText.trim() && !home) return 'Home location isn\'t a valid "lat, lng" in the UK.';
+    const station = draft._stationText.trim() ? parseLatLng(draft._stationText) : null;
+    if (draft._stationText.trim() && !station) return 'Station car park isn\'t a valid "lat, lng" in the UK.';
+    for (const [label, n] of [['Slow-route threshold', draft.delayThresholdMin], ['Quicker-route threshold', draft.switchThresholdMin]]){
+      if (!Number.isInteger(n) || n < 1 || n > 30) return `${label} must be 1–30 minutes.`;
+    }
+    const routes = [];
+    for (const r of draft.routes){
+      if (!r.name) return 'Every route needs a name.';
+      const via = [];
+      for (const t of r._viaText){
+        if (!t || !t.trim()) continue;
+        const p = parseLatLng(t);
+        if (!p) return `"${r.name}": a via point isn't a valid "lat, lng" in the UK.`;
+        via.push(p);
+      }
+      routes.push({ key: r.key, name: r.name, via, usual: !!r.usual });
+    }
+    if (routes.filter(r => r.usual).length !== 1) return 'Pick one route as your usual.';
+    const names = routes.map(r => r.name.toLowerCase());
+    if (new Set(names).size !== names.length) return 'Route names must be different.';
+    driveCheckConfig = {
+      enabled: draft.enabled,
+      checkTimesByTrain: { ...draft.checkTimesByTrain },
+      station,
+      delayThresholdMin: draft.delayThresholdMin,
+      switchThresholdMin: draft.switchThresholdMin,
+      routes,
+    };
+    driveCheckHome = home;
+    return null;
+  }
+
+  function incompleteReason(){
+    if (!isValidLatLng(driveCheckHome)) return 'home location';
+    if (!isValidLatLng(driveCheckConfig.station)) return 'station car park';
+    const noVia = driveCheckConfig.routes.find(r => !r.via.length);
+    if (noVia) return `a via point for ${noVia.name}`;
+    return null;
+  }
+
+  function renderEditor(){
+    const slotRows = amTrains.map(t => {
+      const alertAt = trainAlertConfig[t.key] && trainAlertConfig[t.key].checkTime;
+      return `
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+          <span style="font-size:13px; min-width:92px;">${escapeHtml(t.label)} train<br><span style="font-size:11px; color:var(--ink-dim);">${alertAt ? `watch alert ${escapeHtml(alertAt)}` : 'no watch alert'}</span></span>
+          <input type="time" class="dc-slot" data-key="${t.key}" value="${escapeHtml(draft.checkTimesByTrain[t.key] || '')}" style="flex:1;" />
+          <span class="modal-close" data-dc-clear-slot="${t.key}" style="margin:0; font-size:13px;">Clear</span>
+        </div>`;
+    }).join('');
+    const homeText = draft._homeText !== undefined ? draft._homeText : fmtLatLng(driveCheckHome);
+    const stationText = draft._stationText !== undefined ? draft._stationText : fmtLatLng(draft.station);
+
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3>Morning drive check</h3>
+        <div class="sub">Just before you leave for the station, your watch checks live traffic on each route below and tells you which way to go — "Go via…", "…slow", or "…clear" when the usual way is fine. Nothing happens on weekends or tagged days (WFH, holiday, etc).</div>
+
+        <label style="display:flex; align-items:center; gap:8px; margin:14px 0; font-size:14px; cursor:pointer;">
+          <input type="checkbox" id="dc-enabled" ${draft.enabled ? 'checked' : ''} /> Drive check on
+        </label>
+
+        <div class="rail-col-header">Check at (follows that morning's target train)</div>
+        ${slotRows || '<div class="sub">No morning trains set up — add them in Settings → Trains.</div>'}
+
+        <div class="rail-col-header" style="margin-top:14px;">Locations</div>
+        <div class="sub" style="margin-bottom:8px;">Paste "lat, lng" — on a computer, right-click the spot in Google Maps and click the numbers at the top of the menu. Home stays on this device and the Worker only; it isn't included in backups.</div>
+        <div style="font-size:13px; color:var(--ink-dim); margin-bottom:4px;">Home (on the road outside)</div>
+        <input type="text" id="dc-home" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="lat, lng" value="${escapeHtml(homeText)}" style="margin-bottom:10px;" />
+        <div style="font-size:13px; color:var(--ink-dim); margin-bottom:4px;">Station car park entrance</div>
+        <input type="text" id="dc-station" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="lat, lng" value="${escapeHtml(stationText)}" style="margin-bottom:14px;" />
+
+        <div class="rail-col-header">Routes</div>
+        <div class="sub" style="margin-bottom:8px;">Each route is forced through its via points, in order. Put them mid-way along a plain stretch of road, away from junctions, on the side you drive along.</div>
+        ${draft.routes.map(routeRowHtml).join('')}
+        ${draft.routes.length < DRIVE_CHECK_MAX_ROUTES ? '<div class="settings-link" id="dc-add-route" style="margin-bottom:14px;">+ Add another route</div>' : ''}
+
+        <div class="rail-col-header">Thresholds (minutes)</div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <span style="font-size:13px; flex:1;">Alert if usual route is this much over normal</span>
+          <input type="number" id="dc-delay" min="1" max="30" step="1" value="${Number.isFinite(draft.delayThresholdMin) ? draft.delayThresholdMin : 5}" style="width:70px;" />
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <span style="font-size:13px; flex:1;">Suggest another route if it saves at least</span>
+          <input type="number" id="dc-switch" min="1" max="30" step="1" value="${Number.isFinite(draft.switchThresholdMin) ? draft.switchThresholdMin : 5}" style="width:70px;" />
+        </div>
+        <div class="sub" style="margin-bottom:14px;">"Normal" is Google's empty-road time plus 5 minutes.</div>
+
+        <div id="dc-error" style="color:var(--danger); font-size:13px; margin-bottom:10px; display:none;"></div>
+        <div id="dc-result" style="display:none; margin-bottom:12px;"></div>
+
+        <button class="save-btn" id="dc-test" style="margin-bottom:8px;">Save &amp; test now</button>
+        <button class="save-btn" id="dc-save">Save</button>
+        <div class="modal-close" id="dc-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
+      </div>
+    `;
+
+    overlay.querySelectorAll('[data-dc-clear-slot]').forEach(el => {
+      el.addEventListener('click', () => {
+        const inp = overlay.querySelector(`.dc-slot[data-key="${el.dataset.dcClearSlot}"]`);
+        if (inp) inp.value = '';
+      });
+    });
+    overlay.querySelectorAll('[data-dc-remove]').forEach(el => {
+      el.addEventListener('click', () => {
+        readForm();
+        const idx = +el.dataset.dcRemove;
+        const wasUsual = draft.routes[idx].usual;
+        draft.routes.splice(idx, 1);
+        if (wasUsual && draft.routes.length) draft.routes[0].usual = true;
+        draft.routes.forEach(r => { r.via = (r._viaText || []).map(t => parseLatLng(t)).filter(Boolean); });
+        renderEditor();
+      });
+    });
+    const addBtn = overlay.querySelector('#dc-add-route');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      readForm();
+      draft.routes.forEach(r => { r.via = (r._viaText || []).map(t => parseLatLng(t)).filter(Boolean); });
+      let n = draft.routes.length + 1, key;
+      do { key = `route-${n++}`; } while (draft.routes.some(r => r.key === key));
+      draft.routes.push({ key, name: '', via: [], usual: false });
+      renderEditor();
+    });
+
+    const showError = (msg) => {
+      const el = overlay.querySelector('#dc-error');
+      el.textContent = msg || '';
+      el.style.display = msg ? 'block' : 'none';
+    };
+
+    overlay.querySelector('#dc-save').addEventListener('click', async () => {
+      const err = validateAndCommit();
+      if (err){ showError(err); return; }
+      saveDriveCheckSettings();
+      const missing = incompleteReason();
+      if (!missing) pushWatchConfig();
+      document.body.removeChild(overlay);
+      if (missing && driveCheckConfig.enabled) showToast(`Drive check saved, but it won't run until you add the ${missing}.`);
+      if (cameFromSettings) openSettingsMenu();
+    });
+
+    overlay.querySelector('#dc-test').addEventListener('click', async () => {
+      const err = validateAndCommit();
+      if (err){ showError(err); return; }
+      showError('');
+      saveDriveCheckSettings();
+      const missing = incompleteReason();
+      if (missing){ showError(`Add the ${missing} first.`); return; }
+      if (!pwaWriteSecret){ showError('Set the write secret first (Settings → Write secret).'); return; }
+      const btn = overlay.querySelector('#dc-test');
+      const resultEl = overlay.querySelector('#dc-result');
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+      try{
+        const pushed = await pushWatchConfig();
+        if (!pushed){ showError('Couldn\'t save the settings to the Worker, so the test didn\'t run.'); return; }
+        const resp = await fetch(`${DARWIN_WORKER_URL}/api/drive-check?force=1`, { headers: { 'X-PWA-Secret': pwaWriteSecret } });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data){ showError(`Test failed: ${resp.status}`); return; }
+        resultEl.innerHTML = renderDriveCheckResult(data);
+        resultEl.style.display = 'block';
+      } catch(e){
+        showError('Test failed — are you offline?');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save & test now';
+      }
+    });
+
+    const close = () => {
+      if (overlay.isConnected) document.body.removeChild(overlay);
+      if (cameFromSettings) openSettingsMenu();
+    };
+    overlay.querySelector('#dc-close').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  }
+
+  document.body.appendChild(overlay);
+  renderEditor();
+}
+
+// Inline result for "Save & test now" — the same title/text the watch would
+// show, plus every route's live and empty-road minutes.
+function renderDriveCheckResult(data){
+  if (data.status === 'error'){
+    const why = data.reason === 'no-maps-key' ? 'The Worker has no MAPS_API_KEY secret yet.'
+      : data.reason === 'usual-route-failed' ? 'Google couldn\'t route the usual way — check its via points.'
+      : `(${escapeHtml(data.reason || 'unknown')})`;
+    return `<div style="font-size:13px;"><strong>Couldn't check traffic.</strong> ${why}</div>`;
+  }
+  if (data.status === 'skipped'){
+    return `<div style="font-size:13px;">Skipped: ${escapeHtml(data.reason || '')}</div>`;
+  }
+  const rows = (data.routes || []).map(r => `
+    <tr>
+      <td style="padding:2px 8px 2px 0;">${escapeHtml(r.name)}${r.usual ? ' <span style="color:var(--ink-dim);">(usual)</span>' : ''}</td>
+      <td style="padding:2px 8px; text-align:right;">${r.failed ? '—' : `${r.minutes} min`}</td>
+      <td style="padding:2px 0 2px 8px; text-align:right; color:var(--ink-dim);">${r.failed ? 'no route' : `empty road ${r.freeFlowMinutes}`}</td>
+    </tr>`).join('');
+  return `
+    <div style="font-size:14px; font-weight:600;">${escapeHtml(data.title || '')}</div>
+    <div style="font-size:13px; margin-bottom:6px; white-space:pre-line;">${escapeHtml(data.text || '')}</div>
+    <table style="font-size:13px; border-collapse:collapse;">${rows}</table>
+    <div style="font-size:11px; color:var(--ink-dim); margin-top:4px;">Checked ${escapeHtml(data.checkedAt || '')}. If a route looks far too long, one of its via pins has probably snapped to the wrong road.</div>`;
 }
 
 function openGeofenceSettingsEditor(cameFromSettings){
@@ -5882,9 +6259,12 @@ function openDayReturnPriceEditor(){
 // not localStorage, and isn't covered by this mechanism at all. If any
 // of this ever needs to change, the messaging around what a backup
 // contains needs updating alongside it, not just this list.
+// 2026-09-30: 'drive-check-config' is backed up; 'drive-check-home' (the home
+// location for the morning drive check) is deliberately NOT — see the note
+// above DEFAULT_DRIVE_CHECK_CONFIG.
 const BACKUP_KEYS = [
   'alternative-routes','bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
-  'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id',
+  'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id','drive-check-config',
   'emergency-tab-visible',
   'gcal-enabled','gcal-event-id','gcal-pending-sync',
   'geofence-crewe-matches-wigan','geofence-radius-crewe','geofence-radius-wigan','geofence-wigan-matches-crewe',
