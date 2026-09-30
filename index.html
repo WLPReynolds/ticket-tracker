@@ -1242,7 +1242,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-09-30.12:42'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-09-30.20:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1513,7 +1513,7 @@ let railSyncInProgress = false;
   // BACKUP_KEYS's own comment — it's disposable, unlike rail-perf-cache,
   // which IS backed up), so writes to it shouldn't mark a backup as
   // needed when nothing backup-relevant actually changed.
-  const NON_BACKUP_KEYS = new Set(['drive-backup-dirty', 'drive-backup-last-time', 'reason-codes-cache', 'rail-synced-days', 'rail-history-days-back', 'rail-synced-days-reset-v2', 'journey-text-copied']);
+  const NON_BACKUP_KEYS = new Set(['drive-backup-dirty', 'drive-backup-last-time', 'reason-codes-cache', 'rail-synced-days', 'rail-history-days-back', 'rail-synced-days-reset-v2', 'journey-text-copied', 'live-target-strip-open', 'drive-banner-dismissed']); // 2026-09-30: last two are Live-tab UI state
   localStorage.setItem = function(key, value){
     if (!NON_BACKUP_KEYS.has(key)){
       driveBackupDirty = true;
@@ -1616,6 +1616,25 @@ function isValidLatLng(p){
     Number.isFinite(p.lat) && Number.isFinite(p.lng) &&
     p.lat >= 49 && p.lat <= 61 && p.lng >= -9 && p.lng <= 2.5; // same loose UK box the Worker checks
 }
+// 2026-09-30 (slice 4) — on-demand drive check for the Live tab row and the
+// morning auto-banner. Uses the Worker's ?now=1 mode: skips the day/slot
+// gates but reuses a result from the last few minutes, so repeat taps (or an
+// app open just after the 07:35 scheduled check) cost no Google calls.
+// lastDriveCheck is kept here, outside the Live screen, so closing and
+// reopening it doesn't re-ask either.
+const DRIVE_CHECK_REUSE_MS = 3 * 60 * 1000;
+const DRIVE_AUTO_START_MIN = 7 * 60 + 30; // 07:30
+const DRIVE_AUTO_END_MIN = 7 * 60 + 45;   // 07:45 (inclusive)
+let lastDriveCheck = null; // { at: epoch ms, data }
+async function fetchDriveCheckNow(){
+  const resp = await fetch(`${DARWIN_WORKER_URL}/api/drive-check?now=1`, { headers: { 'X-PWA-Secret': pwaWriteSecret || '' } });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok || !data) throw new Error(resp.status === 401 ? 'Write secret not set or wrong' : `HTTP ${resp.status}`);
+  lastDriveCheck = { at: Date.now(), data };
+  return data;
+}
+function driveCheckIsSetUp(){ return !!buildDriveCheckPayload() && !!pwaWriteSecret; }
+
 // Accepts "53.0886, -2.4305" (what Google Maps copies) or "53.0886 -2.4305".
 function parseLatLng(text){
   const m = String(text || '').trim().match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
@@ -5092,7 +5111,7 @@ Once today's evening train is known, the app can put a ready-made message on the
 * It's only offered while live times are available and the train hasn't reached Crewe. If a copy fails, the banner's button gives you one more try; after that it's left for you to type.
 
 ### Watch Train Alerts
-At a time you set per train in **Settings → Trains** ("Watch alert at"), your watch checks how the day's target train is running and buzzes with on time / delayed / cancelled and the platform. Leave a train's time blank for no alert. To report on a different train tomorrow, use the **Watch alert target** strip on the Live tab's My Trains view — it defaults to Today in the morning and Tomorrow from midday. Non-travel days get no alerts.
+At a time you set per train in **Settings → Trains** ("Watch alert at"), your watch checks how the day's target train is running and buzzes with on time / delayed / cancelled and the platform. Leave a train's time blank for no alert. To report on a different train tomorrow, open the **Watch alert** panel on the Live tab's My Trains view — it defaults to Today in the morning and Tomorrow from midday. Non-travel days get no alerts.
 
 ### Morning Drive Check
 Just before you leave for the station, your watch checks live traffic on your driving routes and tells you which way to go. Set it up in **Settings → Drive check**.
@@ -5101,6 +5120,11 @@ Just before you leave for the station, your watch checks live traffic on your dr
 * **"Normal"** is Google's empty-road time plus 5 minutes. The "slow" alert fires when your usual route is over that by at least your "slow route" threshold.
 * **Locations:** paste "lat, lng" for home, the station car park, and each route's via points. On a computer, right-click the spot in Google Maps and click the numbers at the top of the menu. Your home location stays on this device and the Worker only — it isn't included in backups, so after restoring onto a new device, enter it again.
 * **Save & test now** runs a check straight away (any day, any time) and shows every route's time — use it to make sure each route's via points pick the roads you meant.
+* **On demand:** the **Drive to station** row on the Live tab's My Trains view checks traffic whenever you tap it — any day, any time. The watch has the same thing as a **Drive to station** button. A check from the last few minutes is reused rather than asked for again.
+* **Morning banner:** open the Live tab between 07:30 and 07:45 on a travel day and the check runs by itself, with the result as a banner at the top. Tap **×** to dismiss it for the rest of that morning.
+
+### Watch Alert Panel
+On the Live tab, **Watch alert** is a one-line summary of which trains the watch will report on (amber means you've changed it from the default). Tap it to open the full controls — Today/Tomorrow and a train per direction — and tap again to fold it away. It stays however you left it.
 
 ---
 
@@ -5860,7 +5884,8 @@ function openDriveCheckEditor(cameFromSettings){
 
 // Inline result for "Save & test now" — the same title/text the watch would
 // show, plus every route's live and empty-road minutes.
-function renderDriveCheckResult(data){
+function renderDriveCheckResult(data, opts){
+  const showPinHint = !(opts && opts.hidePinHint);
   if (data.status === 'error'){
     const why = data.reason === 'no-maps-key' ? 'The Worker has no MAPS_API_KEY secret yet.'
       : data.reason === 'usual-route-failed' ? 'Google couldn\'t route the usual way — check its via points.'
@@ -5880,7 +5905,7 @@ function renderDriveCheckResult(data){
     <div style="font-size:14px; font-weight:600;">${escapeHtml(data.title || '')}</div>
     <div style="font-size:13px; margin-bottom:6px; white-space:pre-line;">${escapeHtml(data.text || '')}</div>
     <table style="font-size:13px; border-collapse:collapse;">${rows}</table>
-    <div style="font-size:11px; color:var(--ink-dim); margin-top:4px;">Checked ${escapeHtml(data.checkedAt || '')}. If a route looks far too long, one of its via pins has probably snapped to the wrong road.</div>`;
+    <div style="font-size:11px; color:var(--ink-dim); margin-top:4px;">Checked ${escapeHtml(data.checkedAt || '')}.${showPinHint ? ' If a route looks far too long, one of its via pins has probably snapped to the wrong road.' : ''}</div>`;
 }
 
 function openGeofenceSettingsEditor(cameFromSettings){
@@ -7737,6 +7762,10 @@ function openLiveScreen(initialSubTab){
   // train progress). Defaults to Today in the morning and Tomorrow from
   // midday, since the point is setting it the evening before.
   let targetStripDay = new Date().getHours() < 12 ? 'today' : 'tomorrow';
+  // 2026-09-30: collapsed by default to keep the tab clean — a one-line
+  // summary of the targets, tap to open the full controls. Open/closed is
+  // remembered on this device ('live-target-strip-open', not backed up).
+  let targetStripOpen = loadJSON('live-target-strip-open', false) === true;
   function targetStripDateKey(){
     const d = new Date();
     if (targetStripDay === 'tomorrow') d.setDate(d.getDate() + 1);
@@ -7766,20 +7795,41 @@ function openLiveScreen(initialSubTab){
     }
     const rows = rowHtml('AM', 'Morning') + rowHtml('PM', 'Evening');
 
+    // One-line summary for the collapsed state: the effective target per
+    // direction (an override from the default shows in amber).
+    const summaryParts = ['AM', 'PM'].map(dir => {
+      const trains = railTrains.filter(t => t.direction === dir);
+      const ovKey = overrides[dir] || '';
+      const eff = trains.find(t => t.key === (ovKey || defaultTargetTrains[dir]));
+      if (!eff) return null;
+      return ovKey ? `<span style="color:var(--amber);">${escapeHtml(eff.label)}</span>` : escapeHtml(eff.label);
+    }).filter(Boolean);
+    const summary = noCommute ? `${escapeHtml(noCommute)} · no alerts` : (summaryParts.join(' · ') || 'none set');
+    const dayWord = targetStripDay === 'today' ? 'Today' : 'Tomorrow';
+
     el.innerHTML = `
-      <div style="padding:12px; background:var(--tile); border:1px solid var(--line); border-radius:10px; margin-bottom:14px;">
+      <div style="padding:${targetStripOpen ? '12px' : '10px 12px'}; background:var(--tile); border:1px solid var(--line); border-radius:10px; margin-bottom:${targetStripOpen ? '14px' : '8px'};">
+        <div data-target-toggle style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;${targetStripOpen ? ' margin-bottom:8px;' : ''}">
+          <span style="font-weight:600; font-size:14px;">Watch alert</span>
+          <span style="font-size:13px; color:var(--ink-dim);">${dayWord}: ${summary} ${targetStripOpen ? '▾' : '▸'}</span>
+        </div>
+        ${targetStripOpen ? `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <span style="font-weight:600; font-size:14px;">Watch alert target</span>
+          <span style="font-size:12px; color:var(--ink-dim);">${dateLabel(parseKey(dateKey))}</span>
           <span style="display:flex; gap:6px;">
             <span class="chip ${targetStripDay === 'today' ? 'active' : ''}" data-target-day="today" style="padding:5px 11px;">Today</span>
             <span class="chip ${targetStripDay === 'tomorrow' ? 'active' : ''}" data-target-day="tomorrow" style="padding:5px 11px;">Tomorrow</span>
           </span>
         </div>
-        <div style="font-size:12px; color:var(--ink-dim); margin-bottom:10px;">${dateLabel(parseKey(dateKey))}</div>
-        ${rows || '<div class="sub">No trains configured.</div>'}
-        ${notes.map(n => `<div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${n}</div>`).join('')}
+        <div style="margin-top:8px;">${rows || '<div class="sub">No trains configured.</div>'}</div>
+        ${notes.map(n => `<div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${n}</div>`).join('')}` : ''}
       </div>`;
 
+    el.querySelector('[data-target-toggle]').addEventListener('click', () => {
+      targetStripOpen = !targetStripOpen;
+      try{ localStorage.setItem('live-target-strip-open', JSON.stringify(targetStripOpen)); }catch(e){}
+      renderTargetStrip();
+    });
     el.querySelectorAll('[data-target-day]').forEach(chip => {
       chip.addEventListener('click', () => { targetStripDay = chip.dataset.targetDay; renderTargetStrip(); });
     });
@@ -7798,9 +7848,103 @@ function openLiveScreen(initialSubTab){
     });
   }
 
+  // ---- "Drive to station" row + morning banner (2026-09-30, drive-check-spec.md slice 4) ----
+  // A one-line row under the Watch alert panel: tap to check traffic now
+  // (Worker ?now=1). Shows the verdict collapsed; tap again to see every
+  // route's minutes. Between 07:30 and 07:45 on a travel day with the drive
+  // check on, opening this tab runs it automatically and shows the result as
+  // a banner at the top, dismissible for the rest of that morning.
+  let driveRowOpen = false;
+  let driveLoading = false;
+  let driveError = null;
+  function renderDriveRow(){
+    const el = document.getElementById('live-drive-row');
+    if (!el || !overlay.isConnected) return;
+    const d = lastDriveCheck && lastDriveCheck.data;
+    let right;
+    if (!buildDriveCheckPayload()) right = 'Set up ›';
+    else if (driveLoading) right = 'Checking…';
+    else if (driveError) right = `<span style="color:var(--danger);">Couldn't check</span> ›`;
+    else if (d && (d.status === 'alert' || d.status === 'clear')) {
+      const col = d.status === 'alert' ? 'var(--amber)' : 'var(--good)';
+      right = `<span style="color:${col};">${escapeHtml(d.title || '')}</span> ${driveRowOpen ? '▾' : '▸'}`;
+    } else right = 'Check ›';
+    el.innerHTML = `
+      <div style="padding:10px 12px; background:var(--tile); border:1px solid var(--line); border-radius:10px; margin-bottom:14px;">
+        <div data-drive-toggle style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
+          <span style="font-weight:600; font-size:14px;">Drive to station</span>
+          <span style="font-size:13px; color:var(--ink-dim);">${right}</span>
+        </div>
+        ${driveRowOpen && d && !driveLoading ? `
+        <div style="margin-top:10px;">${renderDriveCheckResult(d, { hidePinHint: true })}</div>
+        <div class="settings-link" data-drive-recheck style="margin-top:8px;">Check again</div>` : ''}
+        ${driveRowOpen && driveError && !driveLoading ? `<div style="font-size:12px; color:var(--ink-dim); margin-top:8px;">${escapeHtml(driveError)}</div>` : ''}
+      </div>`;
+    el.querySelector('[data-drive-toggle]').addEventListener('click', () => {
+      if (!buildDriveCheckPayload()){ openDriveCheckEditor(false); return; }
+      if (driveLoading) return;
+      const fresh = lastDriveCheck && (Date.now() - lastDriveCheck.at) < DRIVE_CHECK_REUSE_MS;
+      if (fresh && !driveError){ driveRowOpen = !driveRowOpen; renderDriveRow(); return; }
+      runDriveCheck(true);
+    });
+    const again = el.querySelector('[data-drive-recheck]');
+    if (again) again.addEventListener('click', () => runDriveCheck(true));
+  }
+  async function runDriveCheck(openAfter, fromAuto){
+    if (!pwaWriteSecret){ driveError = 'Set the write secret first (Settings → Write secret).'; driveRowOpen = true; renderDriveRow(); return; }
+    driveLoading = true; driveError = null; renderDriveRow();
+    try{
+      await fetchDriveCheckNow();
+      if (openAfter) driveRowOpen = true;
+      if (fromAuto) renderDriveBanner();
+    } catch(e){
+      driveError = e && e.message ? e.message : 'Offline?';
+      if (openAfter) driveRowOpen = true;
+    } finally {
+      driveLoading = false;
+      renderDriveRow();
+    }
+  }
+  function driveBannerDismissedToday(){
+    return loadJSON('drive-banner-dismissed', '') === fmtKey(new Date());
+  }
+  function renderDriveBanner(){
+    const el = document.getElementById('live-drive-banner');
+    if (!el || !overlay.isConnected) return;
+    const d = lastDriveCheck && lastDriveCheck.data;
+    if (!d || (d.status !== 'alert' && d.status !== 'clear') || driveBannerDismissedToday()){ el.innerHTML = ''; return; }
+    const isAlert = d.status === 'alert';
+    el.innerHTML = `
+      <div style="display:flex; gap:10px; align-items:flex-start; padding:10px 12px; margin-bottom:10px; border-radius:10px; background:var(--tile); border:1px solid ${isAlert ? 'var(--amber)' : 'var(--good)'};">
+        <div style="flex:1;">
+          <div style="font-weight:600; font-size:14px; color:${isAlert ? 'var(--amber)' : 'var(--good)'};">🚗 ${escapeHtml(d.title || '')}</div>
+          <div style="font-size:13px; margin-top:2px;">${escapeHtml(d.text || '')}</div>
+          <div style="font-size:11px; color:var(--ink-dim); margin-top:2px;">Checked ${escapeHtml(d.checkedAt || '')}</div>
+        </div>
+        <span data-drive-dismiss style="font-size:20px; line-height:1; color:var(--ink-dim); cursor:pointer; padding:0 2px;" aria-label="Dismiss">×</span>
+      </div>`;
+    el.querySelector('[data-drive-dismiss]').addEventListener('click', () => {
+      try{ localStorage.setItem('drive-banner-dismissed', JSON.stringify(fmtKey(new Date()))); }catch(e){}
+      el.innerHTML = '';
+    });
+  }
+  function maybeAutoDriveCheck(){
+    const now = new Date();
+    const mins = now.getHours() * 60 + now.getMinutes();
+    if (mins < DRIVE_AUTO_START_MIN || mins > DRIVE_AUTO_END_MIN) return;
+    if (!driveCheckConfig.enabled || !driveCheckIsSetUp()) return;
+    if (nonTravelLabelFor(fmtKey(now))) return; // weekend or tagged day — same rule as the watch
+    if (driveBannerDismissedToday()) return;
+    const recent = lastDriveCheck && (Date.now() - lastDriveCheck.at) < DRIVE_CHECK_REUSE_MS;
+    if (recent){ renderDriveBanner(); return; }
+    runDriveCheck(false, true);
+  }
+
   function renderYoursTab(){
-    bodyEl.innerHTML = `<div id="live-target-strip"></div><div class="sub" id="live-board-status">Loading…</div><div id="live-board-content"></div>`;
+    bodyEl.innerHTML = `<div id="live-drive-banner"></div><div id="live-target-strip"></div><div id="live-drive-row"></div><div class="sub" id="live-board-status">Loading…</div><div id="live-board-content"></div>`;
     renderTargetStrip();
+    renderDriveRow();
+    maybeAutoDriveCheck();
     if (!yoursBoardsPromise) yoursBoardsPromise = fetchLiveBoards();
     yoursBoardsPromise.then(boards => {
       // The person may have switched to the other sub-tab, or closed the
