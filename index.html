@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-01.20:24'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-02.18:09'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -1596,19 +1596,25 @@ let railSyncInProgress = false;
 // automatically — no need to remember to flag dirtiness by hand.
 (function installDriveBackupDirtyTracker(){
   const originalSetItem = localStorage.setItem.bind(localStorage);
-  // BACKUP_KEYS isn't declared yet at this point in the file (it's a
-  // const further down), so the one exclusion that matters here is
-  // duplicated rather than referenced — small and deliberate, not worth
-  // restructuring load order over. reason-codes-cache is the only
-  // regular data key excluded from the backup payload itself (see
-  // BACKUP_KEYS's own comment — it's disposable, unlike rail-perf-cache,
-  // which IS backed up), so writes to it shouldn't mark a backup as
-  // needed when nothing backup-relevant actually changed.
-  const NON_BACKUP_KEYS = new Set(['drive-backup-dirty', 'drive-backup-last-time', 'reason-codes-cache', 'rail-synced-days', 'rail-history-days-back', 'rail-synced-days-reset-v2', 'journey-text-copied', 'live-target-strip-open', 'drive-banner-dismissed']); // 2026-09-30: last two are Live-tab UI state
+  // 2026-10-02: only keys that actually go INTO a backup (BACKUP_KEYS) can
+  // mark one as needed, and only when the stored value really changes — a
+  // UI-state key, or bank-holidays-cache being rewritten identically on
+  // every app open, no longer counts as "something changed". BACKUP_KEYS is
+  // a const declared further down, so it's read lazily inside the call;
+  // anything that writes before it's initialised falls back to the old
+  // behaviour (treat as changed) rather than throwing.
+  function isBackedUpKey(key){
+    try{ return BACKUP_KEYS.includes(key); }
+    catch(e){ return key !== 'drive-backup-dirty' && key !== 'drive-backup-last-time'; }
+  }
   localStorage.setItem = function(key, value){
-    if (!NON_BACKUP_KEYS.has(key)){
-      driveBackupDirty = true;
-      try{ originalSetItem('drive-backup-dirty', JSON.stringify(true)); }catch(e){}
+    if (isBackedUpKey(key)){
+      let unchanged = false;
+      try{ unchanged = localStorage.getItem(key) === String(value); }catch(e){}
+      if (!unchanged){
+        driveBackupDirty = true;
+        try{ originalSetItem('drive-backup-dirty', JSON.stringify(true)); }catch(e){}
+      }
     }
     return originalSetItem(key, value);
   };
@@ -3461,6 +3467,7 @@ function getGoogleAccessToken(opts){
         // completes late still makes the next attempt instant.
         cachedAccessToken = resp.access_token;
         cachedTokenExpiry = Date.now() + (resp.expires_in ? resp.expires_in * 1000 : 3000000) - 60000;
+        saveGoogleTokenCache();
         finish(cachedAccessToken);
       } else {
         finish(null);
@@ -3468,6 +3475,105 @@ function getGoogleAccessToken(opts){
     };
     client.requestAccessToken({ prompt: '' });
   });
+}
+
+// ---- Google token persistence + quiet refresh (2026-10-02) ----
+// The access token used to live only in memory, so it vanished whenever the
+// PWA reloaded — and the automatic Drive backup (which can't open Google's
+// popup without a tap) then quietly failed until the red banner was tapped.
+// Two changes:
+//  1. The token and its expiry are kept in localStorage ('google-token-cache'),
+//     so a reload inside the hour still has one. Device-only, never backed up
+//     (not in BACKUP_KEYS), cleared when the preferred Google account changes.
+//  2. On app open / return to the foreground, if Drive backup or Calendar is
+//     on and the token is missing or has under GOOGLE_TOKEN_REFRESH_MARGIN_MS
+//     left, ask Google for a fresh one with prompt:'none' — no account picker,
+//     no consent screen. With no tap behind it the browser may refuse to open
+//     Google's sign-in window at all; that's not an error worth showing, but the
+//     outcome is recorded ('google-silent-refresh-log') and shown on Backup &
+//     restore, so it's visible whether this actually works on this device.
+const GOOGLE_TOKEN_REFRESH_MARGIN_MS = 15 * 60 * 1000;
+const GOOGLE_SILENT_REFRESH_MIN_GAP_MS = 5 * 60 * 1000; // don't re-ask Google on every quick foreground flip
+let googleSilentRefreshInFlight = false;
+let lastGoogleSilentRefreshAt = 0;
+
+function saveGoogleTokenCache(){
+  try{
+    if (cachedAccessToken && Date.now() < cachedTokenExpiry){
+      localStorage.setItem('google-token-cache', JSON.stringify({ token: cachedAccessToken, expiry: cachedTokenExpiry }));
+    } else {
+      localStorage.removeItem('google-token-cache');
+    }
+  }catch(e){ /* not critical — the token just won't survive a reload */ }
+}
+function loadGoogleTokenCache(){
+  const c = loadJSON('google-token-cache', null, v => v && typeof v.token === 'string' && typeof v.expiry === 'number');
+  if (c && Date.now() < c.expiry){
+    cachedAccessToken = c.token;
+    cachedTokenExpiry = c.expiry;
+  } else {
+    try{ localStorage.removeItem('google-token-cache'); }catch(e){}
+  }
+}
+function clearGoogleTokenCache(){
+  cachedAccessToken = null;
+  cachedTokenExpiry = 0;
+  try{ localStorage.removeItem('google-token-cache'); }catch(e){}
+}
+function recordSilentRefresh(outcome){
+  try{ localStorage.setItem('google-silent-refresh-log', JSON.stringify({ at: Date.now(), outcome })); }catch(e){}
+}
+
+// Fire-and-forget. Never opens anything that needs a tap: prompt:'none'
+// either hands back a token straight away or fails, and a failure is just
+// recorded. Resolves true when a fresh token was obtained.
+function trySilentGoogleTokenRefresh(){
+  return new Promise((resolve) => {
+    if (!driveBackupEnabled && !gcalEnabled){ resolve(false); return; }
+    if (cachedAccessToken && (cachedTokenExpiry - Date.now()) > GOOGLE_TOKEN_REFRESH_MARGIN_MS){ resolve(false); return; }
+    if (googleSilentRefreshInFlight){ resolve(false); return; }
+    if (Date.now() - lastGoogleSilentRefreshAt < GOOGLE_SILENT_REFRESH_MIN_GAP_MS){ resolve(false); return; }
+    // An interactive request already waiting on the shared client owns its
+    // callback/error handler — don't trample it.
+    if (googleTokenErrorHandler){ resolve(false); return; }
+    const client = ensureGoogleTokenClient();
+    if (!client){ resolve(false); return; } // Google's script not loaded yet — next foreground will try again
+    googleSilentRefreshInFlight = true;
+    lastGoogleSilentRefreshAt = Date.now();
+    let settled = false;
+    let timer = null;
+    const finish = (ok, outcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (googleTokenErrorHandler === myErrorHandler) googleTokenErrorHandler = null; // a tap-driven request may have taken over meanwhile — leave its handler alone
+      googleSilentRefreshInFlight = false;
+      recordSilentRefresh(outcome);
+      resolve(ok);
+    };
+    timer = setTimeout(() => finish(false, 'timed out'), GOOGLE_TOKEN_TIMEOUT_MS);
+    const myErrorHandler = (err) => finish(false, (err && err.type) ? String(err.type) : 'refused');
+    googleTokenErrorHandler = myErrorHandler;
+    client.callback = (resp) => {
+      if (resp && resp.access_token){
+        cachedAccessToken = resp.access_token;
+        cachedTokenExpiry = Date.now() + (resp.expires_in ? resp.expires_in * 1000 : 3000000) - 60000;
+        saveGoogleTokenCache();
+        finish(true, 'ok');
+      } else {
+        finish(false, (resp && resp.error) ? String(resp.error) : 'no token');
+      }
+    };
+    try{ client.requestAccessToken({ prompt: 'none' }); }
+    catch(e){ finish(false, 'error: ' + (e && e.message)); }
+  });
+}
+
+function silentRefreshStatusText(){
+  const log = loadJSON('google-silent-refresh-log', null, v => v && typeof v.at === 'number');
+  if (!log) return 'Quiet sign-in refresh: not tried yet';
+  const when = new Date(log.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return log.outcome === 'ok' ? `Quiet sign-in refresh: worked ${when}` : `Quiet sign-in refresh: failed ${when} (${log.outcome})`;
 }
 
 // Creates or updates the single "Buy train ticket" calendar event for the
@@ -6677,6 +6783,7 @@ function openBackupRestore(){
       </label>
       <div class="sub" style="margin-bottom:10px;">Backs up whenever you leave the app, if something's changed and it's been at least 30 minutes since the last one. Keeps the 2 most recent backups in a "Ticket Tracker Backups" folder. Google's sign-in only lasts about an hour, so if a backup can't run on its own and the last one is over 2 days old, a red banner will ask you to tap to back up.</div>
       <div id="drive-backup-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">Last backup: ${lastBackupLabel}</div>
+      <div style="font-size:12px; color:var(--ink-dim); opacity:0.8; margin:-4px 0 10px;">${escapeHtml(silentRefreshStatusText())}</div>
       <button class="save-btn" id="drive-backup-now-btn" ${driveBackupEnabled ? '' : 'disabled'}>Back up now</button>
 
       <div class="modal-close" id="backup-close-btn" style="margin-top:16px;">Close</div>
@@ -6782,7 +6889,7 @@ function openPreferredGoogleEditor(cameFromSettings){
     preferredGoogleEmail = document.getElementById('preferred-google-input').value.trim();
     await savePreferredGoogleEmail();
     googleTokenClient = null; // force a fresh client next time, so the new hint actually takes effect
-    cachedAccessToken = null; // any cached token was for the old hint context — don't reuse it
+    clearGoogleTokenCache(); // any cached token was for the old hint context — don't reuse it (2026-10-02: now also clears the stored copy)
     document.body.removeChild(overlay);
     if (cameFromSettings) openSettingsMenu(); else render();
   });
@@ -14390,6 +14497,11 @@ function spawnFireworkBurst(container, colors){
   mountCatchupBanner();
   mountBackupNudge();
   setInterval(renderBackupNudge, 5 * 60 * 1000); // stale-ness is time-based, so re-check while the app stays open
+  // 2026-10-02 — reuse a still-valid Google token from before a reload, and
+  // quietly top it up so a backup on leaving the app has one to use.
+  loadGoogleTokenCache();
+  setTimeout(trySilentGoogleTokenRefresh, 1500); // after Google's async script has had a moment to load
+  setInterval(trySilentGoogleTokenRefresh, 5 * 60 * 1000); // only acts within the last 15 min of a token's life
 
   // Pick up anything the watch already resolved via a station-ping
   // (overnight, or on the walk in with the phone away) BEFORE the live
@@ -14427,6 +14539,7 @@ function spawnFireworkBurst(container, colors){
       if (fmtKey(nowDate) !== fmtKey(state.today)) state.today = nowDate;
       railSyncMissingDates();
       renderBackupNudge(); // may have gone stale while backgrounded
+      trySilentGoogleTokenRefresh(); // 2026-10-02 — so the next backup on leaving has a token
       schedulePushWatchConfig(); // 2026-09-18 — foreground counts as "app open" for keeping the rolling non-travel window fresh
       // Same ordering as startup — the watch may have resolved
       // something while the phone was locked/backgrounded.
