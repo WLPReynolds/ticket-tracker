@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Ticket Tracker — Privacy</title>
+<meta name="theme-color" content="#14161f">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+  :root{
+    --board: #14161f;
+    --board-2: #1c1f2c;
+    --ink: #e9e6da;
+    --ink-dim: #9a9db0;
+    --amber: #f2a93b;
+    --line: #33384d;
+  }
+  *{ box-sizing: border-box; }
+  body{
+    margin: 0;
+    background: var(--board);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    line-height: 1.55;
+  }
+  main{
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 28px 16px 48px;
+  }
+  .eyebrow{
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--amber);
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  h1{ font-size: 22px; margin: 0 0 4px; font-weight: 800; }
+  .updated{ color: var(--ink-dim); font-size: 13px; margin-bottom: 22px; }
+  h2{
+    font-size: 15px;
+    color: var(--amber);
+    margin: 24px 0 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  p, li{ font-size: 14.5px; }
+  ul{ padding-left: 20px; margin: 0 0 12px; }
+  li{ margin-bottom: 6px; }
+  a{ color: var(--amber); }
+  .card{
+    background: var(--board-2);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 4px 18px 10px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Season Ticket Tracker</div>
+  <h1>Privacy</h1>
+  <div class="updated">Last updated 4 October 2026</div>
+
+  <div class="card">
+    <h2>Who this is for</h2>
+    <p>Ticket Tracker is a personal app, built and used by one person for their own commute. It isn't offered to the public, and nobody else's data is collected.</p>
+
+    <h2>What Google access is used for</h2>
+    <ul>
+      <li><strong>Google Drive</strong> — to save backup copies of the app's own data into a "Ticket Tracker Backups" folder. The access granted only covers files this app created itself; it can't see anything else in your Drive.</li>
+      <li><strong>Google Calendar</strong> — to keep a single "Buy train ticket" reminder up to date. It doesn't read your other events.</li>
+    </ul>
+
+    <h2>Where data lives</h2>
+    <ul>
+      <li><strong>On your device</strong> — the app's records (travel days, tickets, delay repay claims and settings) are stored in your browser on your phone.</li>
+      <li><strong>In your own Google Drive</strong> — backups, if you turn them on.</li>
+      <li><strong>In your own Cloudflare Worker</strong> — live train lookups, the settings your watch needs, and, if you connect automatic sign-in, the Google sign-in token that keeps backups running without a tap.</li>
+    </ul>
+    <p>Nothing is sold, shared with anyone else, or used for advertising.</p>
+
+    <h2>Removing access</h2>
+    <p>You can remove Ticket Tracker's access to your Google account at any time from <a href="https://myaccount.google.com/permissions" rel="noopener">Google Account → Security → Third-party access</a>, or with <strong>Disconnect automatic sign-in</strong> on the app's Backup &amp; restore screen. Deleting the app's data from your browser removes everything stored on the device.</p>
+  </div>
+
+  <p style="margin-top:22px;"><a href="./">← Back to Ticket Tracker</a></p>
+</main>
+</body>
+</html>

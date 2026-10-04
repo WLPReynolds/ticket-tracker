@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-02.18:09'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-04.19:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -3437,17 +3437,33 @@ const GOOGLE_TOKEN_TIMEOUT_MS = 20 * 1000;
 // click handler) the first time, or the browser may block the consent
 // popup — this is why calendar syncing happens via a tappable prompt
 // rather than automatically in the background.
-// opts.interactive === false: only ever return a cached token — never open
-// Google's popup. Used by the automatic (no-tap) Drive backup, where a popup
-// has no user gesture behind it and iOS just blocks it.
+// opts.interactive === false: never open Google's popup. Used by the
+// automatic (no-tap) Drive backup, where a popup has no user gesture behind
+// it and the browser just blocks it.
+//
+// 2026-10-04 (claude/drive-backup-refresh-token-spec.md): when automatic
+// sign-in is connected (the Worker holds a refresh token), a missing or
+// expired token is fetched from the Worker first — no popup, no tap. Only
+// if that fails does an interactive call fall back to Google's popup. When
+// it ISN'T connected, an interactive call goes straight to the popup, with
+// nothing awaited first, so the tap still counts as the user gesture.
 function getGoogleAccessToken(opts){
   const interactive = !opts || opts.interactive !== false;
+  if (cachedAccessToken && Date.now() < cachedTokenExpiry){
+    return Promise.resolve(cachedAccessToken);
+  }
+  if (googleWorkerState() === 'connected' && pwaWriteSecret){
+    return fetchGoogleTokenFromWorker().then((tok) => {
+      if (tok) return tok;
+      return interactive ? requestGoogleTokenViaPopup() : null;
+    });
+  }
+  if (!interactive) return Promise.resolve(null);
+  return requestGoogleTokenViaPopup();
+}
+
+function requestGoogleTokenViaPopup(){
   return new Promise((resolve) => {
-    if (cachedAccessToken && Date.now() < cachedTokenExpiry){
-      resolve(cachedAccessToken);
-      return;
-    }
-    if (!interactive){ resolve(null); return; }
     const client = ensureGoogleTokenClient();
     if (!client){ resolve(null); return; }
     let settled = false;
@@ -3477,26 +3493,16 @@ function getGoogleAccessToken(opts){
   });
 }
 
-// ---- Google token persistence + quiet refresh (2026-10-02) ----
-// The access token used to live only in memory, so it vanished whenever the
-// PWA reloaded — and the automatic Drive backup (which can't open Google's
-// popup without a tap) then quietly failed until the red banner was tapped.
-// Two changes:
-//  1. The token and its expiry are kept in localStorage ('google-token-cache'),
-//     so a reload inside the hour still has one. Device-only, never backed up
-//     (not in BACKUP_KEYS), cleared when the preferred Google account changes.
-//  2. On app open / return to the foreground, if Drive backup or Calendar is
-//     on and the token is missing or has under GOOGLE_TOKEN_REFRESH_MARGIN_MS
-//     left, ask Google for a fresh one with prompt:'none' — no account picker,
-//     no consent screen. With no tap behind it the browser may refuse to open
-//     Google's sign-in window at all; that's not an error worth showing, but the
-//     outcome is recorded ('google-silent-refresh-log') and shown on Backup &
-//     restore, so it's visible whether this actually works on this device.
-const GOOGLE_TOKEN_REFRESH_MARGIN_MS = 15 * 60 * 1000;
-const GOOGLE_SILENT_REFRESH_MIN_GAP_MS = 5 * 60 * 1000; // don't re-ask Google on every quick foreground flip
-let googleSilentRefreshInFlight = false;
-let lastGoogleSilentRefreshAt = 0;
-
+// ---- Google token persistence (2026-10-02) ----
+// The token and its expiry are kept in localStorage ('google-token-cache'),
+// so a reload inside the hour still has one. Device-only, never backed up
+// (not in BACKUP_KEYS), cleared when the preferred Google account changes.
+//
+// 2026-10-04: the 2026-10-02 quiet refresh (prompt:'none' on app open) is
+// gone. Google's token library always opens a sign-in window, even with
+// prompt:'none'; with no tap behind it the installed PWA lost that window
+// (popup_closed every time) and the sign-in page flashed on every open.
+// Replaced by the Worker-held refresh token below.
 function saveGoogleTokenCache(){
   try{
     if (cachedAccessToken && Date.now() < cachedTokenExpiry){
@@ -3514,66 +3520,184 @@ function loadGoogleTokenCache(){
   } else {
     try{ localStorage.removeItem('google-token-cache'); }catch(e){}
   }
+  try{ localStorage.removeItem('google-silent-refresh-log'); }catch(e){} // 2026-10-04 — the retired quiet refresh's status record
 }
 function clearGoogleTokenCache(){
   cachedAccessToken = null;
   cachedTokenExpiry = 0;
   try{ localStorage.removeItem('google-token-cache'); }catch(e){}
 }
-function recordSilentRefresh(outcome){
-  try{ localStorage.setItem('google-silent-refresh-log', JSON.stringify({ at: Date.now(), outcome })); }catch(e){}
+
+// ---- Automatic sign-in via the Worker (2026-10-04) ----
+// See claude/drive-backup-refresh-token-spec.md. A one-time tap ("Connect
+// automatic backup" on Backup & restore) runs Google's authorisation-code
+// flow; the Worker swaps the code for a long-lived refresh token, keeps it in
+// its KV, and from then on hands this app short-lived access tokens on
+// request (GET /api/google/token, behind X-PWA-Secret). Backups still upload
+// from here exactly as before — only the token comes from the Worker.
+//
+// 'google-worker-status' (device-only, not in BACKUP_KEYS) remembers what the
+// Worker last said: { state: 'connected' | 'needs-reconnect' | 'not-connected', at }.
+// Absent means "never asked" — the next app open asks once and finds out.
+const GOOGLE_WORKER_REFRESH_MARGIN_MS = 15 * 60 * 1000; // top up when the cached token has less than this left
+const GOOGLE_WORKER_MIN_GAP_MS = 60 * 1000;             // don't re-ask on every quick foreground flip
+const GOOGLE_WORKER_TIMEOUT_MS = 10 * 1000;
+const GOOGLE_CONNECT_TIMEOUT_MS = 3 * 60 * 1000;        // the consent popup can take a while to click through
+let googleWorkerFetchPromise = null;
+let lastGoogleWorkerFetchAt = 0;
+
+function googleWorkerState(){
+  const s = loadJSON('google-worker-status', null, v => v && typeof v.state === 'string');
+  return s ? s.state : null;
+}
+function setGoogleWorkerState(state){
+  try{ localStorage.setItem('google-worker-status', JSON.stringify({ state, at: Date.now() })); }catch(e){}
 }
 
-// Fire-and-forget. Never opens anything that needs a tap: prompt:'none'
-// either hands back a token straight away or fails, and a failure is just
-// recorded. Resolves true when a fresh token was obtained.
-function trySilentGoogleTokenRefresh(){
-  return new Promise((resolve) => {
-    if (!driveBackupEnabled && !gcalEnabled){ resolve(false); return; }
-    if (cachedAccessToken && (cachedTokenExpiry - Date.now()) > GOOGLE_TOKEN_REFRESH_MARGIN_MS){ resolve(false); return; }
-    if (googleSilentRefreshInFlight){ resolve(false); return; }
-    if (Date.now() - lastGoogleSilentRefreshAt < GOOGLE_SILENT_REFRESH_MIN_GAP_MS){ resolve(false); return; }
-    // An interactive request already waiting on the shared client owns its
-    // callback/error handler — don't trample it.
-    if (googleTokenErrorHandler){ resolve(false); return; }
-    const client = ensureGoogleTokenClient();
-    if (!client){ resolve(false); return; } // Google's script not loaded yet — next foreground will try again
-    googleSilentRefreshInFlight = true;
-    lastGoogleSilentRefreshAt = Date.now();
-    let settled = false;
-    let timer = null;
-    const finish = (ok, outcome) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (googleTokenErrorHandler === myErrorHandler) googleTokenErrorHandler = null; // a tap-driven request may have taken over meanwhile — leave its handler alone
-      googleSilentRefreshInFlight = false;
-      recordSilentRefresh(outcome);
-      resolve(ok);
-    };
-    timer = setTimeout(() => finish(false, 'timed out'), GOOGLE_TOKEN_TIMEOUT_MS);
-    const myErrorHandler = (err) => finish(false, (err && err.type) ? String(err.type) : 'refused');
-    googleTokenErrorHandler = myErrorHandler;
-    client.callback = (resp) => {
-      if (resp && resp.access_token){
-        cachedAccessToken = resp.access_token;
-        cachedTokenExpiry = Date.now() + (resp.expires_in ? resp.expires_in * 1000 : 3000000) - 60000;
-        saveGoogleTokenCache();
-        finish(true, 'ok');
-      } else {
-        finish(false, (resp && resp.error) ? String(resp.error) : 'no token');
+function fetchWithTimeout(url, options, ms){
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+}
+
+function acceptWorkerGoogleToken(data){
+  if (!data || typeof data.accessToken !== 'string' || typeof data.expiresAt !== 'number') return null;
+  cachedAccessToken = data.accessToken;
+  cachedTokenExpiry = data.expiresAt - 60000;
+  saveGoogleTokenCache();
+  return cachedAccessToken;
+}
+
+// Never opens anything and never throws. Resolves to a token or null, and
+// records what the Worker said. Concurrent callers share one request.
+function fetchGoogleTokenFromWorker(){
+  if (!pwaWriteSecret) return Promise.resolve(null);
+  if (googleWorkerFetchPromise) return googleWorkerFetchPromise;
+  lastGoogleWorkerFetchAt = Date.now();
+  googleWorkerFetchPromise = (async () => {
+    try{
+      const resp = await fetchWithTimeout(`${DARWIN_WORKER_URL}/api/google/token`, { headers: { 'X-PWA-Secret': pwaWriteSecret } }, GOOGLE_WORKER_TIMEOUT_MS);
+      if (resp.status === 404){ setGoogleWorkerState('not-connected'); return null; }
+      if (resp.status === 409){
+        setGoogleWorkerState('needs-reconnect');
+        try{ renderBackupNudge(); }catch(e){}
+        return null;
       }
+      if (!resp.ok) return null; // 401 (write secret), 5xx, rate limit — state left as it was
+      const tok = acceptWorkerGoogleToken(await resp.json().catch(() => null));
+      if (tok) setGoogleWorkerState('connected');
+      return tok;
+    }catch(e){
+      return null; // offline or timed out
+    }finally{
+      googleWorkerFetchPromise = null;
+    }
+  })();
+  return googleWorkerFetchPromise;
+}
+
+// On app open / return to the foreground: make sure a token is already
+// cached before the app is next backgrounded, so the backup on leaving
+// doesn't depend on a network round trip while the page is being frozen.
+function maybeRefreshGoogleTokenFromWorker(){
+  if (!driveBackupEnabled && !gcalEnabled) return;
+  if (!pwaWriteSecret) return;
+  const state = googleWorkerState();
+  if (state === 'not-connected' || state === 'needs-reconnect') return; // only a tap (Connect / Reconnect) changes these
+  if (cachedAccessToken && (cachedTokenExpiry - Date.now()) > GOOGLE_WORKER_REFRESH_MARGIN_MS) return;
+  if (Date.now() - lastGoogleWorkerFetchAt < GOOGLE_WORKER_MIN_GAP_MS) return;
+  fetchGoogleTokenFromWorker();
+}
+
+// Must be called straight from a tap handler, with nothing awaited first —
+// requestCode() opens Google's popup, which needs the tap behind it.
+// Resolves { ok: true } or { ok: false, message }.
+function connectGoogleViaWorker(){
+  return new Promise((resolve) => {
+    if (!pwaWriteSecret){
+      resolve({ ok: false, message: 'Set the write secret in Settings (key icon) first — the Worker needs it to keep your sign-in.' });
+      return;
+    }
+    if (!(window.google && google.accounts && google.accounts.oauth2 && google.accounts.oauth2.initCodeClient)){
+      resolve({ ok: false, message: "Google's sign-in hasn't loaded yet — try again in a moment." });
+      return;
+    }
+    let settled = false;
+    const finish = (r) => { if (!settled){ settled = true; clearTimeout(timer); resolve(r); } };
+    const timer = setTimeout(() => finish({ ok: false, message: "Google sign-in didn't complete." }), GOOGLE_CONNECT_TIMEOUT_MS);
+    const config = {
+      client_id: GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.file',
+      ux_mode: 'popup',
+      callback: async (resp) => {
+        if (!resp || !resp.code){
+          finish({ ok: false, message: `Google sign-in didn't complete${resp && resp.error ? ` (${resp.error})` : ''}.` });
+          return;
+        }
+        try{
+          const r = await fetchWithTimeout(`${DARWIN_WORKER_URL}/api/google/connect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-PWA-Secret': pwaWriteSecret },
+            body: JSON.stringify({ code: resp.code })
+          }, GOOGLE_WORKER_TIMEOUT_MS * 2);
+          const data = await r.json().catch(() => null);
+          if (r.status === 401){ finish({ ok: false, message: 'The Worker refused the write secret — check it in Settings (key icon).' }); return; }
+          if (!r.ok){
+            const reason = data && data.reason;
+            if (reason === 'no-refresh-token'){
+              finish({ ok: false, message: 'Google didn\'t hand over a long-lived sign-in. Remove "Ticket Tracker" at myaccount.google.com/permissions, then tap Connect again.' });
+            } else if (reason === 'no-client-secret'){
+              finish({ ok: false, message: 'The Worker is missing GOOGLE_CLIENT_SECRET — add it in the Cloudflare dashboard.' });
+            } else {
+              finish({ ok: false, message: `Couldn't connect (${reason || `HTTP ${r.status}`}).` });
+            }
+            return;
+          }
+          acceptWorkerGoogleToken(data);
+          setGoogleWorkerState('connected');
+          const granted = String((data && data.scope) || '');
+          if (granted && !granted.includes('drive.file')){
+            finish({ ok: true, message: 'Connected, but Drive access wasn\'t ticked — backups won\'t work until you Reconnect and allow it.' });
+            return;
+          }
+          finish({ ok: true });
+        }catch(e){
+          finish({ ok: false, message: "Couldn't reach the Worker — check your connection and try again." });
+        }
+      },
+      error_callback: (err) => finish({ ok: false, message: `Google sign-in didn't complete${err && err.type ? ` (${err.type})` : ''}.` })
     };
-    try{ client.requestAccessToken({ prompt: 'none' }); }
-    catch(e){ finish(false, 'error: ' + (e && e.message)); }
+    if (preferredGoogleEmail) config.login_hint = preferredGoogleEmail;
+    try{
+      google.accounts.oauth2.initCodeClient(config).requestCode();
+    }catch(e){
+      finish({ ok: false, message: `Google sign-in couldn't start (${e && e.message}).` });
+    }
   });
 }
 
-function silentRefreshStatusText(){
-  const log = loadJSON('google-silent-refresh-log', null, v => v && typeof v.at === 'number');
-  if (!log) return 'Quiet sign-in refresh: not tried yet';
-  const when = new Date(log.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-  return log.outcome === 'ok' ? `Quiet sign-in refresh: worked ${when}` : `Quiet sign-in refresh: failed ${when} (${log.outcome})`;
+async function disconnectGoogleViaWorker(){
+  try{
+    const r = await fetchWithTimeout(`${DARWIN_WORKER_URL}/api/google/disconnect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-PWA-Secret': pwaWriteSecret || '' },
+      body: '{}'
+    }, GOOGLE_WORKER_TIMEOUT_MS);
+    if (!r.ok) return { ok: false, message: r.status === 401 ? 'The Worker refused the write secret.' : `Couldn't disconnect (HTTP ${r.status}).` };
+  }catch(e){
+    return { ok: false, message: "Couldn't reach the Worker." };
+  }
+  setGoogleWorkerState('not-connected');
+  clearGoogleTokenCache(); // revoked at Google, so the cached copy is dead too
+  return { ok: true };
+}
+
+function googleWorkerStatusText(){
+  const state = googleWorkerState();
+  if (state === 'connected') return 'Automatic sign-in: connected';
+  if (state === 'needs-reconnect') return 'Automatic sign-in: needs reconnecting';
+  if (!pwaWriteSecret) return 'Automatic sign-in: not connected (set the write secret in Settings first)';
+  return 'Automatic sign-in: not connected';
 }
 
 // Creates or updates the single "Buy train ticket" calendar event for the
@@ -3720,7 +3844,7 @@ function driveBackupReasonText(reason){
 // and that backup is 2+ days old. Automatic backups can't refresh Google's
 // ~1-hour sign-in without a tap, so this is the prompt to give it one.
 // Tapping the text is a genuine user gesture, so consent can go through.
-const DRIVE_BACKUP_STALE_MS = 2 * 24 * 60 * 60 * 1000;
+const DRIVE_BACKUP_STALE_MS = 24 * 60 * 60 * 1000; // 2026-10-04: was 2 days — tightened now that automatic sign-in should keep backups running
 const BACKUP_NUDGE_SNOOZE_MS = 4 * 60 * 60 * 1000;
 let backupNudgeSnoozedUntil = 0; // in-memory only — an accidental dismiss can't hide it for long
 let backupNudgeBusy = false;
@@ -3756,9 +3880,26 @@ function mountBackupNudge(){
 // (nothing awaited first) so Google's popup still counts as user-initiated.
 async function runBackupNudge(){
   if (backupNudgeBusy) return;
-  backupNudgeBusy = true;
-  backupNudgeError = null;
-  renderBackupNudge();
+  // 2026-10-04: the Worker has lost its refresh token (revoked or expired) —
+  // reconnect first. connectGoogleViaWorker() opens its popup synchronously,
+  // so it must be the first thing this tap does.
+  if (googleWorkerState() === 'needs-reconnect'){
+    const connectPromise = connectGoogleViaWorker();
+    backupNudgeBusy = true;
+    backupNudgeError = null;
+    renderBackupNudge();
+    const c = await connectPromise;
+    if (!c.ok){
+      backupNudgeBusy = false;
+      backupNudgeError = c.message.replace(/\.$/, '');
+      renderBackupNudge();
+      return;
+    }
+  } else {
+    backupNudgeBusy = true;
+    backupNudgeError = null;
+    renderBackupNudge();
+  }
   const result = await attemptDriveBackup(true);
   backupNudgeBusy = false;
   backupNudgeError = result.ok ? null : driveBackupReasonText(result.reason);
@@ -3779,6 +3920,8 @@ function renderBackupNudge(){
     textEl.textContent = 'Backing up to Drive…';
   } else if (backupNudgeError){
     textEl.textContent = `${backupNudgeError} — tap to retry`;
+  } else if (googleWorkerState() === 'needs-reconnect'){
+    textEl.textContent = 'Automatic backup needs reconnecting to Google — tap to reconnect';
   } else if (lastDriveBackupTime){
     const days = Math.floor((Date.now() - lastDriveBackupTime) / 86400000);
     textEl.textContent = `Drive backup is ${days} day${days === 1 ? '' : 's'} out of date — tap to back up now`;
@@ -5629,8 +5772,9 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 ### Google Drive Backups
 1. Open **More → Backup & restore** and turn on automatic Google Drive backup.
 2. When you leave or close the app, it backs up if anything has changed and at least 30 minutes have passed since the last backup. Files go to a \`Ticket Tracker Backups\` folder, keeping the {{BACKUP_KEEP}} most recent.
-3. Google's sign-in lasts about an hour and can't renew without a tap. If the last backup is over 2 days old and something has changed, a red banner appears — tap it to back up.
-4. You can also export or restore a \`.json\` backup manually at any time.
+3. Google's sign-in only lasts about an hour. Tap **Connect automatic sign-in** on Backup & restore once, and your own Worker keeps it renewed from then on, so backups (and Calendar updates) run without a tap. Google may show a "hasn't verified this app" screen the first time — tap **Advanced**, then **Go to Ticket Tracker**.
+4. If a backup still can't run — say the connection was removed — and the last backup is over a day old with something changed, a red banner appears. Tap it to back up (or to reconnect, if that's what's needed).
+5. You can also export or restore a \`.json\` backup manually at any time.
 
 ---
 
@@ -6781,10 +6925,15 @@ function openBackupRestore(){
         <input type="checkbox" id="drive-backup-toggle" ${driveBackupEnabled ? 'checked' : ''} style="width:16px; height:16px;" />
         Automatically back up to Google Drive
       </label>
-      <div class="sub" style="margin-bottom:10px;">Backs up whenever you leave the app, if something's changed and it's been at least 30 minutes since the last one. Keeps the 2 most recent backups in a "Ticket Tracker Backups" folder. Google's sign-in only lasts about an hour, so if a backup can't run on its own and the last one is over 2 days old, a red banner will ask you to tap to back up.</div>
+      <div class="sub" style="margin-bottom:10px;">Backs up whenever you leave the app, if something's changed and it's been at least 30 minutes since the last one. Keeps the 2 most recent backups in a "Ticket Tracker Backups" folder. Connect automatic sign-in once and backups run on their own from then on. If a backup still can't run and the last one is over a day old, a red banner will ask you to tap to back up.</div>
       <div id="drive-backup-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">Last backup: ${lastBackupLabel}</div>
-      <div style="font-size:12px; color:var(--ink-dim); opacity:0.8; margin:-4px 0 10px;">${escapeHtml(silentRefreshStatusText())}</div>
       <button class="save-btn" id="drive-backup-now-btn" ${driveBackupEnabled ? '' : 'disabled'}>Back up now</button>
+
+      <div class="rail-col-header">Automatic sign-in</div>
+      <div class="sub" style="margin-bottom:10px;">Google's sign-in only lasts about an hour. Connect once and your own Worker keeps it renewed, so backups (and Calendar updates) don't need a tap. You may see a "Google hasn't verified this app" screen — tap Advanced, then Go to Ticket Tracker.</div>
+      <div id="google-worker-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">${escapeHtml(googleWorkerStatusText())}</div>
+      <button class="save-btn" id="google-connect-btn">${googleWorkerState() === 'connected' ? 'Reconnect automatic sign-in' : googleWorkerState() === 'needs-reconnect' ? 'Reconnect automatic sign-in' : 'Connect automatic sign-in'}</button>
+      <div class="settings-link" id="google-disconnect-link" style="margin-top:10px; ${googleWorkerState() === 'connected' ? '' : 'display:none;'}">Disconnect automatic sign-in</div>
 
       <div class="modal-close" id="backup-close-btn" style="margin-top:16px;">Close</div>
     </div>
@@ -6821,6 +6970,32 @@ function openBackupRestore(){
       driveNowBtn.disabled = true;
       driveStatus.textContent = 'Automatic backup turned off.';
     }
+  });
+
+  const googleStatusEl = document.getElementById('google-worker-status');
+  const googleConnectBtn = document.getElementById('google-connect-btn');
+  const googleDisconnectLink = document.getElementById('google-disconnect-link');
+  const refreshGoogleWorkerUi = () => {
+    const state = googleWorkerState();
+    googleConnectBtn.textContent = (state === 'connected' || state === 'needs-reconnect') ? 'Reconnect automatic sign-in' : 'Connect automatic sign-in';
+    googleDisconnectLink.style.display = state === 'connected' ? '' : 'none';
+  };
+  googleConnectBtn.addEventListener('click', async () => {
+    const connectPromise = connectGoogleViaWorker(); // first — opens Google's popup off this tap
+    googleConnectBtn.disabled = true;
+    googleStatusEl.textContent = 'Connecting…';
+    const r = await connectPromise;
+    googleConnectBtn.disabled = false;
+    googleStatusEl.textContent = r.message || googleWorkerStatusText();
+    refreshGoogleWorkerUi();
+    renderBackupNudge();
+  });
+  googleDisconnectLink.addEventListener('click', async () => {
+    if (!confirm('Disconnect automatic sign-in? Backups will need a tap again until you reconnect.')) return;
+    googleStatusEl.textContent = 'Disconnecting…';
+    const r = await disconnectGoogleViaWorker();
+    googleStatusEl.textContent = r.ok ? googleWorkerStatusText() : r.message;
+    refreshGoogleWorkerUi();
   });
 
   driveNowBtn.addEventListener('click', async () => {
@@ -6886,8 +7061,14 @@ function openPreferredGoogleEditor(cameFromSettings){
   `;
   document.body.appendChild(overlay);
   document.getElementById('preferred-google-save').addEventListener('click', async () => {
+    const previousGoogleEmail = preferredGoogleEmail;
     preferredGoogleEmail = document.getElementById('preferred-google-input').value.trim();
     await savePreferredGoogleEmail();
+    // 2026-10-04: changing this doesn't disconnect automatic sign-in (Wayne's
+    // call) — just say which account it's still tied to.
+    if (preferredGoogleEmail !== previousGoogleEmail && googleWorkerState() === 'connected'){
+      alert('Automatic backup and Calendar are still connected to the Google account you connected before. To switch, use Reconnect automatic sign-in on Backup & restore.');
+    }
     googleTokenClient = null; // force a fresh client next time, so the new hint actually takes effect
     clearGoogleTokenCache(); // any cached token was for the old hint context — don't reuse it (2026-10-02: now also clears the stored copy)
     document.body.removeChild(overlay);
@@ -14497,11 +14678,13 @@ function spawnFireworkBurst(container, colors){
   mountCatchupBanner();
   mountBackupNudge();
   setInterval(renderBackupNudge, 5 * 60 * 1000); // stale-ness is time-based, so re-check while the app stays open
-  // 2026-10-02 — reuse a still-valid Google token from before a reload, and
-  // quietly top it up so a backup on leaving the app has one to use.
+  // 2026-10-02 — reuse a still-valid Google token from before a reload.
+  // 2026-10-04 — topped up from the Worker (automatic sign-in) rather than
+  // the retired prompt:'none' quiet refresh, so a backup on leaving the app
+  // has a token to use without any popup.
   loadGoogleTokenCache();
-  setTimeout(trySilentGoogleTokenRefresh, 1500); // after Google's async script has had a moment to load
-  setInterval(trySilentGoogleTokenRefresh, 5 * 60 * 1000); // only acts within the last 15 min of a token's life
+  maybeRefreshGoogleTokenFromWorker();
+  setInterval(maybeRefreshGoogleTokenFromWorker, 5 * 60 * 1000); // only acts within the last 15 min of a token's life
 
   // Pick up anything the watch already resolved via a station-ping
   // (overnight, or on the walk in with the phone away) BEFORE the live
@@ -14539,7 +14722,7 @@ function spawnFireworkBurst(container, colors){
       if (fmtKey(nowDate) !== fmtKey(state.today)) state.today = nowDate;
       railSyncMissingDates();
       renderBackupNudge(); // may have gone stale while backgrounded
-      trySilentGoogleTokenRefresh(); // 2026-10-02 — so the next backup on leaving has a token
+      maybeRefreshGoogleTokenFromWorker(); // 2026-10-04 — so the next backup on leaving has a token (replaces the 2026-10-02 quiet refresh)
       schedulePushWatchConfig(); // 2026-09-18 — foreground counts as "app open" for keeping the rolling non-travel window fresh
       // Same ordering as startup — the watch may have resolved
       // something while the phone was locked/backgrounded.
