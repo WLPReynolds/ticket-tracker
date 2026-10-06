@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-04.19:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-06.19:43'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2358,6 +2358,7 @@ async function loadData(){
   homeStation = loadJSON('home-station', { code: 'CRE', name: 'Crewe' });
   workStation = loadJSON('work-station', { code: 'WGN', name: 'Wigan North Western' });
   driveBackupEnabled = loadJSON('drive-backup-enabled', false);
+  transportShareEnabled = loadJSON('transport-estimates-enabled', false); // 2026-10-06 — Share estimates with Personal Finance
   driveBackupDirty = loadJSON('drive-backup-dirty', false);
   lastDriveBackupTime = loadJSON('drive-backup-last-time', 0);
   driveBackupFolderId = loadJSON('drive-backup-folder-id', null);
@@ -3316,6 +3317,74 @@ function getPayPeriodByOffset(baseDate, offset){
   return { start: currentPayDate, end: addDays(nextPayDate, -1) };
 }
 
+// 2026-10-06 (transport-estimates-spec.md + tracker addendum) — the "Set
+// aside on payday" figure for the pay period `offset` periods from the one
+// containing `today`, used by both the Home card and the Personal Finance
+// publisher. Moved here unchanged from render(), lock rule included: a
+// period is locked into paydayEstimateSnapshots the first time it's worked
+// out on or after its own start date (its payday) — whichever caller gets
+// there first. Future periods are never locked. `today` must be the same
+// local-midnight date render() uses (from state.today).
+//
+// `states` is optional: a computeStates() map reaching at least this
+// period's end. The publisher passes one map for all 13 periods instead of
+// rebuilding it each time; buy flags for a window don't depend on how far
+// past it the map reaches.
+//
+// Returns { start, end, ticketCount, ticketCost, parkingDays, parkingCost,
+// total, locked } — costs in pounds, exactly as the card has always shown.
+function estimateForPeriod(today, offset, states){
+  const period = getPayPeriodByOffset(today, offset);
+  const startKey = fmtKey(period.start);
+  const snap = paydayEstimateSnapshots[startKey];
+  if (snap){
+    // Already locked in for this period — use exactly what was budgeted
+    // on payday, not a fresh recalculation. A ticket purchase logged
+    // partway through the period, or a day re-tagged since, would
+    // otherwise change a projected figure into a different number — the
+    // whole point of a payday budget is that it doesn't retroactively
+    // move once the money's already been set aside.
+    return {
+      start: period.start, end: period.end,
+      ticketCount: snap.ticketCount, ticketCost: snap.ticketCost,
+      parkingDays: snap.parkingDays, parkingCost: snap.parkingCost,
+      total: snap.total, locked: true
+    };
+  }
+  const dayStates = states || computeStates(period.end);
+  let ticketCount = 0;
+  let parkingDays = 0;
+  for (let d = new Date(period.start); d <= period.end; d = addDays(d, 1)){
+    const key = fmtKey(d);
+    if (dayStates[key] && dayStates[key].buyFlag) ticketCount++;
+    const weekend = isWeekend(d);
+    const comment = (comments[key] || '').trim();
+    const isTravel = comment === '' || travelOverrides[key];
+    if (!weekend && isTravel) parkingDays++;
+  }
+  const ticketCost = ticketCount * lastKnownPrice;
+  const parkingCostTotal = parkingDays * parkingCost;
+  const total = ticketCost + parkingCostTotal;
+
+  // Locked the moment this period's own start date has genuinely been
+  // reached — not before. A future period hasn't had its own payday yet,
+  // so it stays a live, evolving projection until it actually arrives.
+  let locked = false;
+  if (fmtKey(today) >= startKey){
+    paydayEstimateSnapshots[startKey] = {
+      ticketCount, parkingDays,
+      ticketCost, parkingCost: parkingCostTotal, total
+    };
+    savePaydayEstimateSnapshots();
+    locked = true;
+  }
+  return {
+    start: period.start, end: period.end,
+    ticketCount, ticketCost, parkingDays, parkingCost: parkingCostTotal,
+    total, locked
+  };
+}
+
 // Generic "money saved versus a per-day budgeted expense, for days that
 // have already happened" — built once, parameterized by which tracked
 // days map and default cost to use, rather than written specifically
@@ -3600,7 +3669,8 @@ function fetchGoogleTokenFromWorker(){
 // cached before the app is next backgrounded, so the backup on leaving
 // doesn't depend on a network round trip while the page is being frozen.
 function maybeRefreshGoogleTokenFromWorker(){
-  if (!driveBackupEnabled && !gcalEnabled) return;
+  // 2026-10-06: also when sharing with Personal Finance, which works with Drive backups off (addendum 2b).
+  if (!driveBackupEnabled && !gcalEnabled && !transportShareEnabled) return;
   if (!pwaWriteSecret) return;
   const state = googleWorkerState();
   if (state === 'not-connected' || state === 'needs-reconnect') return; // only a tap (Connect / Reconnect) changes these
@@ -3836,6 +3906,221 @@ function driveBackupReasonText(reason){
   if (reason === 'needs-reconnect') return "Google sign-in didn't complete";
   if (reason === 'already-in-progress') return 'A backup is already running';
   return reason;
+}
+
+// ---- Share estimates with Personal Finance (2026-10-06) ----
+// See transport-estimates-spec.md and claude/transport-estimates-tracker-addendum.md.
+// Publishes the "Set aside on payday" figures for the current pay period and
+// the next 12 as one small file, transport-estimates.json, in the "Ticket
+// Tracker Backups" Drive folder. Personal Finance reads it; this file is the
+// only contract between the two apps.
+//
+// - Works with Drive backups off (its own setting, transportShareEnabled).
+// - Uploads only when `assumptions` or `periods` change (addendum 2c), so
+//   generatedAt/modifiedTime mean "figures last changed".
+// - Automatic attempts (app open, return to foreground, leaving the app) are
+//   non-interactive: a cached token or one from the Worker, never a popup
+//   (addendum 2a). Only the Share now tap / switching the setting on may open
+//   Google's popup. A failed attempt leaves the last published content as it
+//   was, so the next attempt simply tries again.
+//
+// localStorage:
+//   'transport-estimates-enabled'      the setting — in BACKUP_KEYS
+//   'transport-estimates-published'    JSON of { assumptions, periods } last uploaded — device-only
+//   'transport-estimates-file-id'      Drive file id — device-only, re-found by name if lost
+//   'transport-estimates-last-shared'  epoch ms of the last successful upload — device-only
+//   'transport-estimates-last-error'   reason text of the last failed attempt, or absent — device-only
+// None of the device-only keys are in BACKUP_KEYS, so publishing never marks
+// a Drive backup as needed (spec tracker point 6).
+const TRANSPORT_ESTIMATES_FILE_NAME = 'transport-estimates.json';
+const TRANSPORT_ESTIMATES_PERIODS = 13; // offset 0 (current) + 12 ahead
+const TRANSPORT_ESTIMATES_DEBOUNCE_MS = 3000;
+const TRANSPORT_ESTIMATES_INFLIGHT_STALE_MS = 90 * 1000;
+let transportShareEnabled = false;
+let transportPublishInFlight = false;
+let transportPublishStartedAt = 0;
+let transportPublishTimer = null;
+
+async function saveTransportShareEnabled(){
+  try{ localStorage.setItem('transport-estimates-enabled', JSON.stringify(transportShareEnabled)); }
+  catch(e){ /* save failed silently; will retry next change */ }
+}
+
+// The same local-midnight "today" render() uses, so the card and the file
+// agree about which period is current and whether it's locked (addendum 2e).
+function transportEstimatesToday(){
+  return new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+}
+
+// { assumptions, periods } — the part of the file that's compared to decide
+// whether to upload. Pence are integers: locked periods convert the stored
+// snapshot figures; projected periods multiply the integer price/day cost by
+// the count (addendum 2f). totalPence is always the sum of the two parts.
+function buildTransportEstimatesBody(today){
+  const ticketPricePence = Math.round(lastKnownPrice * 100);
+  const parkingDayPence = Math.round(parkingCost * 100);
+  const lastEnd = getPayPeriodByOffset(today, TRANSPORT_ESTIMATES_PERIODS - 1).end;
+  const states = computeStates(lastEnd);
+  const periods = [];
+  for (let offset = 0; offset < TRANSPORT_ESTIMATES_PERIODS; offset++){
+    const e = estimateForPeriod(today, offset, states);
+    const ticketPence = e.locked ? Math.round(e.ticketCost * 100) : ticketPricePence * e.ticketCount;
+    const parkingPence = e.locked ? Math.round(e.parkingCost * 100) : parkingDayPence * e.parkingDays;
+    const startKey = fmtKey(e.start);
+    periods.push({
+      paydayMonth: startKey.slice(0, 7),
+      start: startKey,
+      end: fmtKey(e.end),
+      status: e.locked ? 'locked' : 'projected',
+      ticketCount: e.ticketCount,
+      ticketPence,
+      parkingDays: e.parkingDays,
+      parkingPence,
+      totalPence: ticketPence + parkingPence,
+    });
+  }
+  return { assumptions: { ticketPricePence, parkingDayPence }, periods };
+}
+
+function buildTransportEstimatesFile(body){
+  return {
+    format: 'transport-estimates',
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    source: { app: 'ticket-tracker', appVersion: APP_VERSION },
+    assumptions: body.assumptions,
+    periods: body.periods,
+  };
+}
+
+// Finds the file to update: the cached id if it still exists, otherwise the
+// oldest file with this name (the same rule Personal Finance uses), otherwise
+// null. Searched by name across Drive, not just the folder, so both apps
+// always settle on the same file.
+async function findTransportEstimatesFileId(token){
+  const headers = { 'Authorization': `Bearer ${token}` };
+  const cached = loadJSON('transport-estimates-file-id', null, v => typeof v === 'string' && v.length > 0);
+  if (cached){
+    try{
+      const check = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(cached)}?fields=id,trashed`, { headers });
+      if (check.ok){
+        const data = await check.json();
+        if (!data.trashed) return cached;
+      }
+    }catch(e){ /* fall through to search */ }
+  }
+  const query = encodeURIComponent(`name='${TRANSPORT_ESTIMATES_FILE_NAME}' and trashed=false`);
+  const resp = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&orderBy=createdTime&fields=files(id,createdTime)`, { headers });
+  if (!resp.ok) throw new Error(`Drive search failed: ${resp.status}`);
+  const data = await resp.json();
+  const files = (data.files || []).slice().sort((a, b) => String(a.createdTime).localeCompare(String(b.createdTime)));
+  const id = files.length ? files[0].id : null;
+  try{
+    if (id) localStorage.setItem('transport-estimates-file-id', JSON.stringify(id));
+    else localStorage.removeItem('transport-estimates-file-id');
+  }catch(e){}
+  return id;
+}
+
+// Overwrites the file in place, or creates it in the backup folder if there
+// isn't one yet. One file, never a new one per publish.
+async function uploadTransportEstimates(token, fileJson){
+  const headers = { 'Authorization': `Bearer ${token}` };
+  const content = JSON.stringify(fileJson, null, 2);
+  const existingId = await findTransportEstimatesFileId(token);
+  if (existingId){
+    const resp = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(existingId)}?uploadType=media&fields=id`, {
+      method: 'PATCH',
+      headers: { ...headers, 'Content-Type': 'application/json; charset=UTF-8' },
+      body: content
+    });
+    if (resp.ok) return;
+    if (resp.status !== 404) throw new Error(`Drive update failed: ${resp.status}`);
+    try{ localStorage.removeItem('transport-estimates-file-id'); }catch(e){} // gone since we checked — create below
+  }
+  const folderId = await ensureDriveBackupFolder(token);
+  const boundary = 'ticketpwa-estimates-boundary';
+  const metadata = { name: TRANSPORT_ESTIMATES_FILE_NAME, parents: [folderId], mimeType: 'application/json' };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n` +
+    `--${boundary}--`;
+  const resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body
+  });
+  if (!resp.ok) throw new Error(`Drive create failed: ${resp.status}`);
+  const data = await resp.json();
+  try{ localStorage.setItem('transport-estimates-file-id', JSON.stringify(data.id)); }catch(e){}
+}
+
+// opts.interactive — a tap is behind this call, so Google's popup may open.
+//   Must then be called straight from the tap handler with nothing awaited
+//   first; everything before getGoogleAccessToken below is synchronous.
+// opts.force — upload even if nothing has changed (Share now).
+// Resolves { ok, unchanged?, reason? }. Never throws.
+async function attemptTransportPublish(opts){
+  const interactive = !!(opts && opts.interactive);
+  const force = !!(opts && opts.force);
+  if (!transportShareEnabled) return { ok: false, reason: 'not-enabled' };
+  if (transportPublishInFlight && Date.now() - transportPublishStartedAt < TRANSPORT_ESTIMATES_INFLIGHT_STALE_MS){
+    return { ok: false, reason: 'already-in-progress' };
+  }
+  let body, compareText;
+  try{
+    body = buildTransportEstimatesBody(transportEstimatesToday());
+    compareText = JSON.stringify(body);
+  }catch(e){
+    return { ok: false, reason: `couldn't work out the figures (${e.message})` };
+  }
+  if (!force && compareText === localStorage.getItem('transport-estimates-published')){
+    // What's on Drive is already current — any earlier failure no longer matters.
+    try{ localStorage.removeItem('transport-estimates-last-error'); }catch(e){}
+    return { ok: true, unchanged: true };
+  }
+  transportPublishInFlight = true;
+  transportPublishStartedAt = Date.now();
+  try{
+    const token = await getGoogleAccessToken({ interactive });
+    if (!token) throw new Error("Google sign-in didn't complete");
+    await uploadTransportEstimates(token, buildTransportEstimatesFile(body));
+    try{
+      localStorage.setItem('transport-estimates-published', compareText);
+      localStorage.setItem('transport-estimates-last-shared', JSON.stringify(Date.now()));
+      localStorage.removeItem('transport-estimates-last-error');
+    }catch(e){}
+    return { ok: true };
+  }catch(e){
+    const reason = (e && e.message) || 'unknown error';
+    try{ localStorage.setItem('transport-estimates-last-error', JSON.stringify(reason)); }catch(err){}
+    return { ok: false, reason };
+  }finally{
+    transportPublishInFlight = false;
+  }
+}
+
+// Debounced automatic attempt — app open (after the bank-holiday sync) and
+// return to the foreground. Cheap when nothing has changed: no network call.
+function scheduleTransportPublish(){
+  if (!transportShareEnabled) return;
+  if (transportPublishTimer) clearTimeout(transportPublishTimer);
+  transportPublishTimer = setTimeout(() => { transportPublishTimer = null; attemptTransportPublish(); }, TRANSPORT_ESTIMATES_DEBOUNCE_MS);
+}
+// Leaving the app: a pending debounce may never fire once the page is frozen.
+function flushTransportPublish(){
+  if (transportPublishTimer){ clearTimeout(transportPublishTimer); transportPublishTimer = null; }
+  attemptTransportPublish();
+}
+
+function transportShareStatusText(){
+  if (!transportShareEnabled) return 'Not sharing.';
+  const last = loadJSON('transport-estimates-last-shared', 0);
+  const err = loadJSON('transport-estimates-last-error', null, v => typeof v === 'string');
+  const lastText = last
+    ? `Last shared: ${new Date(last).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+    : 'Not shared yet';
+  return err ? `${lastText} · last attempt failed: ${err}` : lastText;
 }
 
 // ---- Stale Drive backup nudge ----
@@ -4754,55 +5039,18 @@ function render(){
   // (most recent payday up to, but not including, the next one); the
   // card's own nav arrows let you preview future periods without
   // affecting the automatic dismiss/reset behaviour of the current one.
-  const estPeriod = getPayPeriodByOffset(today, estimateOffset);
-  const estWindowStart = estPeriod.start;
-  const estWindowEnd = estPeriod.end;
+  // 2026-10-06: the calculation (and its payday lock) now lives in
+  // estimateForPeriod(), shared with the Personal Finance publisher so the
+  // card and the transport-estimates.json file can never disagree.
   const estMonthKey = fmtKey(getPayPeriodByOffset(today, 0).start); // dismiss/reset key always tracks the CURRENT period, regardless of what's being previewed
-  const estPeriodStartKey = fmtKey(estWindowStart);
-
-  let estTicketCount, estParkingDays, estTicketCost, estParkingCost, estTotal;
-  if (paydayEstimateSnapshots[estPeriodStartKey]){
-    // Already locked in for this period — use exactly what was budgeted
-    // on payday, not a fresh recalculation. A ticket purchase logged
-    // partway through the period, or a day re-tagged since, would
-    // otherwise change a projected figure into a different number — the
-    // actual bug this was built to fix, since the whole point of a
-    // payday budget is that it doesn't retroactively move once the
-    // money's already been mentally (or actually) set aside.
-    const snap = paydayEstimateSnapshots[estPeriodStartKey];
-    estTicketCount = snap.ticketCount;
-    estParkingDays = snap.parkingDays;
-    estTicketCost = snap.ticketCost;
-    estParkingCost = snap.parkingCost;
-    estTotal = snap.total;
-  } else {
-    const estMonthStates = computeStates(estWindowEnd);
-    estTicketCount = 0;
-    estParkingDays = 0;
-    for (let d = new Date(estWindowStart); d <= estWindowEnd; d = addDays(d, 1)){
-      const key = fmtKey(d);
-      if (estMonthStates[key] && estMonthStates[key].buyFlag) estTicketCount++;
-      const weekend = isWeekend(d);
-      const comment = (comments[key] || '').trim();
-      const isTravel = comment === '' || travelOverrides[key];
-      if (!weekend && isTravel) estParkingDays++;
-    }
-    estTicketCost = estTicketCount * lastKnownPrice;
-    estParkingCost = estParkingDays * parkingCost;
-    estTotal = estTicketCost + estParkingCost;
-
-    // Locked the moment this period's own start date has genuinely been
-    // reached — not before. A future period still being previewed via
-    // the nav arrows hasn't had its own "payday" yet, so it correctly
-    // stays a live, evolving projection until it actually arrives.
-    if (fmtKey(today) >= estPeriodStartKey){
-      paydayEstimateSnapshots[estPeriodStartKey] = {
-        ticketCount: estTicketCount, parkingDays: estParkingDays,
-        ticketCost: estTicketCost, parkingCost: estParkingCost, total: estTotal
-      };
-      savePaydayEstimateSnapshots();
-    }
-  }
+  const est = estimateForPeriod(today, estimateOffset);
+  const estWindowStart = est.start;
+  const estWindowEnd = est.end;
+  const estTicketCount = est.ticketCount;
+  const estParkingDays = est.parkingDays;
+  const estTicketCost = est.ticketCost;
+  const estParkingCost = est.parkingCost;
+  const estTotal = est.total;
   const payWindowLabel = `${dateLabelShort(estWindowStart)} – ${dateLabelShort(estWindowEnd)}`;
   const monthEstimateDismissed = !!dismissedMonths[estMonthKey];
   const showEstimateCard = !monthEstimateDismissed;
@@ -5742,7 +5990,7 @@ Avanti asks for a photo of your ticket and your smartcard number. Add both once 
 **More → ROI dashboard** shows what the commute has cost and clawed back: Delay Repay totals (confirmed, pending and expired), claims recovered against ticket spend over a rolling 12 months, monthly claims, parking spent and saved, and a **What if** projection of how many tickets a different pattern of office days would need over the next 12 months.
 
 ### Home Tab Cards
-* **Set aside on payday:** Counts the tickets and parking days in your pay period (paid on the 28th, moved earlier for weekends and bank holidays) and totals what to set aside. Use the **‹** and **›** arrows to preview future periods.
+* **Set aside on payday:** Counts the tickets and parking days in your pay period (paid on the 28th, moved earlier for weekends and bank holidays) and totals what to set aside. Use the **‹** and **›** arrows to preview future periods. The same figures can be shared with your Personal Finance app — see **Sharing Estimates with Personal Finance** below.
 * **Savings card:** What parking has saved you this ticket period.
 * **Spending card:** What you've spent on tickets this year.
 
@@ -5775,6 +6023,13 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 3. Google's sign-in only lasts about an hour. Tap **Connect automatic sign-in** on Backup & restore once, and your own Worker keeps it renewed from then on, so backups (and Calendar updates) run without a tap. Google may show a "hasn't verified this app" screen the first time — tap **Advanced**, then **Go to Ticket Tracker**.
 4. If a backup still can't run — say the connection was removed — and the last backup is over a day old with something changed, a red banner appears. Tap it to back up (or to reconnect, if that's what's needed).
 5. You can also export or restore a \`.json\` backup manually at any time.
+
+### Sharing Estimates with Personal Finance
+1. On **More → Backup & restore**, tick **Share estimates with Personal Finance**. It works whether or not automatic backup is on.
+2. The app saves your **Set aside on payday** figures — this pay period and the next 12 — to a small \`transport-estimates.json\` file in the same \`Ticket Tracker Backups\` folder. Your Personal Finance app reads it for its "Train fare/Parking" transfer.
+3. It checks whenever you open or leave the app, and only rewrites the file when the figures have actually changed. **Last shared** shows when they last changed, not when it last checked.
+4. Each period is the same figure the Home card shows: the current period once its payday has passed is fixed, later ones are projections that move as you tag days.
+5. **Share now** sends the figures straight away (and signs in to Google if needed). Turning the setting off stops updates; the last file stays in Drive.
 
 ---
 
@@ -6884,7 +7139,7 @@ const BACKUP_KEYS = [
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
   'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
   'ticket-period-start','ticket-purchases','ticket-seed-imported','ticket-travel-overrides',
-  'target-trains','tickets-spent-card-dismissed','tracked-trains','train-alert-config','weather-enabled','work-station'
+  'target-trains','tickets-spent-card-dismissed','tracked-trains','train-alert-config','transport-estimates-enabled','weather-enabled','work-station'
 ];
 
 function exportBackup(){
@@ -6934,6 +7189,15 @@ function openBackupRestore(){
       <div id="google-worker-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">${escapeHtml(googleWorkerStatusText())}</div>
       <button class="save-btn" id="google-connect-btn">${googleWorkerState() === 'connected' ? 'Reconnect automatic sign-in' : googleWorkerState() === 'needs-reconnect' ? 'Reconnect automatic sign-in' : 'Connect automatic sign-in'}</button>
       <div class="settings-link" id="google-disconnect-link" style="margin-top:10px; ${googleWorkerState() === 'connected' ? '' : 'display:none;'}">Disconnect automatic sign-in</div>
+
+      <div class="rail-col-header">Share with Personal Finance</div>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
+        <input type="checkbox" id="transport-share-toggle" ${transportShareEnabled ? 'checked' : ''} style="width:16px; height:16px;" />
+        Share estimates with Personal Finance
+      </label>
+      <div class="sub" style="margin-bottom:10px;">Saves your "Set aside on payday" figures for this pay period and the next 12 to a small file in your "Ticket Tracker Backups" Drive folder, for your Personal Finance app to read. Works with automatic backup off. Updates by itself when the figures change, whenever you open or leave the app. Turning this off stops updates; the last file stays in Drive.</div>
+      <div id="transport-share-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">${escapeHtml(transportShareStatusText())}</div>
+      <button class="save-btn" id="transport-share-now-btn" ${transportShareEnabled ? '' : 'disabled'}>Share now</button>
 
       <div class="modal-close" id="backup-close-btn" style="margin-top:16px;">Close</div>
     </div>
@@ -6997,6 +7261,33 @@ function openBackupRestore(){
     googleStatusEl.textContent = r.ok ? googleWorkerStatusText() : r.message;
     refreshGoogleWorkerUi();
   });
+
+  // 2026-10-06 — Share with Personal Finance. Both handlers call
+  // attemptTransportPublish() before anything is awaited, so Google's popup
+  // (if a sign-in is needed) still has the tap behind it.
+  const transportToggle = document.getElementById('transport-share-toggle');
+  const transportStatus = document.getElementById('transport-share-status');
+  const transportNowBtn = document.getElementById('transport-share-now-btn');
+  const runTransportShare = async (busyText) => {
+    const publishPromise = attemptTransportPublish({ interactive: true, force: true });
+    transportNowBtn.disabled = true;
+    transportStatus.textContent = busyText;
+    const r = await publishPromise;
+    transportNowBtn.disabled = !transportShareEnabled;
+    transportStatus.textContent = r.ok ? transportShareStatusText() : `Couldn't share: ${r.reason} — tap Share now to retry`;
+  };
+  transportToggle.addEventListener('change', () => {
+    transportShareEnabled = transportToggle.checked;
+    saveTransportShareEnabled();
+    if (transportShareEnabled){
+      runTransportShare('Sharing…');
+    } else {
+      if (transportPublishTimer){ clearTimeout(transportPublishTimer); transportPublishTimer = null; }
+      transportNowBtn.disabled = true;
+      transportStatus.textContent = transportShareStatusText();
+    }
+  });
+  transportNowBtn.addEventListener('click', () => { runTransportShare('Sharing…'); });
 
   driveNowBtn.addEventListener('click', async () => {
     driveStatus.textContent = 'Backing up…';
@@ -14696,7 +14987,8 @@ function spawnFireworkBurst(container, colors){
 
   // Check for bank holidays after the initial render so startup isn't
   // delayed by a network call. Re-render only if new dates were filled in.
-  syncBankHolidays().then((changed) => { if (changed) render(); });
+  syncBankHolidays().then((changed) => { if (changed) render(); })
+    .finally(scheduleTransportPublish); // 2026-10-06 — after the sync, since bank holidays feed the estimate
   railSyncMissingDates();
   ensureReasonCodes();
 
@@ -14708,6 +15000,7 @@ function spawnFireworkBurst(container, colors){
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden'){
       attemptDriveBackup();
+      flushTransportPublish(); // 2026-10-06 — Personal Finance estimates; no network call if nothing changed
       flushWatchConfigPush(); // 2026-09-18 — don't leave a debounced push stranded in a frozen timer
       stopLikelyTrainChecks(); // no point polling while backgrounded — nothing can act on it anyway
       stopJourneyTextRefresh(); // 2026-09-27 — restarted fresh on return, below
@@ -14724,6 +15017,7 @@ function spawnFireworkBurst(container, colors){
       renderBackupNudge(); // may have gone stale while backgrounded
       maybeRefreshGoogleTokenFromWorker(); // 2026-10-04 — so the next backup on leaving has a token (replaces the 2026-10-02 quiet refresh)
       schedulePushWatchConfig(); // 2026-09-18 — foreground counts as "app open" for keeping the rolling non-travel window fresh
+      scheduleTransportPublish(); // 2026-10-06 — e.g. a new payday since the app was last in front
       // Same ordering as startup — the watch may have resolved
       // something while the phone was locked/backgrounded.
       checkPendingConfirmation().finally(startLikelyTrainChecks);
