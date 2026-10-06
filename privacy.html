@@ -69,14 +69,14 @@
 
     <h2>What Google access is used for</h2>
     <ul>
-      <li><strong>Google Drive</strong> — to save backup copies of the app's own data into a "Ticket Tracker Backups" folder, and, if you turn on sharing with Personal Finance, a small summary file of your monthly ticket and parking estimates in the same folder. The access granted only covers files this app created itself; it can't see anything else in your Drive.</li>
+      <li><strong>Google Drive</strong> — to save backup copies of the app's own data into a "Ticket Tracker Backups" folder, and, if you turn on sharing with Personal Finance, a small summary file of your monthly ticket and parking estimates and your season ticket purchases in the same folder. The access granted only covers files this app created itself; it can't see anything else in your Drive.</li>
       <li><strong>Google Calendar</strong> — to keep a single "Buy train ticket" reminder up to date. It doesn't read your other events.</li>
     </ul>
 
     <h2>Where data lives</h2>
     <ul>
       <li><strong>On your device</strong> — the app's records (travel days, tickets, delay repay claims and settings) are stored in your browser on your phone.</li>
-      <li><strong>In your own Google Drive</strong> — backups, if you turn them on, and the estimates summary (transport-estimates.json), if you turn on sharing with Personal Finance. The summary holds only the pay-period dates, ticket and parking-day counts and their costs — no travel history, claims or account details. It's read by your own Personal Finance app, which uses the same Google access.</li>
+      <li><strong>In your own Google Drive</strong> — backups, if you turn them on, and the estimates summary (transport-estimates.json), if you turn on sharing with Personal Finance. The summary holds only the pay-period dates, ticket and parking-day counts and their costs, plus each season ticket's dates, purchase date and price — no travel history, claims or account details. It's read by your own Personal Finance app, which uses the same Google access.</li>
       <li><strong>In your own Cloudflare Worker</strong> — live train lookups, the settings your watch needs, and, if you connect automatic sign-in, the Google sign-in token that keeps backups running without a tap.</li>
     </ul>
     <p>Nothing is sold, shared with anyone else, or used for advertising.</p>

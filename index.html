@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-06.19:43'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-06.21:57'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2329,6 +2329,7 @@ async function loadData(){
   comments = loadJSON('ticket-comments', {});
   travelOverrides = loadJSON('ticket-travel-overrides', {});
   purchases = loadJSON('ticket-purchases', []);
+  if (ensurePurchaseFields()) savePurchases(); // 2026-10-06 — one-off backfill of id/purchasedOn on older records
   lastKnownPrice = loadJSON('ticket-last-price', 153.60);
   parkingCost = loadJSON('ticket-parking-cost', 6.39);
   smartcardNumber = loadJSON('smartcard-number', '');
@@ -2476,7 +2477,27 @@ async function saveTravelOverrides(){
   catch(e){ /* save failed silently; will retry next change */ }
   schedulePushWatchConfig(); // 2026-09-18 — "I still used the ticket today" turns a tagged day back into a commute
 }
+// 2026-10-06 (claude/ticket-purchases-tracker-addendum.md 2b) — season
+// purchase records carry id ('p-' + start date — date-based so a restore of
+// an older backup can never re-make it differently) and purchasedOn (the day
+// it was bought; older records get the day before the start date, how
+// tickets are actually bought). Singles are left alone. Returns true if
+// anything was filled in.
+function ensurePurchaseFields(){
+  let changed = false;
+  purchases.forEach(p => {
+    if (!p || p.type === 'single' || typeof p.date !== 'string') return;
+    const id = `p-${p.date}`;
+    if (p.id !== id){ p.id = id; changed = true; }
+    if (typeof p.purchasedOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(p.purchasedOn)){
+      p.purchasedOn = fmtKey(addDays(parseKey(p.date), -1));
+      changed = true;
+    }
+  });
+  return changed;
+}
 async function savePurchases(){
+  ensurePurchaseFields(); // every way a purchase is added goes through here
   try{ localStorage.setItem('ticket-purchases', JSON.stringify(purchases)); }
   catch(e){ /* save failed silently; will retry next change */ }
 }
@@ -3952,7 +3973,7 @@ function transportEstimatesToday(){
   return new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
 }
 
-// { assumptions, periods } — the part of the file that's compared to decide
+// { assumptions, periods, tickets } — the part of the file that's compared to decide
 // whether to upload. Pence are integers: locked periods convert the stored
 // snapshot figures; projected periods multiply the integer price/day cost by
 // the count (addendum 2f). totalPence is always the sum of the two parts.
@@ -3979,7 +4000,69 @@ function buildTransportEstimatesBody(today){
       totalPence: ticketPence + parkingPence,
     });
   }
-  return { assumptions: { ticketPricePence, parkingDayPence }, periods };
+  const tickets = buildTransportTickets(today, lastEnd, states, ticketPricePence);
+  return { assumptions: { ticketPricePence, parkingDayPence }, periods, tickets };
+}
+
+// 2026-10-06 (ticket-purchases-spec.md + claude/ticket-purchases-tracker-addendum.md)
+// The last day a season ticket starting on `startKey` covers: 28 calendar
+// days or the 8th use, whichever comes first — the same walk as
+// getRealPeriodEnd(), from any start date. Informational in the file.
+function seasonTicketEndKey(startKey){
+  let cursor = parseKey(startKey);
+  let usedCount = 0;
+  for (let daysElapsed = 1; daysElapsed <= PERIOD_LENGTH; daysElapsed++){
+    const key = fmtKey(cursor);
+    const comment = (comments[key] || '').trim();
+    if (!isWeekend(cursor) && (comment === '' || travelOverrides[key])) usedCount++;
+    if (usedCount >= USES_PER_PERIOD || daysElapsed >= PERIOD_LENGTH) return key;
+    cursor = addDays(cursor, 1);
+  }
+  return fmtKey(addDays(parseKey(startKey), PERIOD_LENGTH - 1)); // not reached
+}
+
+// The `tickets` list: season tickets only (singles are entered by hand in
+// Personal Finance — addendum 1c), oldest purchase first.
+//   bought    — season purchases with purchasedOn in the last 90 days.
+//               id 'p-' + start date (addendum 1a), real date and price.
+//   projected — the buy flags in `states` (the same map the periods count),
+//               id 'f-' + start date, purchaseDate = the flag date (the same
+//               rule the calendar reminder uses), today's price. A flag whose
+//               date has passed without a purchase stays listed (addendum 1c).
+const TRANSPORT_TICKETS_BOUGHT_DAYS = 90;
+function buildTransportTickets(today, lastEnd, states, ticketPricePence){
+  const sinceKey = fmtKey(addDays(today, -TRANSPORT_TICKETS_BOUGHT_DAYS));
+  const lastEndKey = fmtKey(lastEnd);
+  const tickets = [];
+  const boughtStarts = new Set();
+  purchases.forEach(p => {
+    if (!p || p.type === 'single') return;
+    boughtStarts.add(p.date);
+    const purchasedOn = p.purchasedOn || fmtKey(addDays(parseKey(p.date), -1));
+    if (purchasedOn < sinceKey) return;
+    tickets.push({
+      id: p.id || `p-${p.date}`,
+      validFrom: p.date,
+      validTo: seasonTicketEndKey(p.date),
+      purchaseDate: purchasedOn,
+      pricePence: Math.round(p.cost * 100),
+      status: 'bought',
+    });
+  });
+  Object.keys(states).filter(k => states[k] && states[k].buyFlag && k <= lastEndKey).sort().forEach(flagKey => {
+    const validFrom = fmtKey(addDays(parseKey(flagKey), 1));
+    if (boughtStarts.has(validFrom)) return; // already logged (e.g. a backfilled future purchase)
+    tickets.push({
+      id: `f-${validFrom}`,
+      validFrom,
+      validTo: seasonTicketEndKey(validFrom),
+      purchaseDate: flagKey,
+      pricePence: ticketPricePence,
+      status: 'projected',
+    });
+  });
+  tickets.sort((a, b) => (a.purchaseDate + a.validFrom).localeCompare(b.purchaseDate + b.validFrom));
+  return tickets;
 }
 
 function buildTransportEstimatesFile(body){
@@ -3990,6 +4073,7 @@ function buildTransportEstimatesFile(body){
     source: { app: 'ticket-tracker', appVersion: APP_VERSION },
     assumptions: body.assumptions,
     periods: body.periods,
+    tickets: body.tickets,
   };
 }
 
@@ -6030,6 +6114,8 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 3. It checks whenever you open or leave the app, and only rewrites the file when the figures have actually changed. **Last shared** shows when they last changed, not when it last checked.
 4. Each period is the same figure the Home card shows: the current period once its payday has passed is fixed, later ones are projections that move as you tag days.
 5. **Share now** sends the figures straight away (and signs in to Google if needed). Turning the setting off stops updates; the last file stays in Drive.
+6. The file also lists your season tickets — the ones bought in the last 90 days, with the date you bought them and the price paid, and the ones still to buy, on the evening before they start at today's price — so Personal Finance can show each purchase on your card. Single tickets aren't included.
+7. The Buy screen's **Bought on** date (today unless you change it) is the purchase date that's shared. Always buy the ticket first, then log it here.
 
 ---
 
@@ -14151,6 +14237,8 @@ function openBuyScreen(defaultType){
         <input type="date" id="season-date-input" value="${suggested}" style="margin-bottom:12px;" />
         <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost of this ticket (£)</label>
         <input type="number" id="season-cost-input" value="${lastKnownPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
+        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Bought on</label>
+        <input type="date" id="season-bought-input" value="${fmtKey(today)}" style="margin-bottom:12px;" />
       </div>
 
       <div id="buy-single-fields" style="${buyType==='single'?'':'display:none;'}">
@@ -14257,8 +14345,13 @@ function openBuyScreen(defaultType){
       periodStart = val;
       await savePeriodStart();
       if (!isNaN(costVal) && costVal >= 0){
+        // 2026-10-06 — purchasedOn from "Bought on" (defaults to today); id is
+        // filled in by savePurchases(). Re-saving the same start date keeps the
+        // same id ('p-' + start date).
+        const boughtVal = document.getElementById('season-bought-input').value;
+        const purchasedOn = /^\d{4}-\d{2}-\d{2}$/.test(boughtVal) ? boughtVal : fmtKey(today);
         purchases = purchases.filter(p => !(p.date === val && (p.type || undefined) !== 'single'));
-        purchases.push({ date: val, cost: costVal });
+        purchases.push({ date: val, cost: costVal, purchasedOn });
         purchases.sort((a, b) => a.date < b.date ? -1 : 1);
         lastKnownPrice = costVal;
         await savePurchases();
