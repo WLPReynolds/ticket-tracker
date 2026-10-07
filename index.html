@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-06.21:57'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-07.18:39'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -9943,6 +9943,32 @@ function isClockTimeEarlier(a, b){
 function isoTimeToHHMM(iso){
   return (typeof iso === 'string' && iso.length >= 16) ? iso.slice(11, 16) : null;
 }
+// 2026-10-07 — like-for-like Staff lateness. Whole minutes between a Staff
+// actual and Staff's OWN matching schedule (atd vs std, ata vs sta), seconds
+// dropped exactly as isoTimeToHHMM always has (so 26s late is 0, 61s is 1),
+// midnight wrap folded. null if either side is missing.
+// Why: Darwin's calling-point `st` is the scheduled ARRIVAL for points after
+// your boarding station, so measuring Staff's actual DEPARTURE against it
+// counted the scheduled dwell as delay — found live at Crewe 2026-10-07
+// (st 18:00 = sta, std 18:04, atd 18:04:26 shown as "4 min late").
+function staffMinutesDiff(actualIso, schedIso){
+  const a = isoTimeToHHMM(actualIso), s = isoTimeToHHMM(schedIso);
+  if (!a || !s) return null;
+  let diff = (parseInt(a.slice(0,2),10)*60 + parseInt(a.slice(3,5),10))
+           - (parseInt(s.slice(0,2),10)*60 + parseInt(s.slice(3,5),10));
+  if (diff > 720) diff -= 1440; else if (diff < -720) diff += 1440;
+  return diff;
+}
+// HH:MM clock time shifted by a whole number of minutes, wrapping at midnight.
+// Used to express a like-for-like Staff lateness against Darwin's own st, so
+// describePointStatus (and everything else reading schedTime) keeps working
+// unchanged while reporting the right number of minutes.
+function shiftClockTime(hhmm, minutes){
+  if (typeof hhmm !== 'string' || !hhmm.includes(':') || !Number.isFinite(minutes)) return null;
+  let t = (parseInt(hhmm.slice(0,2),10)*60 + parseInt(hhmm.slice(3,5),10) + minutes) % 1440;
+  if (t < 0) t += 1440;
+  return `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(t % 60).padStart(2,'0')}`;
+}
 
 // Shared AT PLATFORM check, used both by the summary banner and the
 // per-row pill (2026-08-26) — factored out after finding they'd been
@@ -10467,19 +10493,28 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     const status = staffLiveStatusOverrides[p.crs];
     if (!status) return p;
     const isFinalPointRow = i === arr.length - 1;
-    const preciseIso = isFinalPointRow
-      ? (status.ataSpecified ? status.ata : null)
-      : (status.atdSpecified ? status.atd : null);
-    const precise = preciseIso ? isoTimeToHHMM(preciseIso) : null;
-    if (!precise) return p;
-    // Only ever moves Darwin's "On time" LATER, never earlier (2026-09-29,
-    // found live at Lancaster: at=On time, Staff atd 15:57:xx vs a
-    // 15:58 public time). isoTimeToHHMM drops the seconds, and public
-    // times are themselves rounded from half-minute working times, so a
-    // departure Darwin rightly calls on time could read as "1 min early".
-    // This correction exists to surface hidden lateness only.
-    // Destination (final point) keeps its previous behaviour: an early arrival there is genuine.
-    const correctedLiveTime = (precise === p.schedTime || (!isFinalPointRow && isClockTimeEarlier(precise, p.schedTime))) ? 'On time' : precise;
+    // 2026-10-07: measured like-for-like against Staff's OWN schedule for
+    // the same event (atd vs std, or ata vs sta for the final point), not
+    // against Darwin's st — which after your boarding station is the
+    // scheduled arrival, so an actual departure compared with it counted
+    // the scheduled dwell as delay (Warrington 17:41/17:42, Crewe
+    // 18:00/18:04, both reading late on 2026-10-07 for an on-time train).
+    // The result is then expressed against Darwin's st (shiftClockTime),
+    // so the row and describePointStatus report the true minutes without
+    // anything else that reads schedTime having to change. No Staff
+    // schedule for that event -> left as Darwin's "On time".
+    const lateMin = isFinalPointRow
+      ? (status.ataSpecified ? staffMinutesDiff(status.ata, status.sta) : null)
+      : (status.atdSpecified ? staffMinutesDiff(status.atd, status.std) : null);
+    if (lateMin === null) return p;
+    // Only ever moves Darwin's "On time" LATER, never earlier, for an
+    // ordinary calling point (2026-09-29, Lancaster): this correction
+    // exists to surface hidden lateness only. The destination (final
+    // point) keeps its early arrival: that one is genuine.
+    const correctedLiveTime = (lateMin === 0 || (!isFinalPointRow && lateMin < 0))
+      ? 'On time'
+      : shiftClockTime(p.schedTime, lateMin);
+    if (!correctedLiveTime) return p;
     return { ...p, liveTime: correctedLiveTime, hasConfirmedActual: true };
   });
   // Early ARRIVAL mistaken for an early DEPARTURE (2026-09-29, found live
@@ -10507,12 +10542,15 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     if (diff > 720) diff -= 1440; else if (diff < -720) diff += 1440; // midnight wrap, same as describePointStatus
     if (diff >= 0) return p;
     const status = p.crs ? staffLiveStatusOverrides[p.crs] : null;
-    const staffAtd = (status && status.atdSpecified && status.atd) ? isoTimeToHHMM(status.atd) : null;
-    if (staffAtd){
-      // Same rule as the correction above: a Staff departure time that
-      // (seconds dropped) reads earlier than schedule is "On time", never early.
-      const onTime = staffAtd === p.schedTime || isClockTimeEarlier(staffAtd, p.schedTime);
-      return { ...p, liveTime: onTime ? 'On time' : staffAtd, hasConfirmedActual: true };
+    // 2026-10-07: Staff's departure measured against Staff's own std, not
+    // Darwin's st (the scheduled arrival here) — see staffMinutesDiff.
+    // Found live at Crewe: arrived 17:57 (sta 18:00), left 18:04:26
+    // (std 18:04), shown as "18:04 · 4 min late"; now On time.
+    const lateMin = (status && status.atdSpecified) ? staffMinutesDiff(status.atd, status.std) : null;
+    if (lateMin !== null){
+      // Same rule as the correction above: never early, only ever late.
+      const liveTime = lateMin <= 0 ? 'On time' : shiftClockTime(p.schedTime, lateMin);
+      if (liveTime) return { ...p, liveTime, hasConfirmedActual: true };
     }
     return { ...p, liveTime: 'On time' };
   });
@@ -11517,10 +11555,13 @@ function openTrainProgress(train, service){
   function buildStaffLiveStatusOverrides(raw, match){
     const overrides = {};
     if (!raw || !match) return overrides;
-    if (raw.crs) overrides[raw.crs] = { ataSpecified: !!match.ataSpecified, atdSpecified: !!match.atdSpecified, ata: match.ata || null, atd: match.atd || null, etd: match.etd || null, etdSpecified: !!match.etdSpecified };
+    // sta/std added 2026-10-07 — Staff's own schedule for each event, so the
+    // precise-status corrections compare atd with std and ata with sta
+    // (see staffMinutesDiff), never with Darwin's st.
+    if (raw.crs) overrides[raw.crs] = { ataSpecified: !!match.ataSpecified, atdSpecified: !!match.atdSpecified, ata: match.ata || null, atd: match.atd || null, sta: match.staSpecified ? (match.sta || null) : null, std: match.stdSpecified ? (match.std || null) : null, etd: match.etd || null, etdSpecified: !!match.etdSpecified };
     const locs = Array.isArray(match.subsequentLocations) ? match.subsequentLocations : [];
     for (const loc of locs){
-      if (loc.crs) overrides[loc.crs] = { ataSpecified: !!loc.ataSpecified, atdSpecified: !!loc.atdSpecified, ata: loc.ata || null, atd: loc.atd || null, etd: loc.etd || null, etdSpecified: !!loc.etdSpecified };
+      if (loc.crs) overrides[loc.crs] = { ataSpecified: !!loc.ataSpecified, atdSpecified: !!loc.atdSpecified, ata: loc.ata || null, atd: loc.atd || null, sta: loc.staSpecified ? (loc.sta || null) : null, std: loc.stdSpecified ? (loc.std || null) : null, etd: loc.etd || null, etdSpecified: !!loc.etdSpecified };
     }
     return overrides;
   }
