@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-07.19:32'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-08.12:51'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -10132,12 +10132,27 @@ function staffConfirmsArrival(crs, staffLiveStatusOverrides, now, staffDataAge){
 // had appeared would vanish again the instant you closed and reopened,
 // because boardOverrides itself only ever lived in that screen's own
 // closure and had nothing to rebuild itself from until the next poll.
-function diffAndNotifyJourneyState(stateKey, label, boardType, freshData){
+// 2026-10-08 — notification wording. Title is the station the platform
+// belongs to; body is "<time> from|to <other end>: <event>". Previously the
+// title named the event and the body the whole route, so a Wigan arrival
+// platform read like a Crewe one. `label` is the train screen's displayLabel:
+// "HH:MM Origin→Dest"; if it doesn't parse (unexpected shape) the old
+// "label: event" body is used under the station title.
+function journeyNotifyBody(label, boardType, event){
+  const m = /^(\S+)\s+(.+?)→(.+)$/.exec(label || '');
+  if (!m) return `${label}: ${event}`;
+  const time = m[1], origin = m[2].trim(), dest = m[3].trim();
+  // Departure board: you're at the origin, train heads to dest.
+  // Arrival board: you're at the destination, train comes from origin.
+  return boardType === 'dep' ? `${time} to ${dest}: ${event}` : `${time} from ${origin}: ${event}`;
+}
+function diffAndNotifyJourneyState(stateKey, label, boardType, freshData, stationName){
   if (!stateKey || !freshData) return;
 
   const isDeparture = boardType === 'dep';
   const platform = freshData.platform || null;
   const hasConfirmed = !!(isDeparture ? freshData.atd : freshData.ata);
+  const title = stationName || 'Train update';
 
   const prev = lastSeenJourneyState.get(stateKey);
   if (prev){
@@ -10147,13 +10162,15 @@ function diffAndNotifyJourneyState(stateKey, label, boardType, freshData){
     const prevPlatform = prev.data ? (prev.data.platform || null) : (prev.platform || null);
     const prevHasConfirmed = prev.data ? !!(prev.boardType === 'dep' ? prev.data.atd : prev.data.ata) : !!prev.hasConfirmed;
     if (prevPlatform && platform && prevPlatform !== platform){
-      showLocalNotification('Platform changed', `${label}: now platform ${platform} (was ${prevPlatform})`);
+      showLocalNotification(title, journeyNotifyBody(label, boardType, `platform changed to ${platform} (was ${prevPlatform})`));
     } else if (!prevPlatform && platform){
-      showLocalNotification('Platform confirmed', `${label}: platform ${platform}`);
+      showLocalNotification(title, journeyNotifyBody(label, boardType, `platform ${platform} confirmed`));
     }
     if (!prevHasConfirmed && hasConfirmed){
-      const verb = isDeparture ? 'departed' : 'arrived';
-      showLocalNotification(isDeparture ? 'Train departed' : 'Train arrived', `${label} has ${verb}${platform ? ` — platform ${platform}` : ''}`);
+      const event = isDeparture
+        ? (platform ? `departed from platform ${platform}` : 'departed')
+        : (platform ? `arrived on platform ${platform}` : 'arrived');
+      showLocalNotification(title, journeyNotifyBody(label, boardType, event));
     }
   }
 
@@ -12363,7 +12380,7 @@ function openTrainProgress(train, service){
               .then(boardData => {
                 lastBoardDebugFrom = { crs: train.fromLoc, boardType: boardTypeForHere, schedTime: hereSchedTime, data: boardData, error: null };
                 updateBoardDebugPanel();
-                diffAndNotifyJourneyState(`${serviceId}:${train.fromLoc}`, displayLabel, boardTypeForHere, boardData);
+                diffAndNotifyJourneyState(`${serviceId}:${train.fromLoc}`, displayLabel, boardTypeForHere, boardData, (STATION_COORDS[train.fromLoc] && STATION_COORDS[train.fromLoc].name) || stationNameForCrs(train.fromLoc) || train.fromLoc);
                 // Actually reflect it in the row someone's looking at, not
                 // just the debug panel and the notification check —
                 // rebuildDisplay() re-runs buildTrainProgress against the
@@ -12408,7 +12425,7 @@ function openTrainProgress(train, service){
               .then(boardData => {
                 lastBoardDebugTo = { crs: train.toLoc, boardType: 'arr', schedTime: toSchedTime, data: boardData, error: null };
                 updateBoardDebugPanel();
-                diffAndNotifyJourneyState(`${serviceId}:${train.toLoc}`, `${displayLabel} (arrival)`, 'arr', boardData);
+                diffAndNotifyJourneyState(`${serviceId}:${train.toLoc}`, displayLabel, 'arr', boardData, (STATION_COORDS[train.toLoc] && STATION_COORDS[train.toLoc].name) || stationNameForCrs(train.toLoc) || train.toLoc);
                 if (boardData){
                   boardOverrides = { ...boardOverrides, [train.toLoc]: { data: boardData, boardType: 'arr' } };
                   rebuildDisplay();
