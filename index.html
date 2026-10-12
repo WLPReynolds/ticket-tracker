@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-08.12:51'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-12.10:16'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5805,7 +5805,7 @@ function openDayEditor(key){
         <input type="checkbox" id="modal-override-checkbox" ${travelOverrides[key] ? 'checked' : ''} style="width:16px; height:16px;" />
         I still used the ticket this day
       </label>` : ''}
-      ${isTravelDay ? `
+      ${weekend ? `
       <label style="display:flex; align-items:center; gap:8px; margin:12px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
         <input type="checkbox" id="modal-parked-checkbox" ${parkedDays[key] !== undefined ? 'checked' : ''} style="width:16px; height:16px;" />
         I parked today
@@ -5881,8 +5881,9 @@ function openDayEditor(key){
       // If this day genuinely stopped being a travel day, any parking
       // record for it no longer makes sense — cleared alongside the tag
       // change rather than left as a stale, inconsistent leftover.
-      const stillTravelDay = !weekend && (comments[key] === '' || travelOverrides[key]);
-      if (!stillTravelDay) delete parkedDays[key];
+	  // Removed next two lines of code as suggested by Claude 12.10.26 to allow saving of oarking cost even if didn't use ticket
+      //const stillTravelDay = !weekend && (comments[key] === '' || travelOverrides[key]);
+      //if (!stillTravelDay) delete parkedDays[key];
       await saveComments();
       await saveTravelOverrides();
       await saveParkedDays();
@@ -5894,8 +5895,9 @@ function openDayEditor(key){
     if (val !== ''){
       comments[key] = val;
       if (getOverrideChecked()) travelOverrides[key] = true; else delete travelOverrides[key];
-      const stillTravelDay = !weekend && (comments[key] === '' || travelOverrides[key]);
-      if (!stillTravelDay) delete parkedDays[key];
+      // Removed next two lines of code as suggested by Claude 12.10.26 to allow saving of oarking cost even if didn't use ticket
+	  //const stillTravelDay = !weekend && (comments[key] === '' || travelOverrides[key]);
+      //if (!stillTravelDay) delete parkedDays[key];
       await saveComments();
       await saveTravelOverrides();
       await saveParkedDays();
