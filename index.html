@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-12.22:01'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-24.09:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -6109,6 +6109,7 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 3. Google's sign-in only lasts about an hour. Tap **Connect automatic sign-in** on Backup & restore once, and your own Worker keeps it renewed from then on, so backups (and Calendar updates) run without a tap. Google may show a "hasn't verified this app" screen the first time — tap **Advanced**, then **Go to Ticket Tracker**.
 4. If a backup still can't run — say the connection was removed — and the last backup is over a day old with something changed, a red banner appears. Tap it to back up (or to reconnect, if that's what's needed).
 5. You can also export or restore a \`.json\` backup manually at any time.
+6. A backup deliberately leaves out a few things that are either secret or tied to this device: the **Worker write secret**, the **drive-check home location** and the **smartcard pass photo**. After restoring onto a new phone (or a new web address), enter the secret and home location again and re-add the photo. Google normally stays connected, because your Worker holds the sign-in — once the secret is entered, check **Automatic sign-in** on Backup & restore, and only tap **Connect automatic sign-in** if it says it needs reconnecting.
 
 ### Sharing Estimates with Personal Finance
 1. On **More → Backup & restore**, tick **Share estimates with Personal Finance**. It works whether or not automatic backup is on.
@@ -7213,6 +7214,14 @@ function openDayReturnPriceEditor(){
 // 2026-09-30: 'drive-check-config' is backed up; 'drive-check-home' (the home
 // location for the morning drive check) is deliberately NOT — see the note
 // above DEFAULT_DRIVE_CHECK_CONFIG.
+// 2026-10-24: added 'parking-budget-days' (the locked per-period travel days —
+// rebuilding it after a restore would re-derive the budget from today's tags,
+// undoing the very lock it exists for) and 'ticket-fare-checked-year' (so a
+// restore doesn't re-show the annual fare-check prompt). Still deliberately
+// excluded: 'pwa-write-secret' (a credential — the backup file gets shared),
+// the Google token/status keys (the Worker holds the refresh token, so the
+// connection normally survives a restore), and the transport-estimates-*
+// bookkeeping (device-only, re-found or re-published).
 const BACKUP_KEYS = [
   'alternative-routes','bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
   'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id','drive-check-config',
@@ -7220,10 +7229,10 @@ const BACKUP_KEYS = [
   'gcal-enabled','gcal-event-id','gcal-pending-sync',
   'geofence-crewe-matches-wigan','geofence-radius-crewe','geofence-radius-wigan','geofence-wigan-matches-crewe',
   'home-station',
-  'parked-days','parking-savings-snapshots',
+  'parked-days','parking-budget-days','parking-savings-snapshots',
   'payday-estimate-snapshots','poll-before-departure-min','poll-check-in-interval-min','preferred-google-email',
   'produce-claim-details-file','rail-perf-cache','rail-trains','smartcard-number',
-  'ticket-comments','ticket-day-return-price','ticket-dismissed-months',
+  'ticket-comments','ticket-day-return-price','ticket-dismissed-months','ticket-fare-checked-year',
   'ticket-last-notified-buy-key','ticket-last-price','ticket-parking-cost',
   'ticket-period-start','ticket-purchases','ticket-seed-imported','ticket-travel-overrides',
   'target-trains','tickets-spent-card-dismissed','tracked-trains','train-alert-config','transport-estimates-enabled','weather-enabled','work-station'
@@ -7255,7 +7264,7 @@ function openBackupRestore(){
   overlay.innerHTML = `
     <div class="modal">
       <h3>Backup &amp; restore</h3>
-      <div class="sub">Export everything the app knows to a file you can keep safe (e.g. before switching phones), or restore from a previous export. Restoring replaces all current data.</div>
+      <div class="sub">Export your app data to a file you can keep safe (e.g. before switching phones), or restore from a previous export. Restoring replaces all current data. Not included: your Worker write secret, the drive-check home location and the pass photo — re-enter those after restoring. Google normally stays connected; reconnect only if Automatic sign-in below says it's needed.</div>
       <button class="save-btn" id="backup-export-btn">Export backup</button>
       <label style="display:block; font-size:13px; color:var(--ink-dim); margin:16px 0 6px;">Restore from a backup file</label>
       <input type="file" id="backup-import-input" accept="application/json" style="margin-bottom:12px; width:100%;" />
