@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-24.09:55'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-25.12:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -5052,7 +5052,13 @@ function render(){
     statusHtml = `<div class="status-banner skip">This ticket starts ${dateLabel(parseKey(periodStart))}</div>`;
   } else if (isPhantomToday){
     const singleToday = getSingleTicketForDate(todayKey);
-    if (todayIsWeekend){
+    if (todayState && todayState.buyFlag){
+      // Buy day falls inside the post-ticket gap (e.g. a Sunday before a
+      // Monday travel day) — prompt to buy, rather than the weekend /
+      // "no active ticket" wording, which hid the prompt entirely since
+      // the "Next ticket due" line is suppressed when the buy day is today.
+      statusHtml = `<div class="status-banner renew" id="renewal-banner-tap" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">🚆 Buy your ticket tonight for tomorrow ›</div>`;
+    } else if (todayIsWeekend){
       statusHtml = `<div class="status-banner skip">Weekend — no ticket needed</div>`;
     } else if (singleToday){
       statusHtml = `<div class="status-banner ok">Single ticket used today (£${singleToday.cost.toFixed(2)})</div>`;
