@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-25.12:05'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-27.06:51'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2018,6 +2018,14 @@ function delayRepayBandLabel(minutes){
 function isClaimBeingMade(claim){
   return !!claim && claim.status !== 'declined' && claim.status !== 'expired';
 }
+// 2026-10-27: the minutes a claim's band is based on. Normally the HSP
+// delay; for a cancelled train it's the band picked by hand (bandMinutes:
+// 15 / 30 / 60), since minutesLate stays null to record the cancellation.
+function claimBandMinutes(claim){
+  if (!claim) return null;
+  if (typeof claim.bandMinutes === 'number') return claim.bandMinutes;
+  return claim.minutesLate;
+}
 // A plain, read-only notification — deliberately no action buttons, no
 // attempt to copy anything from within it. Notification bodies aren't
 // reliably text-selectable on Android, and a Service Worker (which is
@@ -2033,7 +2041,7 @@ async function showClaimBandNotification(dateKey){
     if (!('serviceWorker' in navigator)) return;
     const dayClaims = delayClaims[dateKey] || {};
     const lines = ['AM', 'PM']
-      .map(dir => isClaimBeingMade(dayClaims[dir]) ? `${dir}: ${delayRepayBandLabel(dayClaims[dir].minutesLate)}` : null)
+      .map(dir => isClaimBeingMade(dayClaims[dir]) && claimBandMinutes(dayClaims[dir]) !== null ? `${dir}: ${delayRepayBandLabel(claimBandMinutes(dayClaims[dir]))}` : null)
       .filter(Boolean);
     if (!lines.length) return;
     // Ticket price added alongside the band(s) — genuinely redundant
@@ -2068,7 +2076,13 @@ function triggerClaimDetailsDownload(dateKey){
       const train = railTrains.find(t => t.key === confirmedKey);
       const trainLabel = train ? train.label : dir;
       lines.push(`${dir} — ${trainLabel}`);
-      lines.push(`  Delay: ${claim.minutesLate} minute${claim.minutesLate === 1 ? '' : 's'}`);
+      if (claim.minutesLate === null || claim.minutesLate === undefined){
+        const band = claimBandMinutes(claim);
+        lines.push(`  Train cancelled — claiming ${band !== null && band !== undefined ? delayRepayBandLabel(band) : 'band not chosen'}`);
+        lines.push(`  Enter ${trainLabel} as your intended journey`);
+      } else {
+        lines.push(`  Delay: ${claim.minutesLate} minute${claim.minutesLate === 1 ? '' : 's'}`);
+      }
       lines.push(`  Ticket price: £${price.toFixed(2)}`);
       lines.push(`  Estimated payout: £${claim.amount.toFixed(2)}`);
       lines.push('');
@@ -2929,6 +2943,18 @@ function isEligibleRailDay(d, todayKeyParam){
   return comment === '' || !!travelOverrides[key];
 }
 
+// 2026-10-27: true when an HSP record counts as a Delay Repay breach —
+// 15+ minutes late, OR cancelled. A cancelled record has delayMinutes
+// null, which every `delayMinutes >= 15` check silently treated as "not
+// late", so a cancelled confirmed train showed "On time" on the day sheet
+// and was never offered as a claim (17:31 on 20 Oct and 26 Oct).
+function perfIsCancelled(perf){
+  return !!(perf && perf.cancelled);
+}
+function perfBreachesThreshold(perf){
+  return !!perf && (perfIsCancelled(perf) || perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
+}
+
 // Returns 'confirmed' if a specific confirmed train for this date is
 // known to have breached the delay threshold — a near-certain claim.
 // Returns 'maybe' if no confirmation exists but at least one configured
@@ -2955,7 +2981,7 @@ function getDelayStatus(dateKey){
     if (confirmedKey !== undefined){
       if (confirmedKey === '') return; // explicitly didn't travel that leg — ignore
       const perf = dayPerf[confirmedKey];
-      if (perf && perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES){
+      if (perfBreachesThreshold(perf)){
         if (dayClaims[direction] && dayClaims[direction].status === 'declined') anyDeclinedDelay = true;
         else anyConfirmedDelay = true;
       }
@@ -2965,7 +2991,7 @@ function getDelayStatus(dateKey){
   });
 
   if (anyConfirmedDelay) return 'confirmed';
-  const anyDelayAtAll = railTrains.some(t => dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
+  const anyDelayAtAll = railTrains.some(t => perfBreachesThreshold(dayPerf[t.key]));
   if (anyUnconfirmedDirection && anyDelayAtAll) return 'maybe';
   if (anyDeclinedDelay) return 'declined';
   return null;
@@ -3002,9 +3028,11 @@ function delayRepayDaysSince(dateKey, today){
 
 // The directions on a date whose CONFIRMED train breached the delay
 // threshold — each one a claim opportunity, whatever its claim status.
-// [{ dir, trainKey, minutesLate, claim }] — claim is the delayClaims record
-// or null. Cancelled trains (delayMinutes null) aren't included, matching
-// the existing claim pill; see backlog item 1.
+// [{ dir, trainKey, minutesLate, cancelled, claim }] — claim is the
+// delayClaims record or null. 2026-10-27: cancelled trains are included,
+// with minutesLate null and cancelled true. The app can't know the real
+// delay (it depends on whatever was caught instead), so their amount is
+// unknown until a band is picked when the claim is started.
 function delayRepayOpportunities(dateKey){
   const dayPerf = railPerfCache[dateKey];
   if (!dayPerf) return [];
@@ -3015,8 +3043,9 @@ function delayRepayOpportunities(dateKey){
     const trainKey = confirmed[dir];
     if (!trainKey) return; // unconfirmed, or '' = didn't travel
     const perf = dayPerf[trainKey];
-    if (!perf || !(perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES)) return;
-    out.push({ dir, trainKey, minutesLate: perf.delayMinutes, claim: dayClaims[dir] || null });
+    if (!perfBreachesThreshold(perf)) return;
+    const cancelled = perfIsCancelled(perf);
+    out.push({ dir, trainKey, minutesLate: cancelled ? null : perf.delayMinutes, cancelled, claim: dayClaims[dir] || null });
   });
   return out;
 }
@@ -3037,7 +3066,7 @@ function delayRepayUnconfirmedDirections(dateKey){
   const confirmed = confirmedTrains[dateKey] || {};
   return ['AM', 'PM'].filter(dir => {
     if (confirmed[dir] !== undefined) return false;
-    return railTrains.some(t => t.direction === dir && dayPerf[t.key] && dayPerf[t.key].delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES);
+    return railTrains.some(t => t.direction === dir && perfBreachesThreshold(dayPerf[t.key]));
   });
 }
 
@@ -4862,8 +4891,12 @@ function render(){
       const daysLeft = DELAY_REPAY_WINDOW_DAYS - back;
       const open = delayRepayOpportunities(dKey).filter(o => !o.claim);
       if (open.length){
-        const amount = open.reduce((sum, o) => sum + computeDelayRepayAmount(o.minutesLate, dKey), 0);
-        availableByDate.set(dKey, { daysLeft, amount });
+        // Cancelled directions add nothing here — their band is unknown
+        // until picked — but flag the date so the badge doesn't show a
+        // misleadingly low (or £0.00) figure.
+        const amount = open.reduce((sum, o) => sum + (o.cancelled ? 0 : computeDelayRepayAmount(o.minutesLate, dKey)), 0);
+        const hasCancelled = open.some(o => o.cancelled);
+        availableByDate.set(dKey, { daysLeft, amount, hasCancelled });
       }
       if (delayRepayUnconfirmedDirections(dKey).length) confirmTrainByDate.set(dKey, daysLeft);
     }
@@ -4910,7 +4943,7 @@ function render(){
         <div class="delay-repay-badge-wrap">
           <div class="delay-repay-badge available" id="delay-repay-badge" data-mode="available" data-date-key="${shown}">
             <div class="delay-repay-badge-caption">Claim available</div>
-            <div class="delay-repay-badge-line">${DELAY_REPAY_ICON_RECEIPT} £${info.amount.toFixed(2)}</div>
+            <div class="delay-repay-badge-line">${DELAY_REPAY_ICON_RECEIPT} ${info.hasCancelled ? (info.amount > 0 ? `£${info.amount.toFixed(2)} + ?` : 'Cancelled') : `£${info.amount.toFixed(2)}`}</div>
             <div class="delay-repay-badge-sub">${daysLeftText(info.daysLeft)}</div>
           </div>
           ${moreHtml(shown)}
@@ -12774,11 +12807,20 @@ function railDetailRows(trains, dayPerf){
     if (!perf){
       return `<div class="rail-detail-row"><span>${t.label}</span><span style="color:var(--ink-dim);">No data</span></div>`;
     }
-    const late = perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES;
+    const late = perfBreachesThreshold(perf);
     const color = late ? '#ff8b7e' : 'var(--good)';
-    const text = perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+    const text = railPerfStatusText(perf);
     return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
   }).join('');
+}
+
+// 2026-10-27: day-sheet wording for one HSP record. Cancelled is checked
+// first — delayMinutes is null for a cancelled train, and `null <= 0` is
+// true in JS, which is how a cancelled 17:31 came to read "On time".
+function railPerfStatusText(perf){
+  if (perfIsCancelled(perf)) return 'Cancelled';
+  if (perf.delayMinutes === null || perf.delayMinutes === undefined) return 'No data';
+  return perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
 }
 
 // Same as railDetailRows, but for the one train that was actually
@@ -12795,12 +12837,12 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
     if (!perf){
       return `<div class="rail-detail-row"><span>${t.label}</span><span style="color:var(--ink-dim);">No data</span></div>`;
     }
-    const late = perf.delayMinutes >= DELAY_REPAY_THRESHOLD_MINUTES;
+    const late = perfBreachesThreshold(perf);
     if (t.key === confirmedKey && late){
       const claim = (delayClaims[dateKey] || {})[direction];
       const status = claim ? claim.status : null;
       if (!status){
-        const delayText = `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+        const delayText = railPerfStatusText(perf);
         return `<div class="rail-detail-row claimable-row" data-claim-date="${dateKey}" data-claim-direction="${direction}"
              style="cursor:pointer; margin:0 -10px; padding:8px 10px; background:#e05a4e; border-radius:8px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
           <span style="color:#14161f; font-weight:700;">${t.label}</span>
@@ -12816,21 +12858,21 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
         </div>`;
       }
       if (status === 'expired'){
-        const delayText = `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+        const delayText = railPerfStatusText(perf);
         return `<div class="rail-detail-row">
           <span style="color:#ff8b7e; font-weight:600;">${t.label} <span style="color:var(--danger); font-size:11px; font-weight:700; margin-left:4px;">EXPIRED</span></span>
           <span style="color:#ff8b7e;">${delayText}</span>
         </div>`;
       }
       const checkColor = status === 'confirmed' ? '#3fb950' : '#8b949e';
-      const delayText = `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+      const delayText = railPerfStatusText(perf);
       return `<div class="rail-detail-row">
         <span style="color:#ff8b7e; font-weight:600;">${t.label} <span title="${status === 'confirmed' ? 'Claim confirmed' : 'Claim started'}">${checkCircleIcon(checkColor)}</span></span>
         <span style="color:#ff8b7e;">${delayText}</span>
       </div>`;
     }
     const color = late ? '#ff8b7e' : 'var(--good)';
-    const text = perf.delayMinutes <= 0 ? 'On time' : `${perf.delayMinutes} minute${perf.delayMinutes===1?'':'s'} delay`;
+    const text = railPerfStatusText(perf);
     return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
   }).join('') + notClaimingButtonHtml(dateKey, direction);
 }
@@ -12869,8 +12911,26 @@ function wireClaimHandlers(overlay, reopen){
     });
   });
   overlay.querySelectorAll('.claimable-row').forEach(row => {
-    row.addEventListener('click', async () => {
+    row.addEventListener('click', () => {
       const dateKey = row.dataset.claimDate;
+      // 2026-10-27: a cancelled confirmed train has no delay figure, so its
+      // band is picked by hand first. The band button's own tap then runs
+      // the claim — keeping the clipboard copy and Avanti link inside a
+      // fresh user gesture, exactly as a direct pill tap does.
+      const cancelledDirs = delayRepayOpportunities(dateKey).filter(o => o.cancelled && !o.claim).map(o => o.dir);
+      if (cancelledDirs.length){
+        openCancelledBandPicker(dateKey, cancelledDirs, (bandByDir) => startDelayClaimForDate(dateKey, bandByDir, reopen));
+        return;
+      }
+      startDelayClaimForDate(dateKey, {}, reopen);
+    });
+  });
+}
+
+// 2026-10-27: starts the claim for every claimable direction on a date.
+// bandByDir supplies the hand-picked band (15 / 30 / 60) for any cancelled
+// direction; a cancelled direction without one is skipped.
+async function startDelayClaimForDate(dateKey, bandByDir, reopen){
       // Clipboard write kicked off first, immediately — before anything
       // else (saveDelayClaims's own await, opening the external link)
       // gets a chance to erode the trusted-gesture window it needs.
@@ -12883,11 +12943,24 @@ function wireClaimHandlers(overlay, reopen){
         const confirmedKey = (confirmedTrains[dateKey] || {})[dir];
         if (!confirmedKey) return;
         const perf = (railPerfCache[dateKey] || {})[confirmedKey];
-        if (!perf || perf.delayMinutes < DELAY_REPAY_THRESHOLD_MINUTES) return;
+        if (!perfBreachesThreshold(perf)) return;
         // 2026-09-30: leave ANY existing record alone — previously only a
         // 'confirmed' one was protected, which would have flipped a
         // direction marked Not claiming (or an expired one) back to started.
         if (delayClaims[dateKey][dir]) return;
+        if (perfIsCancelled(perf)){
+          const band = bandByDir[dir];
+          if (typeof band !== 'number') return;
+          delayClaims[dateKey][dir] = {
+            status: 'started',
+            minutesLate: null, // cancelled — no HSP delay figure
+            bandMinutes: band,
+            amount: computeDelayRepayAmount(band, dateKey),
+            trainKey: confirmedKey,
+            expiredAcknowledged: false,
+          };
+          return;
+        }
         delayClaims[dateKey][dir] = {
           status: 'started',
           minutesLate: perf.delayMinutes,
@@ -12907,6 +12980,56 @@ function wireClaimHandlers(overlay, reopen){
       showClaimBandNotification(dateKey);
       render();
       reopen();
+}
+
+// 2026-10-27: band picker for a cancelled confirmed train. The real delay
+// depends on what was caught instead (e.g. an earlier delayed service, or
+// a substitute that started further along), which the app can't see — so
+// Wayne picks the band for the delay he actually had. onPick runs from the
+// band button's own click, keeping it a trusted user gesture.
+function openCancelledBandPicker(dateKey, dirs, onPick){
+  const picker = document.createElement('div');
+  picker.className = 'modal-overlay';
+  picker.style.zIndex = '60'; // above the day-detail sheet (.modal-overlay is 50)
+  const chosen = {};
+  const bands = [15, 30, 60];
+  const dirLabel = (dir) => {
+    const key = (confirmedTrains[dateKey] || {})[dir];
+    const train = railTrains.find(t => t.key === key);
+    return `${train ? train.label : dir} (${dir === 'AM' ? 'morning' : 'evening'})`;
+  };
+  const rowsHtml = dirs.map(dir => `
+    <div style="margin-bottom:14px;">
+      <div style="font-weight:600; margin-bottom:6px;">${dirLabel(dir)} — cancelled</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${bands.map(b => `<div class="band-pick-btn" data-dir="${dir}" data-band="${b}"
+          style="flex:1; min-width:84px; text-align:center; padding:10px 8px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${delayRepayBandLabel(b)}<div style="font-size:11px; color:var(--ink-dim); margin-top:2px;">£${computeDelayRepayAmount(b, dateKey).toFixed(2)}</div></div>`).join('')}
+      </div>
+    </div>`).join('');
+  picker.innerHTML = `
+    <div class="modal">
+      <h3>Choose your delay band</h3>
+      <div class="sub" style="margin-bottom:14px;">Your train was cancelled — choose the band for the delay you actually experienced, measured from when your planned train should have arrived. Enter the planned train as your intended journey on Avanti's form.</div>
+      ${rowsHtml}
+      <div class="modal-close" id="band-pick-cancel" style="text-align:center; margin-top:4px;">Cancel</div>
+    </div>`;
+  document.body.appendChild(picker);
+  const close = () => picker.remove();
+  picker.querySelector('#band-pick-cancel').addEventListener('click', close);
+  picker.addEventListener('click', (e) => { if (e.target === picker) close(); });
+  picker.querySelectorAll('.band-pick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      chosen[btn.dataset.dir] = Number(btn.dataset.band);
+      picker.querySelectorAll(`.band-pick-btn[data-dir="${btn.dataset.dir}"]`).forEach(b => {
+        const on = b === btn;
+        b.style.background = on ? 'var(--amber)' : 'var(--tile)';
+        b.style.color = on ? '#14161f' : 'var(--ink)';
+      });
+      // Once every cancelled direction has a band, this tap starts the claim.
+      if (dirs.every(d => typeof chosen[d] === 'number')){
+        close();
+        onPick({ ...chosen });
+      }
     });
   });
 }
@@ -13166,7 +13289,7 @@ function openDelayClaimsManager(){
     <div class="rail-detail-row" style="align-items:flex-start; padding:10px 0;">
       <div style="flex:1; min-width:0;">
         <div style="font-weight:600;">${dateLabel(parseKey(e.dateKey))}</div>
-        <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate === null || e.claim.minutesLate === undefined ? 'Cancelled' : `${e.claim.minutesLate} min late`} — £${(e.claim.amount || 0).toFixed(2)}${e.claim.unclaimed ? ' — never claimed' : ''}</div>
+        <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate === null || e.claim.minutesLate === undefined ? `Cancelled${typeof e.claim.bandMinutes === 'number' ? ` (${delayRepayBandLabel(e.claim.bandMinutes)})` : ''}` : `${e.claim.minutesLate} min late`} — £${(e.claim.amount || 0).toFixed(2)}${e.claim.unclaimed ? ' — never claimed' : ''}</div>
         ${(e.claim.status === 'started' && e.claim.claimRef && e.claim.submittedAt) ? (() => {
           const dueKey = fmtKey(addDays(parseKey(e.claim.submittedAt), DELAY_REPAY_RESPONSE_DAYS));
           const overdue = fmtKey(new Date()) >= dueKey;
