@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-27.06:51'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-10-31.19:33'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2007,7 +2007,8 @@ async function copySmartcardToClipboard(){
 // reuses the same boundaries as the payout calculation itself, so the
 // two can never quietly drift out of sync with each other.
 function delayRepayBandLabel(minutes){
-  if (minutes >= 60) return '60+ min';
+  if (minutes >= 120) return '120+ min';
+  if (minutes >= 60) return '60-119 min';
   if (minutes >= 30) return '30-59 min';
   if (minutes >= 15) return '15-29 min';
   return `${minutes} min`; // claims are only ever created at/above the 15-min threshold — this is just a safe fallback, not expected in practice
@@ -2151,7 +2152,14 @@ async function triggerPassPhotoDownload(){
 // ticket type or price structure ever changes.
 const DELAY_REPAY_DIVISOR = 16;
 
+// 2026-10-31: 120+ band added. Avanti paid £19.20 (two singles = a full
+// return) for 120+ cancellations on 2025-11-19 and 2026-02-18, and £16.80 for
+// the 17:31 on 2026-10-26 — which only fits if the day's total is capped at
+// one return: £19.20 minus the £2.40 already paid for that morning's 08:08.
+// So 120+ = 200% of a single, and a day's AM+PM total never exceeds 200%
+// (see delayRepayDayCapAmount). The cap is inferred from that one claim.
 function delayRepayBandPercent(minutes){
+  if (minutes >= 120) return 2.0;
   if (minutes >= 60) return 1.0;
   if (minutes >= 30) return 0.5;
   if (minutes >= 15) return 0.25;
@@ -2171,6 +2179,36 @@ function getSeasonPriceForDate(dateKey){
 function computeDelayRepayAmount(minutes, dateKey){
   const price = getSeasonPriceForDate(dateKey);
   return (price / DELAY_REPAY_DIVISOR) * delayRepayBandPercent(minutes);
+}
+
+// 2026-10-31: most Avanti will pay for one day's travel, AM + PM combined —
+// one return, i.e. two singles. See delayRepayBandPercent.
+function delayRepayDayCapAmount(dateKey){
+  return (getSeasonPriceForDate(dateKey) / DELAY_REPAY_DIVISOR) * 2;
+}
+
+// The amount already counted against the day for the OTHER direction: its
+// claim record's amount (unless declined/expired, which pay nothing). With no
+// record yet, only a pending MORNING claim is counted — the morning takes its
+// full amount and the evening absorbs the cap, as Avanti did on 2026-10-26.
+// (Otherwise two unrecorded directions would each cap against the other.)
+// A cancelled direction with no band chosen yet counts as nothing.
+function delayRepayOtherDirAmount(dateKey, dir){
+  const other = dir === 'AM' ? 'PM' : 'AM';
+  const claim = (delayClaims[dateKey] || {})[other];
+  if (claim) return isClaimBeingMade(claim) || claim.status === 'confirmed' ? (claim.amount || 0) : 0;
+  if (other !== 'AM') return 0;
+  const o = delayRepayOpportunities(dateKey).find(x => x.dir === other);
+  if (!o || o.cancelled) return 0;
+  return computeDelayRepayAmount(o.minutesLate, dateKey);
+}
+
+// A direction's amount after the day cap, given what the other direction
+// already takes up. Never negative.
+function cappedDelayRepayAmount(minutes, dateKey, dir){
+  const raw = computeDelayRepayAmount(minutes, dateKey);
+  const room = delayRepayDayCapAmount(dateKey) - delayRepayOtherDirAmount(dateKey, dir);
+  return Math.max(0, Math.min(raw, room));
 }
 
 async function saveDelayClaims(){
@@ -4894,7 +4932,7 @@ function render(){
         // Cancelled directions add nothing here — their band is unknown
         // until picked — but flag the date so the badge doesn't show a
         // misleadingly low (or £0.00) figure.
-        const amount = open.reduce((sum, o) => sum + (o.cancelled ? 0 : computeDelayRepayAmount(o.minutesLate, dKey)), 0);
+        const amount = open.reduce((sum, o) => sum + (o.cancelled ? 0 : cappedDelayRepayAmount(o.minutesLate, dKey, o.dir)), 0);
         const hasCancelled = open.some(o => o.cancelled);
         availableByDate.set(dKey, { daysLeft, amount, hasCancelled });
       }
@@ -12955,7 +12993,7 @@ async function startDelayClaimForDate(dateKey, bandByDir, reopen){
             status: 'started',
             minutesLate: null, // cancelled — no HSP delay figure
             bandMinutes: band,
-            amount: computeDelayRepayAmount(band, dateKey),
+            amount: cappedDelayRepayAmount(band, dateKey, dir),
             trainKey: confirmedKey,
             expiredAcknowledged: false,
           };
@@ -12964,7 +13002,7 @@ async function startDelayClaimForDate(dateKey, bandByDir, reopen){
         delayClaims[dateKey][dir] = {
           status: 'started',
           minutesLate: perf.delayMinutes,
-          amount: computeDelayRepayAmount(perf.delayMinutes, dateKey),
+          amount: cappedDelayRepayAmount(perf.delayMinutes, dateKey, dir),
           trainKey: confirmedKey,
           expiredAcknowledged: false,
         };
@@ -12992,7 +13030,7 @@ function openCancelledBandPicker(dateKey, dirs, onPick){
   picker.className = 'modal-overlay';
   picker.style.zIndex = '60'; // above the day-detail sheet (.modal-overlay is 50)
   const chosen = {};
-  const bands = [15, 30, 60];
+  const bands = [15, 30, 60, 120];
   const dirLabel = (dir) => {
     const key = (confirmedTrains[dateKey] || {})[dir];
     const train = railTrains.find(t => t.key === key);
@@ -13003,7 +13041,7 @@ function openCancelledBandPicker(dateKey, dirs, onPick){
       <div style="font-weight:600; margin-bottom:6px;">${dirLabel(dir)} — cancelled</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         ${bands.map(b => `<div class="band-pick-btn" data-dir="${dir}" data-band="${b}"
-          style="flex:1; min-width:84px; text-align:center; padding:10px 8px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${delayRepayBandLabel(b)}<div style="font-size:11px; color:var(--ink-dim); margin-top:2px;">£${computeDelayRepayAmount(b, dateKey).toFixed(2)}</div></div>`).join('')}
+          style="flex:1 1 calc(50% - 4px); box-sizing:border-box; text-align:center; padding:10px 8px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${delayRepayBandLabel(b)}<div style="font-size:11px; color:var(--ink-dim); margin-top:2px;">£${cappedDelayRepayAmount(b, dateKey, dir).toFixed(2)}</div></div>`).join('')}
       </div>
     </div>`).join('');
   picker.innerHTML = `
