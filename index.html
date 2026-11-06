@@ -1329,7 +1329,7 @@ function checkCircleIcon(color){
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-10-31.19:33'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-11-06.16:50'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 
 let gcalEnabled = false; // whether the person has connected Google Calendar
 let preferredGoogleEmail = ''; // used as a login hint to skip the account picker when multiple Google accounts exist
@@ -2309,7 +2309,7 @@ const LIKELY_TRAIN_FAST_WINDOW_AFTER_MIN = 10;  // ...and keep it up to this man
 // scope at all. Tightened so neighbouring hourly-ish trains no longer
 // overlap under normal circumstances.
 const LIKELY_TRAIN_TIME_WINDOW_MIN = 20; // only bother checking within this many minutes either side of a configured train time
-const LIKELY_ARRIVAL_WINDOW_FORWARD_MIN = 50; // arrival-side check: forward-only from departure time, wide enough for a real journey plus delay margin, narrow enough to stay under this app's own hourly train spacing
+const LIKELY_ARRIVAL_WINDOW_FORWARD_MIN = 90; // arrival-side check: forward-only from departure time, wide enough for a real journey plus a heavy delay. Widened from 50 on 2026-11-06 to match the Worker's STATION_PING_ARRIVAL_WINDOW_FORWARD_MIN — see the note in checkLikelyArrival
 // How close a candidate's own live departure must be to right now before
 // it's confident enough to silently confirm without asking. Separate from
 // (and stricter than) the general 15-minute threshold below that decides
@@ -8238,9 +8238,14 @@ async function checkLikelyArrival(){
     // is ~29 minutes) already puts you well outside a 20-minute window
     // centred on departure. Confirmed this would have made the whole
     // function silently never fire on a real journey before catching it.
-    // 50 minutes covers a normal journey plus a generous delay margin,
-    // while staying under the ~60-minute gap between this app's own
-    // hourly-spaced trains.
+    // 90 minutes (2026-11-06, was 50) covers a normal journey plus a
+    // heavy delay. 50 was chosen to stay under the hourly train spacing,
+    // but this is only a pre-filter: which train it was comes from the
+    // arriving service's scheduled time at our origin (within 2 minutes)
+    // below, so overlapping windows can't mix trains up. 50 meant a train
+    // more than ~20 minutes late was never confirmed here — and since
+    // 5 Nov the Worker deliberately leaves a "Delayed" train unconfirmed
+    // at departure, so this arrival check has to cover it.
     const inWindow = dirTrains.some(t => {
       const tMin = parseInt(t.time.slice(0,2),10)*60 + parseInt(t.time.slice(2,4),10);
       return nowMinutes >= tMin && nowMinutes <= tMin + LIKELY_ARRIVAL_WINDOW_FORWARD_MIN;
