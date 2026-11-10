@@ -831,17 +831,11 @@ function render(){
     menuOpen = false;
     render();
   });
-  const parkingCostLink = document.getElementById('parking-cost-link');
-  if (parkingCostLink) parkingCostLink.addEventListener('click', () => { menuOpen = false; render(); openParkingCostEditor(); });
-
   const pollingSettingsLink = document.getElementById('polling-settings-link');
   if (pollingSettingsLink) pollingSettingsLink.addEventListener('click', () => { menuOpen = false; render(); openPollingSettingsEditor(); });
 
   const depboardLink = document.getElementById('depboard-link');
   if (depboardLink) depboardLink.addEventListener('click', () => { menuOpen = false; render(); openDepartureBoardView(); });
-
-  const dayReturnPriceLink = document.getElementById('day-return-price-link');
-  if (dayReturnPriceLink) dayReturnPriceLink.addEventListener('click', () => { menuOpen = false; render(); openDayReturnPriceEditor(); });
 
   const preferredGoogleLink = document.getElementById('preferred-google-link');
   if (preferredGoogleLink) preferredGoogleLink.addEventListener('click', () => { menuOpen = false; render(); openPreferredGoogleEditor(); });

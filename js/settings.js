@@ -156,51 +156,78 @@ function openSettingsMenu(){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 }
 
+// 2026-11-10 — one combined form (backlog item 2, spec
+// claude/codebase-split-and-costs-form-spec.md Part B). Replaces the old
+// two-link menu and its two single-field editors (openParkingCostEditor,
+// openDayReturnPriceEditor). Invalid input is now shown, not silently
+// ignored; only changed values are saved; a parking-cost change republishes
+// the Personal Finance estimates straight away rather than on the next
+// app foreground.
 function openCostsMenu(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'modal-overlay modal-overlay-nav-safe'; // taller than the old menu — keeps Back clear of the bottom nav
   overlay.innerHTML = `
     <div class="modal">
       <h3>Costs</h3>
       <div class="sub">Daily costs used to estimate what to set aside each payday.</div>
-      <div class="settings-link" id="costs-parking-link">Set daily parking cost (currently £${parkingCost.toFixed(2)})</div>
-      <div class="settings-link" id="costs-day-return-link">Set day return price (currently £${dayReturnPrice.toFixed(2)})</div>
-      <div class="modal-close" id="costs-close-btn" style="margin-top:16px;">${cameFromSettings ? '← Back to Settings' : 'Close'}</div>
+      <div style="margin-top:14px; font-size:13px; color:var(--ink-dim);">Daily parking cost (£)</div>
+      <input type="number" id="costs-parking-input" value="${parkingCost.toFixed(2)}" step="0.01" min="0" style="margin-bottom:4px;" />
+      <div id="costs-parking-error" style="color:var(--danger); font-size:13px; margin-bottom:4px; display:none;"></div>
+      <div style="font-size:12px; color:var(--ink-dim); margin-bottom:14px;">Used for the payday estimate on days you might drive in, and as the default when you tick 'I parked today'.</div>
+      <div style="font-size:13px; color:var(--ink-dim);">Day return price (£)</div>
+      <input type="number" id="costs-day-return-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:4px;" />
+      <div id="costs-day-return-error" style="color:var(--danger); font-size:13px; margin-bottom:4px; display:none;"></div>
+      <div style="font-size:12px; color:var(--ink-dim); margin-bottom:14px;">Used by the Buy tab to compare singles against a season ticket. The Buy tab can also update this from the live fares check.</div>
+      <button class="save-btn" id="costs-save">Save</button>
+      <div class="modal-close" id="costs-close-btn">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
     </div>
   `;
   document.body.appendChild(overlay);
   function close(){ if (overlay.isConnected) document.body.removeChild(overlay); }
-  document.getElementById('costs-parking-link').addEventListener('click', () => { close(); openParkingCostEditor(); });
-  document.getElementById('costs-day-return-link').addEventListener('click', () => { close(); openDayReturnPriceEditor(); });
-  document.getElementById('costs-close-btn').addEventListener('click', () => { close(); if (cameFromSettings) openSettingsMenu(); });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay){ close(); if (cameFromSettings) openSettingsMenu(); } });
-}
+  function back(){ close(); if (cameFromSettings) openSettingsMenu(); }
 
-function openParkingCostEditor(){
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Daily parking cost</h3>
-      <div class="sub">Used to estimate what to set aside each month, on days you might drive in.</div>
-      <input type="number" id="parking-cost-input" value="${parkingCost.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
-      <button class="save-btn" id="parking-cost-save">Save</button>
-      <div class="modal-close" id="parking-cost-close">Cancel</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.getElementById('parking-cost-save').addEventListener('click', async () => {
-    const val = parseFloat(document.getElementById('parking-cost-input').value);
-    if (!isNaN(val) && val >= 0){
-      parkingCost = val;
-      await saveParkingCost();
-      document.body.removeChild(overlay); render();
+  // Blank, negative or non-numeric → null. An <input type="number"> already
+  // reports junk as '' — the isFinite check covers anything else.
+  function readMoney(inputId, errorId){
+    const raw = document.getElementById(inputId).value.trim();
+    const val = raw === '' ? NaN : Number(raw);
+    const errEl = document.getElementById(errorId);
+    if (!Number.isFinite(val) || val < 0){
+      errEl.textContent = 'Enter an amount of £0 or more.';
+      errEl.style.display = 'block';
+      return null;
     }
+    errEl.style.display = 'none';
+    return val;
+  }
+  // Compared in pennies, so an untouched field (shown to 2dp) never counts
+  // as a change just because the stored value had more decimal places.
+  const pennies = (v) => Math.round(v * 100);
+
+  document.getElementById('costs-save').addEventListener('click', async () => {
+    const parkingVal = readMoney('costs-parking-input', 'costs-parking-error');
+    const dayReturnVal = readMoney('costs-day-return-input', 'costs-day-return-error');
+    if (parkingVal === null || dayReturnVal === null) return; // nothing saved
+
+    const parkingChanged = pennies(parkingVal) !== pennies(parkingCost);
+    const dayReturnChanged = pennies(dayReturnVal) !== pennies(dayReturnPrice);
+    if (parkingChanged){
+      parkingCost = parkingVal;
+      await saveParkingCost();
+      scheduleTransportPublish(); // Personal Finance estimates — agreed 2026-11-10
+    }
+    if (dayReturnChanged){
+      dayReturnPrice = dayReturnVal;
+      await saveDayReturnPrice();
+    }
+    close();
+    // Re-render whenever something changed, so the Home payday card behind
+    // Settings is already up to date when Settings is closed.
+    if (parkingChanged || dayReturnChanged) render();
+    if (cameFromSettings) openSettingsMenu();
   });
-  document.getElementById('parking-cost-close').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.getElementById('costs-close-btn').addEventListener('click', back);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) back(); });
 }
 
 function openPollingSettingsEditor(cameFromSettings){
@@ -640,34 +667,6 @@ function openGeofenceSettingsEditor(cameFromSettings){
       if (cameFromSettings) openSettingsMenu();
     }
   });
-}
-
-
-function openDayReturnPriceEditor(){
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Day return price</h3>
-      <div class="sub">Used by the ticket purchase advisor to compare against your season ticket.</div>
-      <input type="number" id="day-return-price-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
-      <button class="save-btn" id="day-return-price-save">Save</button>
-      <div class="modal-close" id="day-return-price-close">Cancel</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.getElementById('day-return-price-save').addEventListener('click', async () => {
-    const val = parseFloat(document.getElementById('day-return-price-input').value);
-    if (!isNaN(val) && val >= 0){
-      dayReturnPrice = val;
-      await saveDayReturnPrice();
-      document.body.removeChild(overlay); render();
-    }
-  });
-  document.getElementById('day-return-price-close').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
 function openPreferredGoogleEditor(cameFromSettings){
