@@ -51,7 +51,7 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 17. `train-status.js` — `describePointStatus`, Staff overrides and time columns, journey-state notifications, formation display.
 18. `train-progress-build.js` — `buildTrainProgress`.
 19. `train-progress.js` — `openTrainProgress`, weather.
-20. `settings.js` — `openSettingsMenu` (the grid), `openCostsMenu`, parking-cost and day-return editors, polling, geofence, write secret, drive check, preferred Google account.
+20. `settings.js` — `openSettingsMenu` (the grid), `openCostsMenu` (the combined Costs form: parking cost and day return price), polling, geofence, write secret, drive check, preferred Google account.
 21. `settings-trains.js` — `openRailConfig`, `openHomeWorkStationsManager`.
 22. `backup-restore.js` — `exportBackup`, `openBackupRestore`, history imports.
 23. `depboard.js` — the split-flap station board.
@@ -118,7 +118,7 @@ Each version gets its own service-worker cache and every CSS/JS URL carries `?v=
 - **train-status.js** (38 KB) — `describePointStatus`, `pruneConfirmedPointStatusCache`, `saveConfirmedPointStatusCache`, `pruneLastSeenJourneyState`, `saveLastSeenJourneyState`, `pruneLastSeenStaffMatch`, `saveLastSeenStaffMatch`, `isClockTimeEarlier`, `isoTimeToHHMM`, `staffMinutesDiff`, `buildStaffTimeColumnsHtml`, `shiftClockTime`, `staffPlatformStatusFor`, `staffConfirmsArrival`, `journeyNotifyBody`, `diffAndNotifyJourneyState`, `findCallingPointSchedTime`, `findServiceOriginPoint`, `describePointStatusRemembered`, `addMinutesToTime`, `getLengthOnlyFormationLetters`, `buildNoseSvg`, `shouldReverseFallbackLetters`, `buildFormationHtml`, `buildFormationDebugHtml`
 - **train-progress-build.js** (60 KB) — `buildTrainProgress`
 - **train-progress.js** (74 KB) — `weatherIconForCode`, `localWallClockString`, `hourKeyFor`, `fetchWeatherForPoints`, `openTrainProgress`
-- **settings.js** (44 KB) — `openSettingsMenu`, `openCostsMenu`, `openParkingCostEditor`, `openPollingSettingsEditor`, `openPwaWriteSecretEditor`, `openDriveCheckEditor`, `renderDriveCheckResult`, `openGeofenceSettingsEditor`, `openDayReturnPriceEditor`, `openPreferredGoogleEditor`
+- **settings.js** (44 KB) — `openSettingsMenu`, `openCostsMenu`, `openPollingSettingsEditor`, `openPwaWriteSecretEditor`, `openDriveCheckEditor`, `renderDriveCheckResult`, `openGeofenceSettingsEditor`, `openPreferredGoogleEditor`
 - **settings-trains.js** (12 KB) — `openRailConfig`, `openHomeWorkStationsManager`
 - **backup-restore.js** (18 KB) — `exportBackup`, `openBackupRestore`, `openImportHistory`, `openDelayClaimsImport`
 - **depboard.js** (12 KB) — `depBoardRowData`, `openDepartureBoardView`
