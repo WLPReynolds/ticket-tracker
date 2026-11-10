@@ -1,11 +1,55 @@
-const CACHE_NAME = 'ticket-tracker-v5';
+// VERSION is set by tools/stamp-version.sh, together with APP_VERSION in
+// js/config.js and the ?v= stamps in index.html — tools/check.sh fails if the
+// three disagree. Don't edit by hand.
+//
+// 2026-11-10 — split codebase: the app is now ~30 files, not one. Every CSS/JS
+// URL carries ?v=VERSION and each version gets its own cache, so a new
+// index.html can never be paired with an old cached script (cache entries are
+// keyed by the versioned URL). A file that can't be fetched and isn't cached
+// fails the load visibly (see the guard in js/init.js) rather than running a
+// mix of versions. A new version means a new cache; activate deletes old ones.
+const VERSION = '2026-11-10.0825';
+const CACHE_NAME = 'ticket-tracker-' + VERSION;
+const V = '?v=' + VERSION;
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './icons/icon-maskable-512.png'
+  './icons/icon-maskable-512.png',
+  './css/app.css' + V,
+  './js/config.js' + V,
+  './js/state.js' + V,
+  './js/util.js' + V,
+  './js/tickets.js' + V,
+  './js/delay-repay.js' + V,
+  './js/darwin.js' + V,
+  './js/stations.js' + V,
+  './js/google.js' + V,
+  './js/transport-estimates.js' + V,
+  './js/watch-sync.js' + V,
+  './js/confirm-train.js' + V,
+  './js/journey-share.js' + V,
+  './js/emergency-routes.js' + V,
+  './js/screen-home.js' + V,
+  './js/screen-calendar.js' + V,
+  './js/screen-live.js' + V,
+  './js/train-status.js' + V,
+  './js/train-progress-build.js' + V,
+  './js/train-progress.js' + V,
+  './js/settings.js' + V,
+  './js/settings-trains.js' + V,
+  './js/backup-restore.js' + V,
+  './js/depboard.js' + V,
+  './js/claims-ui.js' + V,
+  './js/performance.js' + V,
+  './js/buy.js' + V,
+  './js/roi.js' + V,
+  './js/help.js' + V,
+  './js/backlog.js' + V,
+  './js/easter-eggs.js' + V,
+  './js/init.js' + V
 ];
 
 self.addEventListener('install', (event) => {
