@@ -6,8 +6,9 @@ The repo is public: structure only, never secrets.
 
 ## How the app is put together
 
-- `index.html` — just the `<head>`, the `#app` div, one `<link>` and the `<script>` tags. No code.
-- `css/app.css` — every style (one file, ~32 KB).
+- `index.html` — just the `<head>`, the `#app` div, two `<link>`s (`design.css`, `app.css`) and the `<script>` tags. No code.
+- `css/design.css` — design tokens (type scale, radii, spacing) and the shared `ui-` parts (card, row, switch, button, figure, pill, page frame…). Loaded before `app.css`. **Read `STYLEGUIDE.md` before writing any new styling.**
+- `css/app.css` — every other style (one file, ~32 KB), including the colour palette in `:root`.
 - `js/*.js` — 31 plain script files (not ES modules), loaded in the order below. They share one global scope, exactly as the old single `<script>` block did, so any function can call any other.
 - `sw.js` — service worker. Network-first, cache as offline fallback, one cache per version.
 - `tools/stamp-version.sh`, `tools/check.sh` — the release routine (below).
