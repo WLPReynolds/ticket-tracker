@@ -21,7 +21,7 @@ But **top-level statements run as each file loads**, so anything a top-level lin
 
 - `let`/`const` initialisers that use constants (e.g. `let periodStart = DEFAULT_PERIOD_START`) → constants live in `config.js`, which loads before `state.js`.
 - `installDriveBackupDirtyTracker` runs immediately inside `state.js` and wraps `localStorage.setItem`, so it must stay ahead of anything that saves.
-- A `const` kept beside its functions in a later file (e.g. `SETTINGS_ICONS` in `settings.js`) may only use things from earlier files.
+- A `const` kept beside its functions in a later file (e.g. `settingsReturnScroll` in `settings.js`) may only use things from earlier files.
 - `init.js` is always last.
 
 Since the split, a syntax error stops only its own file, not the whole app — the app could start half-working. That's why `tools/check.sh` runs `node --check` on everything, and `init.js` starts with a load guard that shows "Update didn't finish loading" if any earlier file is missing.
@@ -32,6 +32,7 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 1. `config.js` — `APP_VERSION`, Google client ID, Worker URLs, nav icons, every `DEFAULT_*` constant and tunable, `BACKUP_KEYS`. Declarations only.
 2. `state.js` — the shared mutable state (top-level `let`s, including `state`), `loadJSON`, `loadData`, every `save…()` function, the Drive-backup dirty tracker.
 3. `util.js` — date keys (`fmtKey`, `parseKey`, `addDays`…), London time helpers (`londonParts`, `londonDateKey`…), `escapeHtml`, clamps, `distanceKm`, `showToast`, `closeAllModals`, `openExternalLink`, `showLocalNotification`.
+   - `ui-parts.js` (loads straight after `util.js`) — shared screen parts, declarations only: `uiPageBar`, `uiGroup`, `uiRow`, `uiSwitchRow`, `uiSetSwitch`, `UI_ICON_BACK`, `UI_ICON_CHEV`. See `STYLEGUIDE.md`.
 
 **Logic (no screens)**
 4. `tickets.js` — `computeStates`, ticket periods, `findNextBuyDateKey`, holiday countdown, pay periods and payday estimates (`estimateForPeriod`), parking savings, `syncBankHolidays`.
@@ -82,7 +83,7 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 
 ## To change X, open Y
 
-- **New setting:** default in `config.js`; `let` + load in `loadData` + `save…()` in `state.js`; add the key to `BACKUP_KEYS` if it should be backed up; tile and editor in `settings.js` (`SETTINGS_ICONS`, `openSettingsMenu`). Then ask: does the watch need it? (`buildWatchConfigBody` in `watch-sync.js`.) And update Help (`help.js`).
+- **New setting:** default in `config.js`; `let` + load in `loadData` + `save…()` in `state.js`; add the key to `BACKUP_KEYS` if it should be backed up; row in `openSettingsMenu` (`settings.js`, built with `uiRow` / `uiSwitchRow` from `ui-parts.js`) and its sub-page using `uiPageBar`. Then ask: does the watch need it? (`buildWatchConfigBody` in `watch-sync.js`.) And update Help (`help.js`).
 - **New backup key:** `BACKUP_KEYS` in `config.js`. Restore works from that list (`backup-restore.js`).
 - **New watch-config field:** `buildWatchConfigBody` in `watch-sync.js`, plus the Worker's validation in the `ticket-tracker-workers` repo.
 - **Help text:** `HELP_GUIDE_MD` in `help.js`.
@@ -103,6 +104,7 @@ Each version gets its own service-worker cache and every CSS/JS URL carries `?v=
 - **config.js** (18 KB) — _(declarations only)_
 - **state.js** (39 KB) — `saveDelayClaims`, `loadJSON`, `loadData`, `saveComments`, `saveTravelOverrides`, `ensurePurchaseFields`, `savePurchases`, `saveLastKnownPrice`, `saveParkingCost`, `saveSmartcardNumber`, `saveProduceClaimDetailsFile`, `savePaydayEstimateSnapshots`, `saveParkedDays`, `saveDismissedParkingSavingsPeriods`, `saveParkingSavingsSnapshots`, `saveParkingBudgetDays`, `saveTicketsSpentCardDismissed`, `savePollingSettings`, `saveGeofenceSettings`, `savePwaWriteSecret`, `saveDayReturnPrice`, `saveFareCheckedYear`, `saveDismissedMonths`, `saveGcalEnabled`, `savePreferredGoogleEmail`, `saveDebugMode`, `saveWeatherEnabled`, `saveAlternativeRoutes`, `saveEmergencyTabVisible`, `saveHomeStation`, `saveWorkStation`, `saveDriveBackupEnabled`, `saveDriveBackupFolderId`, `saveGcalEventId`, `saveGcalPendingSync`, `saveLastNotifiedBuyKey`, `saveRailTrains`, `saveTrainAlertConfig`, `saveTargetTrains`, `saveDriveCheckSettings`, `saveRailPerfCache`, `saveRailSyncedDays`, `saveRailHistoryDaysBack`, `saveReasonCodesCache`, `saveConfirmedTrains`, `saveSilentConfirmBanner`, `saveTrackedTrains`, `savePeriodStart`
 - **util.js** (15 KB) — `checkCircleIcon`, `fmtKey`, `parseKey`, `isWeekend`, `addDays`, `getFirstSundayOfMarch`, `dayNameShort`, `dateLabel`, `dateLabelShort`, `clampPollBeforeDepartureMin`, `clampPollCheckInIntervalMin`, `distanceKm`, `openExternalLink`, `clampGeofenceRadius`, `showLocalNotification`, `closeAllModals`, `escapeHtml`, `minutesUntilLocalTime`, `getCurrentPositionOnce`, `londonOffsetMinutes`, `londonParts`, `londonDateKey`, `londonWallClockOn`, `liveTimeToDate`, `closestDateForTime`, `nextDateForTime`, `showToast`
+- **ui-parts.js** — `uiPageBar`, `uiGroup`, `uiRow`, `uiSwitchRow`, `uiSetSwitch`
 - **tickets.js** (24 KB) — `syncBankHolidays`, `findNextTravelDay`, `getPayDate`, `getPayPeriodByOffset`, `estimateForPeriod`, `computeExpenseSavingsForPeriod`, `getOrLockParkingBudgetDays`, `computeParkingSavingsForPeriod`, `findNextBuyDateKey`, `getRealPeriodEnd`, `isCurrentlyInTicketGap`, `getSingleTicketForDate`, `computeStates`, `findHistoricalStateForDate`, `getRange`, `findNextHoliday`, `countWorkingDaysUntil`, `holidayWorkingDaysCount`, `hoursUntilHomeTime`, `findLastWorkingDayBefore`, `findHolidayBlockEnd`, `findNextWorkingDayAfter`, `getHolidayCountdownState`, `isBuyTicketDay`
 - **delay-repay.js** (21 KB) — `delayRepayBandLabel`, `isClaimBeingMade`, `claimBandMinutes`, `delayRepayBandPercent`, `getSeasonPriceForDate`, `computeDelayRepayAmount`, `delayRepayDayCapAmount`, `delayRepayOtherDirAmount`, `cappedDelayRepayAmount`, `isEligibleRailDay`, `perfIsCancelled`, `perfBreachesThreshold`, `getDelayStatus`, `delayRepayDaysSince`, `delayRepayOpportunities`, `isDirectionClaimable`, `delayRepayUnconfirmedDirections`, `railSyncDatesBatch`, `railSyncMissingDates`, `railSyncFullHistory`, `ensureReasonCodes`, `describeReasonCode`
 - **darwin.js** (16 KB) — `fetchLiveBoards`, `queryDarwin`, `fetchPureBoard`, `fetchDebugBoard`, `fetchServiceDetails`, `findCallingPointRaw`, `resolveCallingPointClockTime`, `fetchStationBoardForService`, `buildStaffTargetTime`, `fetchStaffBoardComparison`, `extractStaffLocationFields`

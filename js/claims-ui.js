@@ -530,21 +530,19 @@ function openDelayClaimsManager(){
 
 function openPassPhotoManager(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Smartcard pass</h3>
+    ${uiPageBar('Smartcard photo', { backId: 'pass-photo-close-btn', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'smartcard-number-save-btn' })}
+    <div class="ui-page-body">
       <div class="sub">Photo and smartcard number, kept together — everything needed to start a delay repay claim.</div>
       <div id="pass-photo-preview-wrap" style="margin:14px 0; text-align:center;"></div>
       <input type="file" accept="image/*" id="pass-photo-input" style="display:none;" />
-      <button class="save-btn" id="pass-photo-choose-btn">Choose photo</button>
+      <button type="button" class="ui-btn-secondary ui-btn-block" id="pass-photo-choose-btn">Choose photo</button>
       <div id="pass-photo-remove-wrap" style="text-align:center; margin-top:10px; display:none;">
         <span id="pass-photo-remove-link" style="font-size:12px; color:#ff8b7e; text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Remove saved photo</span>
       </div>
       <div class="sub" style="margin-top:20px; margin-bottom:4px;">Smartcard number</div>
       <input type="text" id="smartcard-number-input" value="${escapeHtml(smartcardNumber)}" maxlength="${SMARTCARD_NUMBER_MAX_LENGTH}" placeholder="e.g. 302012345678901234" style="font-family:monospace;" />
-      <button class="save-btn" id="smartcard-number-save-btn" style="margin-top:10px;">Save number</button>
-      <div class="modal-close" id="pass-photo-close-btn" style="margin-top:16px;">${cameFromSettings ? '← Back to Settings' : 'Close'}</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -606,11 +604,5 @@ function openPassPhotoManager(cameFromSettings){
   document.getElementById('pass-photo-close-btn').addEventListener('click', () => {
     document.body.removeChild(overlay);
     if (cameFromSettings) openSettingsMenu();
-  });
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay){
-      document.body.removeChild(overlay);
-      if (cameFromSettings) openSettingsMenu();
-    }
   });
 }

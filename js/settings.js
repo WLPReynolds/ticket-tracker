@@ -1,26 +1,14 @@
-// settings.js — Settings grid, Costs, polling, geofence, write secret, drive check, preferred Google account.
+// settings.js — the Settings page (grouped list), Costs, polling, geofence, write secret, drive check, preferred Google account.
 // Part of the ticket tracker PWA. Read CODEMAP.md first: it lists what each file owns and the load order.
 
-// Same stroke style as REFRESH_ICON/REMOVE_ICON — one consistent
-// visual language for every icon in the app, not a second one just for
-// this grid.
-const SETTINGS_ICONS = {
-  costs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>',
-  polling: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>',
-  account: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="10" r="3"/><path d="M6.5 18.5a6 6 0 0 1 11 0"/></svg>',
-  calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
-  train: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="13" rx="4"/><path d="M6 12h12M9 3v9M15 3v9"/><circle cx="9" cy="19" r="1.3"/><circle cx="15" cy="19" r="1.3"/><path d="M7 16l-2 4M17 16l2 4"/></svg>',
-  card: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>',
-  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M14 2v5h5"/><path d="M8 13h8M8 17h5"/></svg>',
-  cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .3-8 6 6 0 0 0-11.6 1.6A4 4 0 0 0 7 18z"/></svg>',
-  bug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="10" rx="4"/><path d="M12 8V5M8 11H4M20 11h-4M9 6 7.5 4.5M15 6l1.5-1.5M8 18l-2 2M16 18l2 2M9 13h6"/></svg>',
-  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
-  geo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-7.5 7-12a7 7 0 1 0-14 0c0 4.5 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>',
-  key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M17 6l3 3M14.5 8.5l2 2"/></svg>',
-  car: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V11l2-5h10l2 5v5"/><path d="M3 16h18v2H3z"/><path d="M5 11h14"/><circle cx="7.5" cy="18.5" r="1.5"/><circle cx="16.5" cy="18.5" r="1.5"/></svg>',
-  warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
-};
+// Where the Settings list was scrolled to when a sub-page was opened, so coming
+// back puts you in the same place instead of at the top (2026-11-11).
+let settingsReturnScroll = 0;
 
+// 2026-11-11 — facelift stage 2: Settings is a full-screen page (the shared
+// page frame) with one grouped list. Pages that open another page show their
+// current value and a chevron; on/off items are switches flipped in place.
+// Every sub-page uses the same frame and returns here. See STYLEGUIDE.md.
 function openSettingsMenu(){
   // Recomputed locally, the same way the other Settings sub-screens
   // already do, rather than relying on render()'s own closure — this
@@ -32,108 +20,112 @@ function openSettingsMenu(){
   const spendingVisible = !ticketsSpentCardDismissed;
 
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Settings</h3>
-      <div class="settings-grid">
-        <div class="settings-grid-item" id="settings-costs-link">${SETTINGS_ICONS.costs}<span class="cat-label">Costs</span></div>
-        <div class="settings-grid-item" id="settings-polling-link">${SETTINGS_ICONS.polling}<span class="cat-label">Polling</span></div>
-        <div class="settings-grid-item" id="settings-geofence-link">${SETTINGS_ICONS.geo}<span class="cat-label">Geofence</span></div>
-        <div class="settings-grid-item${preferredGoogleEmail ? ' active' : ''}" id="settings-preferred-google-link">${SETTINGS_ICONS.account}<span class="cat-label">Account</span><span class="status-label">${preferredGoogleEmail ? 'Connected' : 'Not connected'}</span></div>
-        <div class="settings-grid-item${gcalEnabled ? ' active' : ''}" id="settings-gcal-link">${SETTINGS_ICONS.calendar}<span class="cat-label">Calendar</span><span class="status-label">${gcalEnabled ? 'Connected' : 'Not connected'}</span></div>
-        <div class="settings-grid-item" id="settings-rail-config-link">${SETTINGS_ICONS.train}<span class="cat-label">Trains</span></div>
-        <div class="settings-grid-item${driveCheckConfig.enabled ? ' active' : ''}" id="settings-drive-check-link">${SETTINGS_ICONS.car}<span class="cat-label">Drive check</span><span class="status-label">${driveCheckConfig.enabled ? 'On' : 'Off'}</span></div>
-        <div class="settings-grid-item" id="settings-pass-photo-link">${SETTINGS_ICONS.card}<span class="cat-label">Smartcard</span></div>
-        <div class="settings-grid-item${produceClaimDetailsFile ? ' active' : ''}" id="settings-claim-file-link">${SETTINGS_ICONS.file}<span class="cat-label">Claim file</span><span class="status-label">${produceClaimDetailsFile ? 'On' : 'Off'}</span></div>
-        <div class="settings-grid-item${weatherEnabled ? ' active' : ''}" id="settings-weather-link">${SETTINGS_ICONS.cloud}<span class="cat-label">Weather</span><span class="status-label">${weatherEnabled ? 'On' : 'Off'}</span></div>
-        <div class="settings-grid-item${debugModeEnabled ? ' active' : ''}" id="settings-debug-link">${SETTINGS_ICONS.bug}<span class="cat-label">Debug</span><span class="status-label">${debugModeEnabled ? 'On' : 'Off'}</span></div>
-        <div class="settings-grid-item${paydayVisible ? ' active' : ''}" id="settings-payday-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Payday card</span><span class="status-label">${paydayVisible ? 'Visible' : 'Hidden'}</span></div>
-        <div class="settings-grid-item${parkingSavingsVisible ? ' active' : ''}" id="settings-parking-savings-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Savings card</span><span class="status-label">${parkingSavingsVisible ? 'Visible' : 'Hidden'}</span></div>
-        <div class="settings-grid-item${spendingVisible ? ' active' : ''}" id="settings-spending-visibility-link">${SETTINGS_ICONS.eye}<span class="cat-label">Spending card</span><span class="status-label">${spendingVisible ? 'Visible' : 'Hidden'}</span></div>
-        <div class="settings-grid-item" id="settings-emergency-routes-link">${SETTINGS_ICONS.warning}<span class="cat-label">Emergency routes</span></div>
-        <div class="settings-grid-item${emergencyTabVisible ? ' active' : ''}" id="settings-emergency-tab-link">${SETTINGS_ICONS.warning}<span class="cat-label">Emergency tab</span><span class="status-label">${emergencyTabVisible ? 'Shown' : 'Hidden'}</span></div>
-        <div class="settings-grid-item" id="settings-home-work-link">${SETTINGS_ICONS.geo}<span class="cat-label">Home & Work stations</span><span class="status-label">${escapeHtml(homeStation.code)} / ${escapeHtml(workStation.code)}</span></div>
-        <div class="settings-grid-item${pwaWriteSecret ? ' active' : ''}" id="settings-write-secret-link">${SETTINGS_ICONS.key}<span class="cat-label">Write secret</span><span class="status-label">${pwaWriteSecret ? 'Set' : 'Not set'}</span></div>
-      </div>
-      <div class="modal-close" id="settings-close-btn" style="margin-top:20px;">Close</div>
+  overlay.className = 'ui-page';
+  overlay.innerHTML = uiPageBar('Settings', { backId: 'settings-close-btn', backLabel: 'Back to Home' }) + `
+    <div class="ui-page-list">
+      ${uiGroup('Travel', [
+        uiRow('settings-rail-config-link', 'Trains', `${railTrains.length} tracked`),
+        uiRow('settings-home-work-link', 'Home and work stations', `${homeStation.code} / ${workStation.code}`),
+        uiRow('settings-emergency-routes-link', 'Emergency routes'),
+        uiSwitchRow('settings-emergency-tab-link', 'Emergency tab', emergencyTabVisible),
+      ])}
+      ${uiGroup('Costs', [
+        uiRow('settings-costs-link', 'Parking and day return'),
+      ])}
+      ${uiGroup('Alerts and watch', [
+        uiRow('settings-drive-check-link', 'Drive check', driveCheckConfig.enabled ? 'On' : 'Off'),
+        uiRow('settings-geofence-link', 'Geofence'),
+        uiRow('settings-polling-link', 'Polling'),
+        uiSwitchRow('settings-weather-link', 'Weather', weatherEnabled),
+      ])}
+      ${uiGroup('Home screen', [
+        uiSwitchRow('settings-payday-visibility-link', 'Payday figure', paydayVisible),
+        uiSwitchRow('settings-parking-savings-visibility-link', 'Parking savings figure', parkingSavingsVisible),
+        uiSwitchRow('settings-spending-visibility-link', 'Spending figure', spendingVisible),
+      ])}
+      ${uiGroup('Delay repay', [
+        uiRow('settings-pass-photo-link', 'Smartcard photo'),
+        uiSwitchRow('settings-claim-file-link', 'Claim details file', produceClaimDetailsFile),
+      ])}
+      ${uiGroup('Accounts', [
+        uiRow('settings-preferred-google-link', 'Google account', preferredGoogleEmail ? 'Connected' : 'Not connected'),
+        uiSwitchRow('settings-gcal-link', 'Calendar sync', gcalEnabled),
+      ])}
+      ${uiGroup('Advanced', [
+        uiRow('settings-write-secret-link', 'Write secret', pwaWriteSecret ? 'Set' : 'Not set'),
+        uiSwitchRow('settings-debug-link', 'Debug', debugModeEnabled),
+      ])}
     </div>
   `;
   document.body.appendChild(overlay);
+  overlay.scrollTop = settingsReturnScroll;
+  settingsReturnScroll = 0;
   function close(){ if (overlay.isConnected) document.body.removeChild(overlay); }
+  // Opening a sub-page: remember where we were scrolled to, then swap pages.
+  function goTo(openFn){ settingsReturnScroll = overlay.scrollTop; close(); openFn(); }
+  function onTap(id, fn){ document.getElementById(id).addEventListener('click', fn); }
 
-  function toggleStatus(id, isActive, text){
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.toggle('active', isActive);
-    const statusEl = el.querySelector('.status-label');
-    if (statusEl) statusEl.textContent = text;
-  }
+  onTap('settings-costs-link', () => goTo(() => openCostsMenu(true)));
+  onTap('settings-polling-link', () => goTo(() => openPollingSettingsEditor(true)));
+  onTap('settings-geofence-link', () => goTo(() => openGeofenceSettingsEditor(true)));
+  onTap('settings-preferred-google-link', () => goTo(() => openPreferredGoogleEditor(true)));
+  onTap('settings-rail-config-link', () => goTo(() => openRailConfig(true)));
+  onTap('settings-drive-check-link', () => goTo(() => openDriveCheckEditor(true)));
+  onTap('settings-pass-photo-link', () => goTo(() => openPassPhotoManager(true)));
+  onTap('settings-emergency-routes-link', () => goTo(() => openAlternativeRoutesManager(true)));
+  onTap('settings-home-work-link', () => goTo(() => openHomeWorkStationsManager(true)));
+  onTap('settings-write-secret-link', () => goTo(() => openPwaWriteSecretEditor(true)));
 
-  document.getElementById('settings-costs-link').addEventListener('click', () => { close(); openCostsMenu(true); });
-  document.getElementById('settings-polling-link').addEventListener('click', () => { close(); openPollingSettingsEditor(true); });
-  document.getElementById('settings-geofence-link').addEventListener('click', () => { close(); openGeofenceSettingsEditor(true); });
-  document.getElementById('settings-preferred-google-link').addEventListener('click', () => { close(); openPreferredGoogleEditor(true); });
-  document.getElementById('settings-rail-config-link').addEventListener('click', () => { close(); openRailConfig(true); });
-  document.getElementById('settings-drive-check-link').addEventListener('click', () => { close(); openDriveCheckEditor(true); });
-  document.getElementById('settings-pass-photo-link').addEventListener('click', () => { close(); openPassPhotoManager(true); });
-  document.getElementById('settings-claim-file-link').addEventListener('click', async () => {
+  onTap('settings-claim-file-link', async () => {
     produceClaimDetailsFile = !produceClaimDetailsFile;
     await saveProduceClaimDetailsFile();
-    toggleStatus('settings-claim-file-link', produceClaimDetailsFile, produceClaimDetailsFile ? 'On' : 'Off');
+    uiSetSwitch('settings-claim-file-link', produceClaimDetailsFile);
   });
-  document.getElementById('settings-weather-link').addEventListener('click', async () => {
+  onTap('settings-weather-link', async () => {
     weatherEnabled = !weatherEnabled;
     await saveWeatherEnabled();
-    toggleStatus('settings-weather-link', weatherEnabled, weatherEnabled ? 'On' : 'Off');
+    uiSetSwitch('settings-weather-link', weatherEnabled);
   });
-  document.getElementById('settings-emergency-routes-link').addEventListener('click', () => { close(); openAlternativeRoutesManager(true); });
-  document.getElementById('settings-emergency-tab-link').addEventListener('click', async () => {
+  onTap('settings-emergency-tab-link', async () => {
     emergencyTabVisible = !emergencyTabVisible;
     await saveEmergencyTabVisible();
-    toggleStatus('settings-emergency-tab-link', emergencyTabVisible, emergencyTabVisible ? 'Shown' : 'Hidden');
+    uiSetSwitch('settings-emergency-tab-link', emergencyTabVisible);
   });
-  document.getElementById('settings-home-work-link').addEventListener('click', () => { close(); openHomeWorkStationsManager(); });
-  document.getElementById('settings-write-secret-link').addEventListener('click', () => { close(); openPwaWriteSecretEditor(true); });
-  document.getElementById('settings-debug-link').addEventListener('click', async () => {
+  onTap('settings-debug-link', async () => {
     debugModeEnabled = !debugModeEnabled;
     await saveDebugMode();
-    toggleStatus('settings-debug-link', debugModeEnabled, debugModeEnabled ? 'On' : 'Off');
+    uiSetSwitch('settings-debug-link', debugModeEnabled);
   });
-  // These three are genuine bidirectional toggles now, not one-way
-  // "restore" actions — tapping hides the card if it's showing, or
-  // brings it back if it's hidden, matching every other toggle in this
-  // grid rather than only ever appearing once something's already been
-  // dismissed elsewhere.
-  document.getElementById('settings-payday-visibility-link').addEventListener('click', async () => {
+  // These three are genuine bidirectional toggles — switching one off hides
+  // that Home figure, switching it on brings it back. The payday and parking
+  // savings ones are stored per pay period, the spending one once for all.
+  onTap('settings-payday-visibility-link', async () => {
     if (dismissedMonths[currentPeriodStartKey]) delete dismissedMonths[currentPeriodStartKey];
     else dismissedMonths[currentPeriodStartKey] = true;
     await saveDismissedMonths();
-    const nowVisible = !dismissedMonths[currentPeriodStartKey];
-    toggleStatus('settings-payday-visibility-link', nowVisible, nowVisible ? 'Visible' : 'Hidden');
+    uiSetSwitch('settings-payday-visibility-link', !dismissedMonths[currentPeriodStartKey]);
   });
-  document.getElementById('settings-parking-savings-visibility-link').addEventListener('click', async () => {
+  onTap('settings-parking-savings-visibility-link', async () => {
     if (dismissedParkingSavingsPeriods[currentPeriodStartKey]) delete dismissedParkingSavingsPeriods[currentPeriodStartKey];
     else dismissedParkingSavingsPeriods[currentPeriodStartKey] = true;
     await saveDismissedParkingSavingsPeriods();
-    const nowVisible = !dismissedParkingSavingsPeriods[currentPeriodStartKey];
-    toggleStatus('settings-parking-savings-visibility-link', nowVisible, nowVisible ? 'Visible' : 'Hidden');
+    uiSetSwitch('settings-parking-savings-visibility-link', !dismissedParkingSavingsPeriods[currentPeriodStartKey]);
   });
-  document.getElementById('settings-spending-visibility-link').addEventListener('click', async () => {
+  onTap('settings-spending-visibility-link', async () => {
     ticketsSpentCardDismissed = !ticketsSpentCardDismissed;
     await saveTicketsSpentCardDismissed();
-    const nowVisible = !ticketsSpentCardDismissed;
-    toggleStatus('settings-spending-visibility-link', nowVisible, nowVisible ? 'Visible' : 'Hidden');
+    uiSetSwitch('settings-spending-visibility-link', !ticketsSpentCardDismissed);
   });
-  document.getElementById('settings-gcal-link').addEventListener('click', async () => {
+  onTap('settings-gcal-link', async () => {
     if (gcalEnabled){
       gcalEnabled = false;
       await saveGcalEnabled();
       await deleteGoogleCalendarEvent(); // same reasoning as the other disconnect path — nothing else will ever clean this up once disconnected
-      close();
-      render();
+      uiSetSwitch('settings-gcal-link', false);
+      render(); // refresh Home behind this page
       return;
     }
+    // Connecting runs Google's sign-in, which needs this page out of the way.
     close();
     render();
     if (GOOGLE_CLIENT_ID.includes('YOUR_CLIENT_ID')){
@@ -152,8 +144,7 @@ function openSettingsMenu(){
       render();
     }
   });
-  document.getElementById('settings-close-btn').addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  onTap('settings-close-btn', () => { settingsReturnScroll = 0; close(); });
 }
 
 // 2026-11-10 — one combined form (backlog item 2, spec
@@ -165,21 +156,25 @@ function openSettingsMenu(){
 // app foreground.
 function openCostsMenu(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-nav-safe'; // taller than the old menu — keeps Back clear of the bottom nav
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Costs</h3>
+    ${uiPageBar('Costs', { backId: 'costs-close-btn', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'costs-save' })}
+    <div class="ui-page-body">
       <div class="sub">Daily costs used to estimate what to set aside each payday.</div>
-      <div style="margin-top:14px; font-size:13px; color:var(--ink-dim);">Daily parking cost (£)</div>
-      <input type="number" id="costs-parking-input" value="${parkingCost.toFixed(2)}" step="0.01" min="0" style="margin-bottom:4px;" />
-      <div id="costs-parking-error" style="color:var(--danger); font-size:13px; margin-bottom:4px; display:none;"></div>
-      <div style="font-size:12px; color:var(--ink-dim); margin-bottom:14px;">Used for the payday estimate on days you might drive in, and as the default when you tick 'I parked today'.</div>
-      <div style="font-size:13px; color:var(--ink-dim);">Day return price (£)</div>
-      <input type="number" id="costs-day-return-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:4px;" />
-      <div id="costs-day-return-error" style="color:var(--danger); font-size:13px; margin-bottom:4px; display:none;"></div>
-      <div style="font-size:12px; color:var(--ink-dim); margin-bottom:14px;">Used by the Buy tab to compare singles against a season ticket. The Buy tab can also update this from the live fares check.</div>
-      <button class="save-btn" id="costs-save">Save</button>
-      <div class="modal-close" id="costs-close-btn">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="costs-parking-input">Daily parking cost (£)</label>
+          <input class="ui-input" type="number" inputmode="decimal" id="costs-parking-input" value="${parkingCost.toFixed(2)}" step="0.01" min="0" />
+          <div class="ui-field-error" id="costs-parking-error" hidden></div>
+          <div class="ui-field-help">Used for the payday estimate on days you might drive in, and as the default when you tick 'I parked today'.</div>
+        </div>
+        <div class="ui-field">
+          <label class="ui-field-label" for="costs-day-return-input">Day return price (£)</label>
+          <input class="ui-input" type="number" inputmode="decimal" id="costs-day-return-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" />
+          <div class="ui-field-error" id="costs-day-return-error" hidden></div>
+          <div class="ui-field-help">Used by the Buy tab to compare singles against a season ticket. The Buy tab can also update this from the live fares check.</div>
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -227,22 +222,19 @@ function openCostsMenu(cameFromSettings){
     if (cameFromSettings) openSettingsMenu();
   });
   document.getElementById('costs-close-btn').addEventListener('click', back);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) back(); });
 }
 
 function openPollingSettingsEditor(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Live progress polling</h3>
+    ${uiPageBar('Polling', { backId: 'poll-settings-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'poll-settings-save' })}
+    <div class="ui-page-body">
       <div class="sub">A train that's already been cancelled shows up the moment you open the screen either way — this only affects how often it keeps checking in afterward, while it hasn't departed yet.</div>
       <div style="margin-top:14px; font-size:13px; color:var(--ink-dim);">Resume normal checking this many minutes before scheduled departure</div>
       <input type="number" id="poll-before-departure-input" value="${pollBeforeDepartureMin}" step="1" min="0" max="${POLL_BEFORE_DEPARTURE_MIN_MAX}" style="margin-bottom:12px;" />
       <div style="font-size:13px; color:var(--ink-dim);">Longest gap allowed between checks before that</div>
       <input type="number" id="poll-check-in-input" value="${pollCheckInIntervalMin}" step="1" min="1" max="${POLL_CHECK_IN_INTERVAL_MIN_MAX}" style="margin-bottom:12px;" />
-      <button class="save-btn" id="poll-settings-save">Save</button>
-      <div class="modal-close" id="poll-settings-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -265,12 +257,6 @@ function openPollingSettingsEditor(cameFromSettings){
     document.body.removeChild(overlay);
     if (cameFromSettings) openSettingsMenu();
   });
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay){
-      document.body.removeChild(overlay);
-      if (cameFromSettings) openSettingsMenu();
-    }
-  });
 }
 
 // 2026-09-24: per-device entry for the Worker's PWA_SHARED_SECRET. Stored in
@@ -278,17 +264,15 @@ function openPollingSettingsEditor(cameFromSettings){
 // shows up straight away as the 401 toast rather than on the next app open.
 function openPwaWriteSecretEditor(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Write secret</h3>
+    ${uiPageBar('Write secret', { backId: 'pwa-write-secret-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'pwa-write-secret-save' })}
+    <div class="ui-page-body">
       <div class="sub">Lets this device save settings to the Worker (watch config, geofence radii, trains). Needed once per browser or phone. The value is in Bitwarden (PWA_SHARED_SECRET).</div>
       <input type="password" id="pwa-write-secret-input" value="${escapeHtml(pwaWriteSecret)}" autocomplete="off" autocapitalize="off" spellcheck="false" style="margin-top:14px; margin-bottom:6px;" />
       <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-dim); margin-bottom:16px; cursor:pointer; -webkit-user-select:none; user-select:none;">
         <input type="checkbox" id="pwa-write-secret-show" /> Show
       </label>
-      <button class="save-btn" id="pwa-write-secret-save">Save</button>
-      <div class="modal-close" id="pwa-write-secret-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -309,12 +293,6 @@ function openPwaWriteSecretEditor(cameFromSettings){
     document.body.removeChild(overlay);
     if (cameFromSettings) openSettingsMenu();
   });
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay){
-      document.body.removeChild(overlay);
-      if (cameFromSettings) openSettingsMenu();
-    }
-  });
 }
 
 // ---------------------------------------------------------------------
@@ -326,7 +304,7 @@ function openPwaWriteSecretEditor(cameFromSettings){
 // ---------------------------------------------------------------------
 function openDriveCheckEditor(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   const draft = JSON.parse(JSON.stringify(driveCheckConfig));
   if (!draft.checkTimesByTrain) draft.checkTimesByTrain = {};
   const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
@@ -424,8 +402,8 @@ function openDriveCheckEditor(cameFromSettings){
     const stationText = draft._stationText !== undefined ? draft._stationText : fmtLatLng(draft.station);
 
     overlay.innerHTML = `
-      <div class="modal">
-        <h3>Morning drive check</h3>
+      ${uiPageBar('Drive check', { backId: 'dc-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'dc-save' })}
+      <div class="ui-page-body">
         <div class="sub">Just before you leave for the station, your watch checks live traffic on each route below and tells you which way to go — "Go via…", "…slow", or "…clear" when the usual way is fine. Nothing happens on weekends or tagged days (WFH, holiday, etc).</div>
 
         <label style="display:flex; align-items:center; gap:8px; margin:14px 0; font-size:14px; cursor:pointer;">
@@ -461,9 +439,7 @@ function openDriveCheckEditor(cameFromSettings){
         <div id="dc-error" style="color:var(--danger); font-size:13px; margin-bottom:10px; display:none;"></div>
         <div id="dc-result" style="display:none; margin-bottom:12px;"></div>
 
-        <button class="save-btn" id="dc-test" style="margin-bottom:8px;">Save &amp; test now</button>
-        <button class="save-btn" id="dc-save">Save</button>
-        <div class="modal-close" id="dc-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
+        <button type="button" class="ui-btn-secondary ui-btn-block" id="dc-test">Save &amp; test now</button>
       </div>
     `;
 
@@ -544,7 +520,6 @@ function openDriveCheckEditor(cameFromSettings){
       if (cameFromSettings) openSettingsMenu();
     };
     overlay.querySelector('#dc-close').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
   document.body.appendChild(overlay);
@@ -579,10 +554,10 @@ function renderDriveCheckResult(data, opts){
 
 function openGeofenceSettingsEditor(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Geofence radius</h3>
+    ${uiPageBar('Geofence', { backId: 'geofence-settings-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'geofence-settings-save' })}
+    <div class="ui-page-body">
       <div class="sub">How close you need to be to a station before the app will silently confirm a train or suggest one. Tighter catches false positives (like a nearby office on your walk in), but too tight risks missing a real detection if GPS wanders once you're on the platform itself.</div>
 
       <div style="margin-top:14px; font-size:13px; color:var(--ink-dim);">Crewe radius (metres)</div>
@@ -597,8 +572,6 @@ function openGeofenceSettingsEditor(cameFromSettings){
         <input type="checkbox" id="geofence-wigan-match" ${geofenceWiganMatchesCrewe ? 'checked' : ''} /> Match Crewe
       </label>
 
-      <button class="save-btn" id="geofence-settings-save">Save</button>
-      <div class="modal-close" id="geofence-settings-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -661,24 +634,16 @@ function openGeofenceSettingsEditor(cameFromSettings){
     document.body.removeChild(overlay);
     if (cameFromSettings) openSettingsMenu();
   });
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay){
-      document.body.removeChild(overlay);
-      if (cameFromSettings) openSettingsMenu();
-    }
-  });
 }
 
 function openPreferredGoogleEditor(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Preferred Google account</h3>
+    ${uiPageBar('Google account', { backId: 'preferred-google-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'preferred-google-save' })}
+    <div class="ui-page-body">
       <div class="sub">If you have more than one Google account, entering the email here skips the account picker when connecting to Calendar.</div>
       <input type="email" id="preferred-google-input" value="${escapeHtml(preferredGoogleEmail)}" placeholder="you@gmail.com" style="margin-bottom:12px;" />
-      <button class="save-btn" id="preferred-google-save">Save</button>
-      <div class="modal-close" id="preferred-google-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -699,11 +664,5 @@ function openPreferredGoogleEditor(cameFromSettings){
   document.getElementById('preferred-google-close').addEventListener('click', () => {
     document.body.removeChild(overlay);
     if (cameFromSettings) openSettingsMenu();
-  });
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay){
-      document.body.removeChild(overlay);
-      if (cameFromSettings) openSettingsMenu();
-    }
   });
 }

@@ -197,7 +197,7 @@ async function checkAllEmergencyRoutes(routes){
 // being loaded later.
 function openAlternativeRoutesManager(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   let draftRoutes = alternativeRoutes.map(r => ({ ...r, legs: r.legs.map(l => ({ ...l })) }));
   // Station pickers are live components with their own internal state,
   // not plain inputs — re-created on every render() call, so their
@@ -241,14 +241,12 @@ function openAlternativeRoutesManager(cameFromSettings){
 
   function render(){
     overlay.innerHTML = `
-      <div class="modal">
-        <h3>Emergency routes</h3>
+      ${uiPageBar('Emergency routes', { backId: 'ar-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'ar-save' })}
+      <div class="ui-page-body">
         <div class="sub">Pre-define fallback journeys now, when calm, so the Emergency tab can check them live when disruption actually hits.</div>
         <div class="sub" id="ar-station-status" style="font-size:11.5px; margin-bottom:12px;">${stationStatusHtml()}</div>
         <div id="ar-list">${draftRoutes.map((r, ri) => renderRoute(r, ri)).join('') || '<div class="sub">No routes yet.</div>'}</div>
         <div class="settings-link" id="ar-add-route" style="margin-top:6px; margin-bottom:16px;">+ Add route</div>
-        <button class="save-btn" id="ar-save">Save</button>
-        <div class="modal-close" id="ar-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
       </div>
     `;
 
@@ -326,12 +324,6 @@ function openAlternativeRoutesManager(cameFromSettings){
     document.getElementById('ar-close').addEventListener('click', () => {
       overlay.remove();
       if (cameFromSettings) openSettingsMenu();
-    });
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay){
-        overlay.remove();
-        if (cameFromSettings) openSettingsMenu();
-      }
     });
   }
 

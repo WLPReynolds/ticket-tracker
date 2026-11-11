@@ -11,6 +11,7 @@
     'config.js':               typeof APP_VERSION !== 'undefined',
     'state.js':                typeof loadData !== 'undefined',
     'util.js':                 typeof fmtKey !== 'undefined',
+    'ui-parts.js':             typeof uiPageBar !== 'undefined',
     'tickets.js':              typeof computeStates !== 'undefined',
     'delay-repay.js':          typeof getDelayStatus !== 'undefined',
     'darwin.js':               typeof queryDarwin !== 'undefined',

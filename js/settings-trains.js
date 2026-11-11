@@ -3,7 +3,7 @@
 
 function openRailConfig(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   // Edit a private copy. Add/remove/time changes should not affect the live
   // configuration until Save is pressed; Cancel must genuinely cancel.
   let draftTrains = railTrains.map(t => ({ ...t }));
@@ -45,14 +45,12 @@ function openRailConfig(cameFromSettings){
 
   function renderConfig(){
     overlay.innerHTML = `
-      <div class="modal">
-        <h3>Usual trains</h3>
+      ${uiPageBar('Trains', { backId: 'rail-config-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'rail-config-save' })}
+      <div class="ui-page-body">
         <div class="sub">Used to check delay repay eligibility on your travel days. Add every time you sometimes catch, not just your default.</div>
         <div class="sub">Watch alert: at the time set for a train, your watch checks how the day's target train is running and buzzes with on time / delayed / cancelled and the platform. Leave a train's time blank for no alert. You can switch tomorrow's target train on the Live screen.</div>
         ${buildSectionHtml('AM', 'Morning', 'CRE', 'WGN')}
         ${buildSectionHtml('PM', 'Evening', 'WGN', 'CRE')}
-        <button class="save-btn" id="rail-config-save">Save</button>
-        <div class="modal-close" id="rail-config-close">${cameFromSettings ? '← Back to Settings' : 'Cancel'}</div>
       </div>
     `;
 
@@ -156,12 +154,6 @@ function openRailConfig(cameFromSettings){
       overlay.remove();
       if (cameFromSettings) openSettingsMenu();
     });
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay){
-        overlay.remove();
-        if (cameFromSettings) openSettingsMenu();
-      }
-    });
   }
 
   function addTrain(direction){
@@ -181,9 +173,9 @@ function openRailConfig(cameFromSettings){
 // the Emergency tab (see checkAllEmergencyRoutes's caller in
 // openLiveScreen). A small dedicated screen rather than an inline
 // Settings toggle, since it needs two full station pickers.
-function openHomeWorkStationsManager(){
+function openHomeWorkStationsManager(cameFromSettings){
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   let draftHome = { ...homeStation };
   let draftWork = { ...workStation };
 
@@ -197,16 +189,14 @@ function openHomeWorkStationsManager(){
 
   function render(){
     overlay.innerHTML = `
-      <div class="modal">
-        <h3>Home & Work stations</h3>
+      ${uiPageBar('Home and work stations', { backId: 'hw-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'hw-save' })}
+      <div class="ui-page-body">
         <div class="sub">Used to work out which Emergency routes get you home vs. to work, so the Emergency tab can group and sort them for whichever direction you're travelling in.</div>
         <div class="sub" style="font-size:11.5px; margin-bottom:12px;">${stationStatusHtml()}</div>
         <div class="rail-col-header" style="margin-bottom:4px;">Home station</div>
         <div id="hw-home-picker" style="margin-bottom:14px;"></div>
         <div class="rail-col-header" style="margin-bottom:4px;">Work station</div>
         <div id="hw-work-picker" style="margin-bottom:18px;"></div>
-        <button class="save-btn" id="hw-save">Save</button>
-        <div class="modal-close" id="hw-close">Cancel</div>
       </div>
     `;
     const homePicker = createStationPicker({
@@ -228,9 +218,12 @@ function openHomeWorkStationsManager(){
       if (draftHome.code) { homeStation = draftHome; await saveHomeStation(); }
       if (draftWork.code) { workStation = draftWork; await saveWorkStation(); }
       overlay.remove();
+      if (cameFromSettings) openSettingsMenu();
     });
-    document.getElementById('hw-close').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.getElementById('hw-close').addEventListener('click', () => {
+      overlay.remove();
+      if (cameFromSettings) openSettingsMenu();
+    });
   }
 
   document.body.appendChild(overlay);

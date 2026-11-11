@@ -66,15 +66,15 @@ All prefixed `ui-`, all in `css/design.css`.
 
 Page-frame behaviour (the reason it exists): going into a page and back out should look and feel the same everywhere. Back arrow top-left returns to wherever the page was opened from. Save, when the page has something to save, is top-right. No "← Back" or "Cancel" text links at the bottom; no bottom Save button.
 
-The first stage-2 use of `.ui-page` must check its `z-index` (60) against the bottom nav (55) and the other overlays, and adjust here if needed.
+`.ui-page` sits at `z-index` 60: above the bottom nav (55) and other overlays (50), below toasts (300). Checked in stage 2; keep it that way.
 
 ## Icons
 
-Line SVGs only, 2px stroke, `currentColor`, in the style of `NAV_ICONS` (`js/config.js`) and `SETTINGS_ICONS` (`js/settings.js`). **No emoji in the interface.** Exempt: the seasonal easter eggs (`js/easter-eggs.js`, the Christmas header and bunting).
+Line SVGs only, 2px stroke, `currentColor`, in the style of `NAV_ICONS` (`js/config.js`). **No emoji in the interface.** Exempt: the seasonal easter eggs (`js/easter-eggs.js`, the Christmas header and bunting).
 
 ## Status
 
-Stage 1 (tokens, parts, this guide) is in. **Nothing uses the parts yet.** Older screens still carry their own inline styles and about 20 odd font sizes; they move onto the parts as they are reworked — Settings (stage 2), Home (stage 3), then the rest. Until a screen is converted, do not "tidy" it piecemeal; convert it whole, on its own release.
+Stage 1 (tokens, parts, this guide) is in. Stage 2 (Settings) uses them: the Settings list and the frame, title bar and back button of all ten sub-pages (`js/ui-parts.js`). Sub-page interiors other than Costs still carry legacy inline styles, and number, time and select inputs have no global styling yet; clear these when the shared form parts are rolled out. Older screens still carry their own inline styles and about 20 odd font sizes; they move onto the parts as they are reworked — Settings (stage 2), Home (stage 3), then the rest. Until a screen is converted, do not "tidy" it piecemeal; convert it whole, on its own release.
 
 Known leftovers, to clear when their screens are reworked: `#ff8b7e` and `#7fc9e8` still appear as literals in JS inline styles and SVG attributes (use `--salmon` / `--holiday` in new work); emoji in the buy banner and the holiday card (both are replaced in stage 3).
 
