@@ -1,0 +1,246 @@
+/* design.css — design tokens and shared parts (facelift stage 1, 2026-11-11).
+   Read STYLEGUIDE.md first: it says what each token and part is for.
+   Spec: claude/facelift-spec.md in the Project.
+
+   NOTHING in the app uses these yet. Stage 1 only adds them, so adding this
+   file changes no screen. Stages 2 (Settings) and 3 (Home) are built from them.
+
+   Loaded BEFORE app.css. Every part here is prefixed ui- so it can never
+   collide with an older class in app.css. The colour palette itself
+   (--board, --ink, --amber…) stays in app.css :root. */
+
+:root{
+  /* Type scale — the only six sizes new work may use. */
+  --fs-label: 11px;   /* uppercase section/figure labels */
+  --fs-small: 13px;   /* secondary text, help text, links, pills */
+  --fs-body: 15px;    /* normal text, row labels, inputs */
+  --fs-title: 20px;   /* screen titles, medium figures */
+  --fs-large: 32px;   /* train time, large money figure */
+  --fs-hero: 44px;    /* the two Home hero figures */
+
+  /* Corner radii — three. */
+  --radius-sm: 8px;     /* buttons, inputs, day cells */
+  --radius-md: 12px;    /* cards, list groups */
+  --radius-pill: 999px; /* pills, chips, circles */
+
+  /* Spacing — multiples of 4. --margin is the screen edge margin. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --margin: 16px;
+
+  /* Smallest touch target. */
+  --tap: 44px;
+}
+
+/* ---------- Numerals ---------- */
+/* Fixed-width digits for times and money, so columns and live updates don't jiggle. */
+.ui-num{ font-variant-numeric: tabular-nums; }
+
+/* ---------- Card ---------- */
+.ui-card{
+  margin: 0 var(--margin);
+  padding: var(--space-4);
+  background: var(--board-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+/* A card with no padding that holds list rows edge to edge. */
+.ui-card.ui-card-flush{ padding: 0; overflow: hidden; }
+
+/* ---------- Section header: label on the left, optional link on the right ---------- */
+.ui-section-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: var(--space-5) var(--margin) var(--space-2);
+}
+.ui-label{
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.ui-link{
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding-left: var(--space-3);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--amber);
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+.ui-link:active{ opacity: 0.7; }
+
+/* ---------- List row: label, optional value, chevron ----------
+   Put rows inside <div class="ui-card ui-card-flush">. */
+.ui-row{
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 52px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+.ui-row + .ui-row{ border-top: 1px solid var(--line); }
+.ui-row:active{ background: rgba(255,255,255,0.04); }
+.ui-row-label{ flex: 1; min-width: 0; font-size: var(--fs-body); }
+.ui-row-value{ font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-row-chev{ display: flex; color: var(--ink-dim); }
+.ui-row-chev svg{ width: 18px; height: 18px; }
+
+/* ---------- Switch row: label and an on/off switch ----------
+   <div class="ui-row ui-row-switch"><span class="ui-row-label">Weather</span>
+   <button class="ui-switch" role="switch" aria-checked="true" aria-label="Weather"></button></div> */
+.ui-row.ui-row-switch{ cursor: default; padding-right: var(--space-4); }
+.ui-row.ui-row-switch:active{ background: none; }
+.ui-switch{
+  position: relative;
+  flex: 0 0 auto;
+  width: 48px;
+  height: var(--tap);
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ui-switch::before{            /* the track */
+  content: "";
+  position: absolute;
+  left: 0; top: 50%;
+  width: 48px; height: 28px;
+  margin-top: -14px;
+  border-radius: var(--radius-pill);
+  background: var(--line);
+}
+.ui-switch::after{             /* the knob */
+  content: "";
+  position: absolute;
+  left: 3px; top: 50%;
+  width: 22px; height: 22px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  transition: transform 0.15s;
+}
+.ui-switch[aria-checked="true"]::before{ background: var(--amber); }
+.ui-switch[aria-checked="true"]::after{ background: var(--board); transform: translateX(20px); }
+
+/* ---------- Buttons ---------- */
+.ui-btn-primary,
+.ui-btn-secondary{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ui-btn-primary{ border: none; background: var(--amber); color: var(--board); }
+.ui-btn-secondary{ border: 1px solid var(--line); background: var(--tile); color: var(--ink); }
+.ui-btn-primary:active,
+.ui-btn-secondary:active{ transform: scale(0.98); }
+
+/* ---------- Figure: a small label over a number ---------- */
+.ui-figure{ display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.ui-figure-label{ font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
+.ui-figure-value{ font-size: var(--fs-title); font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.ui-figure-value.ui-figure-large{ font-size: var(--fs-large); }
+.ui-figure-value.ui-figure-hero{ font-size: var(--fs-hero); line-height: 1; }
+.ui-figure-note{ font-size: var(--fs-small); color: var(--ink-dim); }
+
+/* ---------- Status pill ---------- */
+.ui-pill{
+  display: inline-block;
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  background: rgba(154,157,176,0.12);
+  color: var(--ink-dim);
+}
+.ui-pill.ui-pill-good{ background: rgba(111,191,138,0.12); color: var(--good); }
+.ui-pill.ui-pill-warn{ background: rgba(242,169,59,0.14); color: var(--amber); }
+.ui-pill.ui-pill-bad{ background: rgba(255,139,126,0.14); color: var(--salmon); }
+.ui-pill.ui-pill-info{ background: rgba(127,201,232,0.12); color: var(--holiday); }
+
+/* ---------- Form field: label, input, help text ---------- */
+.ui-field{ display: flex; flex-direction: column; gap: 6px; }
+.ui-field-label{ font-size: var(--fs-small); font-weight: 600; }
+.ui-field-help{ font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.4; }
+.ui-input{
+  width: 100%;
+  height: 48px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--tile);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  box-sizing: border-box;
+}
+
+/* ---------- Page frame: a full-screen page with a top bar ----------
+   <div class="ui-page"><div class="ui-page-bar">
+     <button class="ui-page-back" aria-label="Back to Settings">‹ icon</button>
+     <div class="ui-page-title">Costs</div>
+     <button class="ui-btn-primary ui-page-save">Save</button></div> … content … </div>
+   Stage 2 must check z-order against .bottom-nav (z-index 55) the first time it is used. */
+.ui-page{
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--board);
+  color: var(--ink);
+  overflow-y: auto;
+}
+.ui-page-bar{
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px var(--margin) 6px var(--space-1);
+  padding-top: calc(6px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--line);
+  background: var(--board);
+  position: sticky;
+  top: 0;
+}
+.ui-page-back{
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ui-page-back svg{ width: 22px; height: 22px; }
+.ui-page-title{ flex: 1; min-width: 0; font-size: var(--fs-title); font-weight: 700; }
+.ui-page-save{ flex: 0 0 auto; }
