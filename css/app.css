@@ -735,53 +735,6 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  .settings-grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fit, minmax(78px, 1fr));
-    gap:18px 4px;
-    margin-top:16px;
-  }
-  .settings-grid-item{
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    gap:6px;
-    cursor:pointer;
-    -webkit-user-select:none;
-    user-select:none;
-    -webkit-touch-callout:none;
-    touch-action:manipulation;
-    -webkit-tap-highlight-color:transparent;
-  }
-  .settings-grid-item svg{
-    width:24px;
-    height:24px;
-    color:var(--ink-dim);
-  }
-  .settings-grid-item.active svg{
-    color:var(--amber);
-  }
-  .settings-grid-item span.cat-label{
-    font-size:11px;
-    color:var(--ink-dim);
-    text-align:center;
-    line-height:1.2;
-  }
-  .settings-grid-item span.status-label{
-    font-size:9px;
-    color:var(--ink-dim);
-    opacity:0.7;
-    text-align:center;
-    line-height:1.2;
-  }
-  .settings-grid-item.active span.status-label{
-    color:var(--amber);
-    opacity:1;
-  }
-  .settings-grid-item.active span.cat-label{
-    color:var(--amber);
-  }
-
   .day-nav-btn{
     display: flex;
     align-items: center;

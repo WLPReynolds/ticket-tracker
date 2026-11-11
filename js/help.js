@@ -75,7 +75,7 @@ For real disruption, not everyday delays:
 1. In **Settings → Emergency routes**, set up fallback journeys while things are calm — each is a chain of legs (e.g. "Via Liverpool": Wigan North Western → Liverpool Lime Street → Crewe).
 2. Turn on **Settings → Emergency tab** when you want to see it on the Live screen; it's hidden by default.
 3. The tab checks every saved route live and shows a full chained plan, or how far it gets before a leg fails, allowing a 5-minute minimum interchange.
-4. Routes sort by direction using **Settings → Home & Work stations** — routes home first from 12:00, routes to work first before then.
+4. Routes sort by direction using **Settings → Home and work stations** — routes home first from 12:00, routes to work first before then.
 5. Tap **Add to Tracked** on a full plan to follow its trains — it respects the {{TRACKED_MAX}}-train limit and asks before dropping anything.
 
 ---
@@ -145,12 +145,12 @@ A small line under the badge counts any other claims still waiting, including on
 If you decide not to claim a delay, open the day and tap **Not claiming** under its Morning or Evening list (it only appears where there's something to claim). The day turns grey, reads **Declined delay repay**, and drops off the badge. It's left out of the ROI dashboard's totals. Changed your mind? **Undo** it in **More → Delay repay claims**.
 
 ### Smartcard Pass
-Avanti asks for a photo of your ticket and your smartcard number. Add both once in **Settings → Smartcard** — the photo is stored privately on this device.
+Avanti asks for a photo of your ticket and your smartcard number. Add both once in **Settings → Smartcard photo** — the photo is stored privately on this device.
 
 ### Submitting & Managing Claims
 1. Tap a day with a delay indicator, or open **More → Delay repay claims**.
 2. Tap the highlighted delay row. The app estimates your payout per single leg (a Flexi 8 covers 16 single journeys): 15–29 mins pays 25%, 30–59 mins 50%, and 60+ mins 100% of one leg's value.
-3. Avanti's Delay Repay site opens, your pass photo downloads, and your smartcard number is copied to the clipboard ready to paste. If **Settings → Claim file** is on, a **claim-details.txt** summary downloads too.
+3. Avanti's Delay Repay site opens, your pass photo downloads, and your smartcard number is copied to the clipboard ready to paste. If **Settings → Claim details file** is on, a **claim-details.txt** summary downloads too.
 4. A **Claim details** screen shows the same information in the app.
 5. Enter the **AWC reference** in the Delay Repay manager as soon as you've submitted — the badge switches to **Awaiting payment**. Once paid, tick **Confirmed**.
 
@@ -169,7 +169,7 @@ Avanti asks for a photo of your ticket and your smartcard number. Add both once 
 * **Savings card:** What parking has saved you this ticket period.
 * **Spending card:** What you've spent on tickets this year.
 
-Any of these cards can be hidden or shown again in **Settings** (**Payday card**, **Savings card**, **Spending card**). Daily parking cost and day-return price live in **Settings → Costs**.
+Any of these cards can be hidden or shown again in **Settings** (**Payday figure**, **Parking savings figure**, **Spending figure** under **Home screen**). Daily parking cost and day-return price live in **Settings → Costs**.
 
 ---
 
@@ -188,7 +188,7 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 ## 8. Calendar Sync & Google Drive Backups
 
 ### Google Calendar Reminders
-1. Go to **Settings → Calendar** to connect.
+1. Go to **Settings → Calendar sync** to connect.
 2. The app keeps a single **"Buy train ticket"** event at 8:00 PM on the evening you next need to buy.
 3. If your plans change, the event moves automatically.
 
@@ -224,7 +224,7 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 | **More → ROI dashboard** | Claims, ticket spend, parking and office-day projections. |
 | **More → Performance history** | How your usual trains have run, plus reason and weekday stats. |
 | **More → Delay repay claims** | Manage and confirm claims. |
-| **Settings** | Costs, polling, geofence, account, calendar, trains & watch alerts, smartcard, claim file, weather, card visibility, emergency routes, Home & Work stations, and the write secret. |
+| **Settings** | One grouped list: Travel (trains, Home and work stations, emergency routes), Costs, Alerts and watch (Drive check, geofence, polling, weather), Home screen figures, Delay repay (smartcard photo, claim details file), Accounts (Google, calendar sync) and Advanced (write secret, debug). |
 `;
 
 // Minimal, purpose-built Markdown renderer — covers exactly the subset

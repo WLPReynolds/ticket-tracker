@@ -187,6 +187,8 @@
 .ui-field{ display: flex; flex-direction: column; gap: 6px; }
 .ui-field-label{ font-size: var(--fs-small); font-weight: 600; }
 .ui-field-help{ font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.4; }
+.ui-field + .ui-field{ margin-top: var(--space-5); }
+.ui-field-error{ font-size: var(--fs-small); color: var(--salmon); }
 .ui-input{
   width: 100%;
   height: 48px;
@@ -242,5 +244,18 @@
   touch-action: manipulation;
 }
 .ui-page-back svg{ width: 22px; height: 22px; }
-.ui-page-title{ flex: 1; min-width: 0; font-size: var(--fs-title); font-weight: 700; }
+.ui-page-title{ flex: 1; min-width: 0; font-size: var(--fs-title); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ui-page-save{ flex: 0 0 auto; }
+
+/* Content area of a page frame. Two kinds:
+   .ui-page-body — a form page: padded on all sides; .sub is the grey intro/help text.
+   .ui-page-list — a grouped list: no side padding, because the cards and section
+   headers bring their own --margin. */
+.ui-page-body{ padding: var(--space-4) var(--margin) calc(var(--space-5) + env(safe-area-inset-bottom)); }
+.ui-page-body .sub{ color: var(--ink-dim); font-size: var(--fs-small); margin-bottom: 14px; }
+/* A card inside a padded page body doesn't add its own side margin. */
+.ui-page-body .ui-card{ margin: 0; }
+.ui-page-list{ padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom)); }
+
+/* A button that spans the full width of its container. */
+.ui-btn-block{ display: flex; width: 100%; }
