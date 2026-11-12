@@ -351,6 +351,7 @@ header.top.ui-home-head{
 .ui-day-mark{ font-size: var(--fs-small); font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: clip; white-space: nowrap; }
 .ui-day-mark.dim{ color: var(--ink-dim); }
 .ui-day-mark.buy{ color: var(--amber); }
+.ui-day-mark.ticket{ color: var(--amber); } /* ticket number, so date and number don't read as one figure (Wayne, 2026-11-12) */
 .ui-day-dot{ width: 6px; height: 6px; border-radius: 50%; }
 .ui-day-dot.maybe{ background: var(--amber); }
 .ui-day-dot.confirmed{ background: var(--salmon); }

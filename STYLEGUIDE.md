@@ -74,6 +74,8 @@ All prefixed `ui-`, all in `css/design.css`.
 | Station picker | `.ui-picker` (built by `createStationPicker`) | station name or code |
 | Spacing helpers | `.ui-gap-top`, `.ui-gap-top-sm`, `.ui-dim` | instead of inline margins and colours |
 
+Colour exception (Wayne, 2026-11-12): in the week strip the ticket number under the date is amber, so "30" and "5" don't read as "305"; purchase days are a full amber cell with the number on a dark pill. Don't "correct" these to the amber-for-actions rule.
+
 Frame rule (stage 4): a place you go and work in is a page (`.ui-page`); a quick edit about one thing is a bottom sheet (`.ui-sheet`). `.ui-sheet-overlay` sits at z-index 65, above pages and the bottom nav. Inside a page or sheet, the `hidden` attribute always hides an element. `tools/check.sh` prints how many inline styles each file still has.
 
 Page-frame behaviour (the reason it exists): going into a page and back out should look and feel the same everywhere. Back arrow top-left returns to wherever the page was opened from. Save, when the page has something to save, is top-right. No "← Back" or "Cancel" text links at the bottom; no bottom Save button.
