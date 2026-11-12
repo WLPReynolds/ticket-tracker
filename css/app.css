@@ -356,125 +356,6 @@
     font-weight: 800;
     letter-spacing: 0.3px;
   }
-  .today-date{
-    color: var(--ink-dim);
-    font-size: 14px;
-    margin-top: 2px;
-  }
-
-  .board-card{
-    margin: 18px 16px 0;
-    background: var(--board-2);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 20px 18px 18px;
-    position: relative;
-    overflow: hidden;
-  }
-  .board-card::before{
-    content:"";
-    position:absolute; top:0; left:0; right:0; height:3px;
-    background: repeating-linear-gradient(90deg, var(--amber-dim) 0 10px, transparent 10px 20px);
-    opacity: 0.6;
-  }
-
-  .ticket-summary-row{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap: 10px;
-    margin: 4px 0 10px;
-  }
-  .punch-row{
-    display:flex;
-    gap: 6px;
-    flex-wrap: nowrap;
-  }
-  .punch{
-    width: 22px; height: 22px;
-    border-radius: 50%;
-    border: 2px solid var(--line);
-    display:flex; align-items:center; justify-content:center;
-    font-size: 10px;
-    color: var(--ink-dim);
-    font-weight: 700;
-    transition: all 0.2s;
-    flex-shrink: 0;
-  }
-  .punch.done{
-    background: var(--amber);
-    border-color: var(--amber);
-    color: #14161f;
-  }
-  .ticket-count-label{
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--ink);
-    white-space: nowrap;
-  }
-  .ticket-count-label .of8{
-    color: var(--ink-dim);
-    font-weight: 400;
-  }
-
-  .day-progress-track{
-    height: 4px;
-    background: var(--tile);
-    border-radius: 4px;
-    overflow: hidden;
-    margin-bottom: 4px;
-  }
-  .day-progress-fill{
-    height: 100%;
-    background: linear-gradient(90deg, var(--amber-dim), var(--amber));
-  }
-
-  .status-banner{
-    margin-top: 16px;
-    border-radius: 10px;
-    padding: 12px 14px;
-    font-size: 14px;
-    font-weight: 700;
-    text-align: center;
-    letter-spacing: 0.3px;
-  }
-  .status-banner.renew{
-    background: rgba(224,90,78,0.15);
-    color: var(--salmon);
-    border: 1px solid rgba(224,90,78,0.4);
-  }
-  .status-banner.ok{
-    background: rgba(111,191,138,0.12);
-    color: var(--good);
-    border: 1px solid rgba(111,191,138,0.3);
-  }
-  .status-banner.skip{
-    background: rgba(154,157,176,0.1);
-    color: var(--ink-dim);
-    border: 1px solid var(--line);
-  }
-
-  .next-buy-line{
-    margin-top: 8px;
-    text-align: center;
-    font-size: 12.5px;
-    color: var(--amber);
-    letter-spacing: 0.2px;
-    -webkit-user-select: none;
-    user-select: none;
-    -webkit-touch-callout: none;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .section-label{
-    margin: 26px 16px 10px;
-    font-size: 11px;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--ink-dim);
-    font-weight: 700;
-  }
 
   .holiday-card{
     margin: 18px 16px 0;
@@ -485,33 +366,6 @@
     display: flex;
     align-items: center;
     gap: 16px;
-  }
-  .holiday-count{
-    font-size: 36px;
-    font-weight: 800;
-    color: var(--holiday);
-    font-family: 'Courier New', monospace;
-    min-width: 50px;
-  }
-  .holiday-label{
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--ink-dim);
-    font-weight: 700;
-  }
-  .holiday-date{
-    font-size: 14px;
-    color: var(--ink);
-    margin-top: 2px;
-  }
-
-  .comment-card{
-    margin: 0 16px;
-    background: var(--board-2);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 16px;
   }
   .chip-row{
     display:flex;
@@ -555,103 +409,6 @@
     padding: 10px 12px;
     font-size: 14px;
     color-scheme: dark;
-  }
-
-  .day-list{
-    margin: 0 16px;
-    background: var(--board-2);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    overflow: hidden;
-  }
-  .day-row{
-    display:flex;
-    align-items:center;
-    gap: 12px;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--line);
-    cursor: pointer;
-    -webkit-user-select: none;
-    user-select: none;
-    -webkit-touch-callout: none;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .day-row.no-click{
-    cursor: default;
-  }
-  .day-row:last-child{ border-bottom:none; }
-  .day-row.is-today{
-    background: rgba(242,169,59,0.07);
-  }
-  .day-row .count-badge{
-    width: 30px; height:30px;
-    border-radius: 7px;
-    background: var(--tile);
-    display:flex; align-items:center; justify-content:center;
-    font-weight: 800;
-    font-size: 14px;
-    color: var(--ink-dim);
-    flex-shrink:0;
-  }
-  .day-row .count-badge.eight{
-    background: var(--amber);
-    color: #14161f;
-  }
-  .day-row .count-badge.weekend{
-    opacity: 0.4;
-  }
-  .day-row .info{ flex:1; min-width:0; }
-  .day-row .dname{
-    font-size: 14px;
-    font-weight: 700;
-  }
-  .day-row .dname .sub{
-    font-weight: 400;
-    color: var(--ink-dim);
-    font-size: 12px;
-    margin-left: 6px;
-  }
-  .day-row .comment-tag{
-    font-size: 12px;
-    color: var(--amber);
-    margin-top: 2px;
-  }
-  .day-row .arrow{
-    color: var(--ink-dim);
-    font-size: 18px;
-  }
-  .rail-blob{
-    display: inline-block;
-    position: relative;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--amber);
-    margin-left: 8px;
-    vertical-align: middle;
-    cursor: pointer;
-    -webkit-user-select: none;
-    user-select: none;
-    -webkit-touch-callout: none;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .rail-blob::after{
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 36px;
-    height: 36px;
-    transform: translate(-50%, -50%);
-  }
-  .rail-blob-confirmed{
-    background: var(--salmon);
-  }
-  /* 2026-09-30 — a delay Wayne chose not to claim */
-  .rail-blob-declined{
-    background: var(--ink-dim);
   }
   .not-claiming-btn{
     display: inline-block;
@@ -758,10 +515,6 @@
   .day-nav-btn:active{
     background: rgba(255,255,255,0.06);
   }
-  .day-nav-btn .arrow-icon{
-    color: var(--amber);
-    font-size: 14px;
-  }
 
   .modal-overlay{
     position: fixed; inset:0;
@@ -811,17 +564,6 @@
      without making the bottom-sheet itself full-screen. */
   .modal-overlay-nav-safe .modal{
     padding-bottom: calc(72px + env(safe-area-inset-bottom));
-  }
-
-
-  .cal-overlay{
-    align-items: flex-start;
-    padding-top: 60px;
-  }
-  .cal-modal{
-    border-radius: 16px;
-    border-top: 1px solid var(--line);
-    margin: 0 12px;
   }
   .modal-close{
     text-align:center;
@@ -1238,3 +980,8 @@
     border-bottom: 1px solid var(--line);
     vertical-align: top;
   }
+
+  /* Drive check "Save & test now" result (settings.js renderDriveCheckResult). */
+  .dc-result-title{ font-size: var(--fs-body); font-weight: 700; }
+  .dc-result-text{ white-space: pre-line; margin-bottom: var(--space-2); }
+  .dc-result-checked{ margin-top: var(--space-1); color: var(--ink-dim); }

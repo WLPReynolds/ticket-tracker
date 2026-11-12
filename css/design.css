@@ -387,3 +387,282 @@ header.top.ui-home-head{
 .ui-page-body .cal-nav{ margin-top: var(--space-4); }
 .cal-day.selected{ box-shadow: inset 0 0 0 1.5px var(--ink-dim); }
 .cal-day.today.selected{ box-shadow: none; }
+
+/* =====================================================================
+   Stage 4 parts (2026-11-12): bottom sheet, segmented switch, notice,
+   form controls, data rows, chips, station picker. Spec:
+   claude/facelift-rollout-spec.md in the Project.
+   ===================================================================== */
+
+/* ---------- Form controls inside a page or sheet ----------
+   Any plain input, select or textarea inside .ui-page-body or .ui-sheet
+   looks like .ui-input, so converted screens don't hand-style inputs. */
+.ui-page-body input:not([type=checkbox]):not([type=radio]),
+.ui-page-body select,
+.ui-page-body textarea,
+.ui-sheet input:not([type=checkbox]):not([type=radio]),
+.ui-sheet select,
+.ui-sheet textarea{
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--tile);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  box-sizing: border-box;
+  color-scheme: dark;
+}
+.ui-page-body textarea,
+.ui-sheet textarea{ padding: var(--space-3); line-height: 1.4; }
+.ui-page-body input:disabled,
+.ui-sheet input:disabled{ opacity: 0.5; }
+.ui-page-body input::placeholder,
+.ui-sheet input::placeholder,
+.ui-page-body textarea::placeholder,
+.ui-sheet textarea::placeholder{ color: var(--ink-dim); }
+
+/* A small label heading a group of fields inside a page body. */
+.ui-subhead{
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.ui-page-body > .ui-subhead:first-child{ margin-top: 0; }
+
+/* Checkbox (or radio) with its label: the whole row is the tap target. */
+.ui-check{
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  font-size: var(--fs-body);
+  color: var(--ink);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+.ui-check input{ width: 20px; height: 20px; margin: 0; flex: 0 0 auto; accent-color: var(--amber); }
+.ui-check.ui-check-small{ font-size: var(--fs-small); color: var(--ink-dim); gap: var(--space-2); }
+
+/* A row of controls: an input that grows, with a link or small label beside it. */
+.ui-inline{ display: flex; align-items: center; gap: var(--space-2); }
+.ui-inline > input,
+.ui-inline > select{ flex: 1; min-width: 0; }
+.ui-inline-label{ flex: 1; min-width: 0; font-size: var(--fs-small); }
+.ui-inline-note{ font-size: var(--fs-small); color: var(--ink-dim); white-space: nowrap; }
+.ui-inline-note.ui-fixed{ flex: 0 0 84px; }
+.ui-page-body .ui-inline > input.ui-input-short,
+.ui-sheet .ui-inline > input.ui-input-short{ flex: 0 0 88px; width: 88px; }
+.ui-inline + .ui-inline{ margin-top: var(--space-2); }
+
+/* A bordered group inside a form (one drive-check route, one train time). */
+.ui-subcard{
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.ui-subcard + .ui-subcard{ margin-top: var(--space-3); }
+.ui-stack{ display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* A plain text action (Remove, Clear) that is still a 44px target. */
+.ui-link.ui-link-dim{ color: var(--ink-dim); font-weight: 500; }
+
+/* ---------- Bottom sheet ----------
+   A quick edit or choice about one thing. Built by uiOpenSheet() in ui-parts.js.
+   Sits above pages (60) and the bottom nav (55), below toasts (300). */
+.ui-sheet-overlay{
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0,0,0,0.6);
+}
+.ui-sheet{
+  width: 100%;
+  max-height: 90dvh;
+  overflow-y: auto;
+  background: var(--board-2);
+  border-top: 1px solid var(--line);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  color: var(--ink);
+}
+.ui-sheet-bar{
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1) 0 var(--margin);
+  position: sticky;
+  top: 0;
+  background: var(--board-2);
+}
+.ui-sheet-title{ flex: 1; min-width: 0; font-size: var(--fs-title); font-weight: 700; }
+.ui-sheet-close{
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ui-sheet-close svg{ width: 22px; height: 22px; }
+.ui-sheet-body{ padding: var(--space-1) var(--margin) calc(var(--space-5) + env(safe-area-inset-bottom)); }
+.ui-sheet-sub{ font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.4; margin-bottom: var(--space-4); }
+.ui-sheet-actions{ display: flex; gap: var(--space-2); margin-top: var(--space-5); }
+.ui-sheet-actions > *{ flex: 1; }
+
+/* ---------- Chips: selectable tags ---------- */
+.ui-chips{ display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ui-chip{
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--tile);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ui-chip.is-selected{ background: var(--amber); border-color: var(--amber); color: var(--board); }
+
+/* ---------- Segmented switch: two or three views of one screen ---------- */
+.ui-segmented{
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--tile);
+}
+.ui-segmented > button{
+  flex: 1;
+  min-height: 40px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: var(--fs-small);
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ui-segmented > button.is-selected{ background: var(--amber); color: var(--board); }
+
+/* ---------- Notice: a tinted note box ---------- */
+.ui-notice{
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: rgba(154,157,176,0.08);
+  font-size: var(--fs-small);
+  line-height: 1.4;
+}
+.ui-notice.ui-notice-info{ background: rgba(127,201,232,0.10); border-color: rgba(127,201,232,0.30); }
+.ui-notice.ui-notice-warn{ background: rgba(242,169,59,0.10); border-color: rgba(242,169,59,0.35); }
+.ui-notice.ui-notice-good{ background: rgba(111,191,138,0.10); border-color: rgba(111,191,138,0.30); }
+.ui-notice.ui-notice-bad{ background: rgba(255,139,126,0.10); border-color: rgba(255,139,126,0.35); color: var(--salmon); }
+
+/* ---------- Data rows: compact lists of records ---------- */
+.ui-data-row{
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  font-size: var(--fs-body);
+}
+.ui-data-row + .ui-data-row{ border-top: 1px solid var(--line); }
+.ui-data-row-main{ flex: 1; min-width: 0; }
+.ui-data-row-sub{ font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-data-row-value{ font-variant-numeric: tabular-nums; text-align: right; }
+.ui-data-table{ width: 100%; border-collapse: collapse; font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
+.ui-data-table td{ padding: 2px 0; }
+.ui-data-table td + td{ padding-left: var(--space-2); text-align: right; }
+.ui-dim{ color: var(--ink-dim); }
+
+/* ---------- Empty state ---------- */
+.ui-empty{ padding: var(--space-4) 0; font-size: var(--fs-small); color: var(--ink-dim); text-align: center; }
+
+/* ---------- Station picker (createStationPicker in stations.js) ---------- */
+.ui-picker{ position: relative; flex: 1; }
+.ui-picker input.ui-picker-input,
+.ui-page-body .ui-picker input.ui-picker-input,
+.ui-sheet .ui-picker input.ui-picker-input{
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 0 var(--tap) 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--tile);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  box-sizing: border-box;
+}
+.ui-picker-clear{
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: var(--tap);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-dim);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+.ui-picker-clear svg{ width: 18px; height: 18px; }
+.ui-picker-list{
+  position: absolute;
+  left: 0; right: 0; top: 100%;
+  z-index: 20;
+  margin-top: var(--space-1);
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--board-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.ui-picker-option{
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  align-items: center;
+  padding: 0 var(--space-3);
+  font-size: var(--fs-body);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.ui-picker-option + .ui-picker-option{ border-top: 1px solid var(--line); }
+.ui-picker-note{ padding: var(--space-3); font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-picker-note strong{ color: var(--ink); }
+
+/* Spacing helpers for the gap above an element in a form (multiples of 4). */
+.ui-gap-top{ margin-top: var(--space-4); }
+.ui-gap-top-sm{ margin-top: var(--space-2); }
+
+/* Inside converted screens the hidden attribute always wins over a part's own display. */
+.ui-page [hidden],
+.ui-sheet [hidden]{ display: none !important; }
