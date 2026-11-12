@@ -1,7 +1,6 @@
-// screen-home.js — render() — the Home tab.
+// screen-home.js — render() — the Home tab. The sections it assembles live in home-sections.js.
 // Part of the ticket tracker PWA. Read CODEMAP.md first: it lists what each file owns and the load order.
-const MAX_DAYS_AHEAD = 120;
-const DAYS_AHEAD_STEP = 14;
+const MAX_DAYS_AHEAD = 120; // used by tickets.js (findNextBuyDateKey look-ahead)
 
 // Small line-style SVG icons for the delay repay badge — kept inline rather
 // than pulling in an icon font, since the app otherwise relies on emoji and
@@ -202,8 +201,10 @@ function render(){
         </div>`;
     }
   }
-  const rangeEnd = addDays(today, state.daysAhead);
-  const states = computeStates(rangeEnd);
+  // Seven-day strip, day panel, ticket pair, trains and money all share one view of "today".
+  const weekSunday = addDays(homeWeekMonday(today), 6);
+  const ctx = homeDayCtx(weekSunday);
+  const states = ctx.states;
   const todayState = states[todayKey];
   const todayComment = (comments[todayKey] || '').trim();
   const todayIsWeekend = isWeekend(today);
@@ -227,7 +228,8 @@ function render(){
       isChristmasBunting = isBuntingDay && !!(todayEvent.title && /christmas|boxing/i.test(todayEvent.title));
     }
   }catch(e){ isBuntingDay = false; isChristmasBunting = false; }
-  const beforePeriod = !todayState;
+  const beforePeriod = ctx.beforePeriod;
+
 
   // Hamburger menu items, built as a weighted list so ordering is
   // controlled by 'weight' rather than by where an item happens to sit in
@@ -253,106 +255,17 @@ function render(){
   menuItems.sort((a, b) => a.weight - b.weight);
   const menuItemsHtml = menuItems.map(item => `<div class="settings-link" id="${item.id}">${item.label}</div>`).join('');
 
-  const nextHolidayKey = findNextHoliday(todayKey);
-  let holidayHtml = '';
-  if (nextHolidayKey){
-    const hDate = parseKey(nextHolidayKey);
-    // Fresh wall-clock time, not state.today — the hour-of-day check needs
-    // to reflect the moment of this render, not when the app was opened.
-    const nowClock = new Date();
-    const countdown = getHolidayCountdownState(today, nowClock, hDate);
+  // ---------- Ticket pair: tickets left and next buy date, equal weight ----------
+  const realPeriodEnd = ctx.realPeriodEnd;
+  const isPhantomToday = !beforePeriod && todayKey > fmtKey(realPeriodEnd.endDate);
+  const singleToday = isPhantomToday ? getSingleTicketForDate(todayKey) : null;
+  const buyToday = !beforePeriod && !!todayState.buyFlag;
 
-    let bigNumber, bigNumberStyle, labelText, dateLine;
-    if (countdown.mode === 'off'){
-      bigNumber = '🎉';
-      bigNumberStyle = '';
-      labelText = 'Enjoy your holiday!';
-      dateLine = `Back to work ${dateLabel(countdown.backToWorkDay)}`;
-    } else if (countdown.mode === 'hours'){
-      bigNumber = `${countdown.hours}h ${countdown.minutes}m`;
-      bigNumberStyle = 'font-size:26px;'; // "Xh Ym" is wider than a bare day-count
-      labelText = "Until you're off for your holiday";
-      dateLine = dateLabel(hDate);
-    } else {
-      bigNumber = countdown.dayCount;
-      bigNumberStyle = '';
-      labelText = `Working day${countdown.dayCount===1?'':'s'} until your next holiday`;
-      dateLine = dateLabel(hDate);
-    }
-
-    holidayHtml = `
-      <div class="holiday-card">
-        <div class="holiday-count" style="${bigNumberStyle}">${bigNumber}</div>
-        <div class="holiday-info">
-          <div class="holiday-label">${labelText}</div>
-          <div class="holiday-date">${dateLine}</div>
-        </div>
-      </div>`;
-  }
-
-  const currentYear = today.getFullYear();
-  const yearToDatePurchases = purchases.filter(p => parseKey(p.date).getFullYear() === currentYear);
-  const yearToDateTotal = yearToDatePurchases.reduce((sum, p) => sum + p.cost, 0);
-
-  const realPeriodEnd = beforePeriod ? null : getRealPeriodEnd();
-  // Same underlying check as isCurrentlyInTicketGap (shared helper, used
-  // by the calendar sync logic too) — kept as a direct computation here
-  // rather than calling that helper again, since realPeriodEnd is
-  // already available and needed separately just below for isPastPhantom.
-  const isPhantomToday = !beforePeriod && fmtKey(today) > fmtKey(realPeriodEnd.endDate);
-
-  let statusHtml = '';
-  if (beforePeriod){
-    statusHtml = `<div class="status-banner skip">This ticket starts ${dateLabel(parseKey(periodStart))}</div>`;
-  } else if (isPhantomToday){
-    const singleToday = getSingleTicketForDate(todayKey);
-    if (todayState && todayState.buyFlag){
-      // Buy day falls inside the post-ticket gap (e.g. a Sunday before a
-      // Monday travel day) — prompt to buy, rather than the weekend /
-      // "no active ticket" wording, which hid the prompt entirely since
-      // the "Next ticket due" line is suppressed when the buy day is today.
-      statusHtml = `<div class="status-banner renew" id="renewal-banner-tap" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">🚆 Buy your ticket tonight for tomorrow ›</div>`;
-    } else if (todayIsWeekend){
-      statusHtml = `<div class="status-banner skip">Weekend — no ticket needed</div>`;
-    } else if (singleToday){
-      statusHtml = `<div class="status-banner ok">Single ticket used today (£${singleToday.cost.toFixed(2)})</div>`;
-    } else if (todayComment !== '' && !travelOverrides[todayKey]){
-      statusHtml = `<div class="status-banner skip">Marked "${escapeHtml(todayComment)}" — not counted</div>`;
-    } else {
-      statusHtml = `<div class="status-banner renew" id="renewal-banner-tap" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">No active season ticket — log a single ticket, or buy your next one ›</div>`;
-    }
-  } else if (todayState.buyFlag){
-    const lostMsg = todayState.lostDays ? ` (${todayState.unusedRemaining} unused day${todayState.unusedRemaining===1?'':'s'} lost)` : '';
-    statusHtml = `<div class="status-banner renew" id="renewal-banner-tap" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">🚆 Buy your ticket tonight for tomorrow${lostMsg} ›</div>`;
-  } else if (todayState.inGap){
-    statusHtml = `<div class="status-banner skip">No ticket needed yet — nothing due until you next travel</div>`;
-  } else if (todayIsWeekend){
-    statusHtml = `<div class="status-banner skip">Weekend — no ticket needed &middot; day ${todayState.daysElapsed} of 28</div>`;
-  } else if (todayComment !== '' && !travelOverrides[todayKey]){
-    statusHtml = `<div class="status-banner skip">Marked "${escapeHtml(todayComment)}" — not counted &middot; day ${todayState.daysElapsed} of 28</div>`;
-  } else {
-    const overrideNote = (todayComment !== '' && travelOverrides[todayKey]) ? ` &middot; marked "${escapeHtml(todayComment)}" but counted` : '';
-    statusHtml = `<div class="status-banner ok">${todayState.unusedRemaining} use${todayState.unusedRemaining===1?'':'s'} left &middot; day ${todayState.daysElapsed} of 28${overrideNote}</div>`;
-  }
-
-  const todayCountDisplay = (beforePeriod || todayState.inGap) ? '–' : String(todayState.usedCount);
-  const punches = [];
-  for (let i=1;i<=8;i++){
-    punches.push(!beforePeriod && !todayState.inGap && i <= todayState.usedCount);
-  }
-  const dayProgressPct = (beforePeriod || todayState.inGap) ? 0 : Math.round((todayState.daysElapsed / PERIOD_LENGTH) * 100);
-
-  // Next buy-ticket date, found independently of how far the visible day
-  // list currently scrolls — so it's always accurate even before you've
-  // tapped "Show more days". Not shown if today itself is the buy day,
-  // since the status banner above already covers that case.
-  let nextBuyHtml = '';
+  // Next buy-ticket date, found independently of any list length, so it's always accurate.
+  let nextBuyKey = null;
   let calendarPromptHtml = '';
   if (!beforePeriod){
-    const nextBuyKey = findNextBuyDateKey(today, todayKey);
-    if (nextBuyKey && nextBuyKey !== todayKey){
-      nextBuyHtml = `<div class="next-buy-line">Next ticket due ${dateLabelShort(parseKey(nextBuyKey))}</div>`;
-    }
+    nextBuyKey = findNextBuyDateKey(today, todayKey);
     // If the predicted buy date has changed since we last checked, wait
     // 10 seconds before actually notifying/syncing — if another change
     // comes in before that (e.g. tagging several holiday days in a row),
@@ -372,158 +285,88 @@ function render(){
     }
     if (gcalEnabled && gcalPendingSync && nextBuyKey){
       const promptLabel = gcalLastSyncFailed ? 'Couldn\'t update Google Calendar — tap to retry' : 'Tap to update Google Calendar';
-      calendarPromptHtml = `<div class="next-buy-line" id="calendar-sync-prompt" style="cursor:pointer; text-decoration:underline;">${promptLabel}</div>`;
+      calendarPromptHtml = `<div class="ui-banner-note ui-tap" id="calendar-sync-prompt" style="text-decoration:underline;">${promptLabel}</div>`;
     }
   }
 
-  const days = getRange(today, railDaysBack, state.daysAhead);
-
-  // Monthly cost estimate — how many tickets and parking days are likely
-  // needed within the selected pay period. Offset 0 is the current period
-  // (most recent payday up to, but not including, the next one); the
-  // card's own nav arrows let you preview future periods without
-  // affecting the automatic dismiss/reset behaviour of the current one.
-  // 2026-10-06: the calculation (and its payday lock) now lives in
-  // estimateForPeriod(), shared with the Personal Finance publisher so the
-  // card and the transport-estimates.json file can never disagree.
-  const estMonthKey = fmtKey(getPayPeriodByOffset(today, 0).start); // dismiss/reset key always tracks the CURRENT period, regardless of what's being previewed
-  const est = estimateForPeriod(today, estimateOffset);
-  const estWindowStart = est.start;
-  const estWindowEnd = est.end;
-  const estTicketCount = est.ticketCount;
-  const estParkingDays = est.parkingDays;
-  const estTicketCost = est.ticketCost;
-  const estParkingCost = est.parkingCost;
-  const estTotal = est.total;
-  const payWindowLabel = `${dateLabelShort(estWindowStart)} – ${dateLabelShort(estWindowEnd)}`;
-  const monthEstimateDismissed = !!dismissedMonths[estMonthKey];
-  const showEstimateCard = !monthEstimateDismissed;
-
-  // Always the REAL current period, independent of whatever the
-  // estimate card above might be previewing via its own nav arrows —
-  // this is about what's actually happened so far, not a projection.
-  const realCurrentPeriod = getPayPeriodByOffset(today, 0);
-  const currentPeriodBudgetDays = getOrLockParkingBudgetDays(realCurrentPeriod.start, realCurrentPeriod.end, today);
-  const parkingSavedThisPeriod = computeParkingSavingsForPeriod(realCurrentPeriod.start, realCurrentPeriod.end, today, currentPeriodBudgetDays, parkedDays, parkingCost);
-
-  // Lock in the immediately preceding period's figure the first time
-  // it's seen after ticking over, same reasoning as the payday
-  // snapshot — once a period is done, its "saved" total shouldn't keep
-  // drifting if a comment or parked-day gets edited afterwards. This
-  // only catches the period right before the current one on each
-  // render; older, skipped-over periods still get locked in (with their
-  // own best-effort budget-day set, reconstructed from whatever comment
-  // state exists now) the first time they're actually viewed below.
-  const prevParkingPeriod = getPayPeriodByOffset(today, -1);
-  const prevParkingPeriodStartKey = fmtKey(prevParkingPeriod.start);
-  if (parkingSavingsSnapshots[prevParkingPeriodStartKey] === undefined){
-    const prevBudgetDays = getOrLockParkingBudgetDays(prevParkingPeriod.start, prevParkingPeriod.end, today);
-    parkingSavingsSnapshots[prevParkingPeriodStartKey] = computeParkingSavingsForPeriod(prevParkingPeriod.start, prevParkingPeriod.end, today, prevBudgetDays, parkedDays, parkingCost);
-    saveParkingSavingsSnapshots();
-  }
-
-  // The period actually being displayed on the card, per its own nav
-  // arrows — offset 0 is always the real current period (live, never
-  // snapshotted, since it's still evolving); anything further back
-  // reads from the locked-in snapshot, computing and locking its
-  // budget-day set and resulting total on the spot if this is the first
-  // time it's being viewed.
-  const psPeriod = parkingSavingsOffset === 0 ? realCurrentPeriod : getPayPeriodByOffset(today, parkingSavingsOffset);
-  const psPeriodStartKey = fmtKey(psPeriod.start);
-  let parkingSavingsCardValue;
-  if (parkingSavingsOffset === 0){
-    parkingSavingsCardValue = parkingSavedThisPeriod;
-  } else if (parkingSavingsSnapshots[psPeriodStartKey] !== undefined){
-    parkingSavingsCardValue = parkingSavingsSnapshots[psPeriodStartKey];
+  let leftNum = '–', leftSub = '', usedForBar = 0;
+  if (beforePeriod){
+    leftSub = `Starts ${dateLabelShort(parseKey(periodStart))}`;
+  } else if (isPhantomToday){
+    leftSub = 'No active ticket';
+  } else if (todayState.inGap){
+    leftSub = 'No ticket needed yet';
   } else {
-    const psBudgetDays = getOrLockParkingBudgetDays(psPeriod.start, psPeriod.end, today);
-    parkingSavingsCardValue = computeParkingSavingsForPeriod(psPeriod.start, psPeriod.end, today, psBudgetDays, parkedDays, parkingCost);
-    parkingSavingsSnapshots[psPeriodStartKey] = parkingSavingsCardValue;
-    saveParkingSavingsSnapshots();
+    leftNum = String(todayState.unusedRemaining);
+    usedForBar = todayState.usedCount;
+    leftSub = `Day ${todayState.daysElapsed} of 28`;
   }
-  const parkingSavingsWindowLabel = `${dateLabelShort(psPeriod.start)} – ${dateLabelShort(psPeriod.end)}`;
 
-  const rows = days.map(d => {
-    const key = fmtKey(d);
-    let s = states[key];
-    const weekend = isWeekend(d);
-    const comment = (comments[key] || '').trim();
-    const isToday = key === todayKey;
-    let isHistorical = false;
-    if (!s){
-      // Not this ticket's own range — but a real, earlier ticket may
-      // still have genuinely covered this day. Recovered here rather
-      // than shown as a bare placeholder, so the day keeps its actual
-      // detail (badge, confirmed trains, delay claim status) exactly as
-      // it looked before a new ticket got bought, not just "Before this
-      // ticket" with nothing else.
-      s = findHistoricalStateForDate(key);
-      isHistorical = !!s;
-    }
-    if (!s){
-      return `
-        <div class="day-row" data-key="${key}">
-          <div class="count-badge">–</div>
-          <div class="info">
-            <div class="dname">${dayNameShort(d)} ${dateLabelShort(d)}</div>
-            <div class="comment-tag" style="color:var(--ink-dim)">Before this ticket</div>
-          </div>
-          <div class="arrow">›</div>
-        </div>`;
-    }
-    const isPastPhantom = !weekend && !beforePeriod && key <= todayKey && key > fmtKey(realPeriodEnd.endDate);
-    const singleForDay = isPastPhantom ? getSingleTicketForDate(key) : null;
-
-    let badgeClass, badgeText;
-    if (isPastPhantom){
-      badgeClass = singleForDay ? 'eight' : 'weekend';
-      badgeText = singleForDay ? 'S' : '–';
+  const buyShownKey = buyToday ? todayKey : nextBuyKey;
+  let rightNum = '–', rightMonth = '', rightSub = beforePeriod ? 'Not started yet' : 'Nothing due yet';
+  if (buyShownKey){
+    const nd = parseKey(buyShownKey);
+    rightNum = String(nd.getDate());
+    rightMonth = nd.toLocaleDateString('en-GB', { month: 'short' });
+    if (buyToday){
+      const lost = (!isPhantomToday && todayState.lostDays) ? ` · ${todayState.unusedRemaining} unused lost` : '';
+      rightSub = `Buy tonight for tomorrow${lost}`;
     } else {
-      badgeClass = s.buyFlag ? 'eight' : ((weekend || s.inGap) ? 'weekend' : '');
-      badgeText = (weekend || s.inGap) ? '–' : s.usedCount;
+      const diff = Math.round((nd.getTime() - today.getTime()) / 86400000);
+      rightSub = `${nd.toLocaleDateString('en-GB', { weekday: 'long' })} · in ${diff} day${diff === 1 ? '' : 's'}`;
     }
+  }
 
-    let tag = '';
-    const overridden = comment !== '' && !!travelOverrides[key];
-    if (isPastPhantom){
-      if (comment && singleForDay) tag = `${escapeHtml(comment)} &middot; Single ticket (£${singleForDay.cost.toFixed(2)})`;
-      else if (singleForDay) tag = `Single ticket (£${singleForDay.cost.toFixed(2)})`;
-      else if (comment) tag = escapeHtml(comment) + (overridden ? ' &middot; counted' : '');
-      else tag = 'No active ticket';
+  // Supporting line under the bar — the banner states the old Home showed.
+  let noteHtml = '';
+  if (!beforePeriod){
+    const marked = todayComment !== '' && !travelOverrides[todayKey];
+    if (isPhantomToday){
+      if (buyToday) noteHtml = '';
+      else if (todayIsWeekend) noteHtml = '<div class="ui-banner-note">Weekend — no ticket needed</div>';
+      else if (singleToday) noteHtml = `<div class="ui-banner-note">Single ticket used today (£${singleToday.cost.toFixed(2)})</div>`;
+      else if (marked) noteHtml = `<div class="ui-banner-note">Marked "${escapeHtml(todayComment)}" — not counted</div>`;
+      else noteHtml = '<div class="ui-banner-note ui-tap" id="renewal-banner-tap">No active season ticket — log a single ticket, or buy your next one ›</div>';
+    } else if (todayState.inGap){
+      noteHtml = '<div class="ui-banner-note">Nothing due until you next travel</div>';
+    } else if (todayIsWeekend){
+      noteHtml = '<div class="ui-banner-note">Weekend — no ticket needed</div>';
+    } else if (marked){
+      noteHtml = `<div class="ui-banner-note">Marked "${escapeHtml(todayComment)}" — not counted</div>`;
+    } else if (todayComment !== ''){
+      noteHtml = `<div class="ui-banner-note">Marked "${escapeHtml(todayComment)}" but counted</div>`;
     }
-    else if (comment && s.buyFlag) tag = `${escapeHtml(comment)}${overridden ? ' &middot; counted' : ''} · Buy ticket${s.lostDays ? ` · ${s.unusedRemaining} lost` : ''}`;
-    else if (comment) tag = escapeHtml(comment) + (overridden ? ' &middot; counted' : '');
-    else if (s.buyFlag) tag = s.lostDays ? `Buy ticket · ${s.unusedRemaining} lost` : 'Buy ticket';
-    else if (weekend) tag = 'Weekend';
+  }
+  const segments = Array.from({ length: 8 }, (_, i) => `<span class="${i < usedForBar ? 'on' : ''}"></span>`).join('');
+  const rightHalf = buyToday
+    ? `<button type="button" class="ui-pair-half ui-pair-buy ui-pair-action" id="renewal-banner-tap"><div class="ui-label">Buy next ticket</div><div class="ui-pair-big"><span class="ui-pair-num">${rightNum}</span><span class="ui-pair-unit ui-pair-unit-strong">${rightMonth}</span></div><div class="ui-train-sub">${rightSub}</div></button>`
+    : `<div class="ui-pair-half"><div class="ui-label">Buy next ticket</div><div class="ui-pair-big"><span class="ui-pair-num">${rightNum}</span><span class="ui-pair-unit ui-pair-unit-strong">${rightMonth}</span></div><div class="ui-train-sub">${rightSub}</div></div>`;
 
-    let railBlobHtml = '';
-    if (isEligibleRailDay(d, todayKey)){
-      const status = getDelayStatus(key);
-      if (status === 'confirmed'){
-        railBlobHtml = `<span class="rail-blob rail-blob-confirmed" data-rail-key="${key}" title="Confirmed delay repay claim"></span>`;
-      } else if (status === 'maybe'){
-        railBlobHtml = `<span class="rail-blob" data-rail-key="${key}" title="Possible delay repay claim"></span>`;
-      } else if (status === 'declined'){
-        railBlobHtml = `<span class="rail-blob rail-blob-declined" data-rail-key="${key}" title="Declined delay repay"></span>`;
-      }
-    }
+  // ---------- Money row: three figures, each behind its own Settings switch ----------
+  const realCurrentPeriod = getPayPeriodByOffset(today, 0);
+  const estMonthKey = fmtKey(realCurrentPeriod.start);
+  // Lock in the preceding period's parking figure the first time it's seen after ticking over
+  // (a finished period's total shouldn't drift if a day is edited afterwards).
+  homeParkingSavingsFor(today, -1);
+  const currentYear = today.getFullYear();
+  const yearToDatePurchases = purchases.filter(p => parseKey(p.date).getFullYear() === currentYear);
+  const moneyHtml = homeMoneyRowHtml({
+    payday: dismissedMonths[estMonthKey] ? null : estimateForPeriod(today, 0),
+    parking: (!beforePeriod && !dismissedParkingSavingsPeriods[estMonthKey]) ? homeParkingSavingsFor(today, 0) : null,
+    spent: ticketsSpentCardDismissed ? null : { total: yearToDatePurchases.reduce((sum, p) => sum + p.cost, 0), count: yearToDatePurchases.length },
+  });
 
-    return `
-      <div class="day-row ${isToday?'is-today':''} ${weekend?'no-click':''}" data-key="${key}" data-weekend="${weekend ? '1' : '0'}">
-        <div class="count-badge ${badgeClass}">${badgeText}</div>
-        <div class="info">
-          <div class="dname">${dayNameShort(d)} ${dateLabelShort(d)} ${isToday?'<span class="sub">Today</span>':''}${railBlobHtml}</div>
-          ${tag ? `<div class="comment-tag">${tag}</div>` : ''}
-        </div>
-        ${weekend ? '' : '<div class="arrow">›</div>'}
-      </div>
-    `;
-  }).join('');
+  const trainsInner = railTrains.length ? homeTrainsInnerHtml() : '';
+  const trainsHtml = trainsInner ? `
+    <div class="ui-section-head"><div class="ui-label">Your trains</div><span class="ui-link" id="home-live-link">Live board</span></div>
+    <div id="home-trains">${trainsInner}</div>` : '';
+
+  const stripHtml = homeBuildStrip(ctx);
+  const weekLinkHtml = homeWeekOffset !== 0 ? '<span class="ui-link" id="home-week-today">This week</span>' : '';
 
   app.className = '';
   app.innerHTML = `
-    <header class="top">
-      ${delayRepayBadgeHtml}
+    <header class="top ui-home-head">
       ${isChristmasBunting ? `
       <div class="christmas-header" title="Merry Christmas, per gov.uk's bunting flag">
         <svg class="christmas-lights" viewBox="0 0 268 22" preserveAspectRatio="none">
@@ -546,113 +389,49 @@ function render(){
       </div>` : isBuntingDay ? `
       <div class="bunting-row" title="Official bunting day, per gov.uk">
         <span class="bunting-flag" style="background:var(--amber);"></span>
-        <span class="bunting-flag" style="background:#7fc9e8;"></span>
+        <span class="bunting-flag" style="background:var(--holiday);"></span>
         <span class="bunting-flag" style="background:var(--good);"></span>
         <span class="bunting-flag" style="background:var(--amber);"></span>
-        <span class="bunting-flag" style="background:#7fc9e8;"></span>
+        <span class="bunting-flag" style="background:var(--holiday);"></span>
         <span class="bunting-flag" style="background:var(--good);"></span>
         <span class="bunting-flag" style="background:var(--amber);"></span>
       </div>` : ''}
-      <div class="eyebrow">Season Ticket Tracker</div>
-      <h1>8-Day Ticket</h1>
-      <div class="today-date">${dateLabel(today)}</div>
-      <div style="font-size:10px; color:var(--ink-dim); opacity:0.6; margin-top:2px;">${APP_VERSION}</div>
+      <div>
+        <div class="ui-home-date">${dateLabel(today)}</div>
+        <div class="ui-home-version">${APP_VERSION}</div>
+      </div>
+      ${delayRepayBadgeHtml}
       ${menuOpen ? `
       <div class="menu-dropdown" id="menu-dropdown">
         ${menuItemsHtml}
       </div>` : ''}
     </header>
 
-    <div class="board-card">
-      ${!isPhantomToday ? `
-      <div class="ticket-summary-row">
-        <div class="punch-row">
-          ${punches.map((p,i)=>`<div class="punch ${p?'done':''}">${i+1}</div>`).join('')}
+    <div class="ui-card">
+      <div class="ui-pair">
+        <div class="ui-pair-half">
+          <div class="ui-label">Tickets left</div>
+          <div class="ui-pair-big"><span class="ui-pair-num">${leftNum}</span><span class="ui-pair-unit">of 8</span></div>
+          <div class="ui-train-sub">${leftSub}</div>
         </div>
-        <div class="ticket-count-label">${todayCountDisplay}<span class="of8">/8</span></div>
+        ${rightHalf}
       </div>
-      <div class="day-progress-track"><div class="day-progress-fill" style="width:${dayProgressPct}%"></div></div>
-      ` : ''}
-      ${statusHtml}
-      ${nextBuyHtml}
+      <div class="ui-segments" role="img" aria-label="${usedForBar} of 8 tickets used">${segments}</div>
+      ${noteHtml}
       ${calendarPromptHtml}
-      ${likelyTrainSuggestion ? `
-      <div class="holiday-card" style="margin-top:12px;">
-        <div class="holiday-info" style="width:100%;">
-          <div class="holiday-label">Is this your train?</div>
-          <div style="font-size:15px; margin:4px 0 10px;">Looks like you might be on the delayed <strong style="color:var(--amber);">${likelyTrainSuggestion.label}</strong> instead of your usual one.</div>
-          <div style="display:flex; gap:10px;">
-            <button class="save-btn" id="likely-train-yes-btn" style="flex:1; margin:0;">Yes, that's me</button>
-            <button class="save-btn" id="likely-train-no-btn" style="flex:1; margin:0; background:var(--tile); color:var(--ink-dim);">No</button>
-          </div>
-        </div>
-      </div>` : ''}
     </div>
 
-    ${!showEstimateCard ? '' : `
-    <div class="holiday-card" id="month-estimate-card">
-      <div class="holiday-info" style="width:100%;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-          <div class="holiday-label">Set aside on payday</div>
-          <span id="month-estimate-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
-          <span class="cal-nav-btn" id="estimate-prev" style="width:24px; height:24px; font-size:13px;">&#8249;</span>
-          <div class="holiday-label" style="margin:0; font-weight:600; color:var(--ink);">${payWindowLabel}</div>
-          <span class="cal-nav-btn" id="estimate-next" style="width:24px; height:24px; font-size:13px;">&#8250;</span>
-        </div>
-        <div class="holiday-date" style="font-size:22px; font-weight:600; color:var(--amber); margin-top:8px;">£${estTotal.toFixed(2)}</div>
-        <div class="holiday-label" style="margin-top:2px;">${estTicketCount} ticket${estTicketCount===1?'':'s'} (£${estTicketCost.toFixed(2)}) + ${estParkingDays} parking day${estParkingDays===1?'':'s'} (£${estParkingCost.toFixed(2)})</div>
-      </div>
-    </div>`}
+    ${homeHolidayLineHtml(today)}
 
-    ${(!beforePeriod && !dismissedParkingSavingsPeriods[fmtKey(realCurrentPeriod.start)]) ? `
-    <div class="holiday-card" id="parking-savings-card">
-      <div class="holiday-info" style="width:100%;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-          <div class="holiday-label">Parking savings${parkingSavingsOffset === 0 ? ' this period' : ''}</div>
-          <span id="parking-savings-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
-          <span class="cal-nav-btn" id="parking-savings-prev" style="width:24px; height:24px; font-size:13px;">&#8249;</span>
-          <div class="holiday-label" style="margin:0; font-weight:600; color:var(--ink);">${parkingSavingsWindowLabel}</div>
-          <span class="cal-nav-btn ${parkingSavingsOffset === 0 ? 'disabled' : ''}" id="parking-savings-next" style="width:24px; height:24px; font-size:13px; ${parkingSavingsOffset === 0 ? 'opacity:0.35; pointer-events:none;' : ''}">&#8250;</span>
-        </div>
-        <div class="holiday-date" style="font-size:22px; font-weight:600; color:${parkingSavingsCardValue >= 0 ? 'var(--good)' : '#ff8b7e'}; margin-top:8px;">${parkingSavingsCardValue >= 0 ? '£' + parkingSavingsCardValue.toFixed(2) + ' saved' : '£' + Math.abs(parkingSavingsCardValue).toFixed(2) + ' over budget'}</div>
-      </div>
-    </div>` : ''}
+    ${trainsHtml}
 
+    <div class="ui-section-head"><div class="ui-label">Days</div><span>${weekLinkHtml}<span class="ui-link" id="home-month-link">Month view</span></span></div>
+    ${stripHtml}
+    <div class="ui-card" id="home-day-panel" style="margin-top:var(--space-2);">${homeBuildDayPanel(homeSelectedDayKey, ctx)}</div>
 
-    ${!ticketsSpentCardDismissed ? `
-    <div class="holiday-card" id="spending-card" style="cursor:pointer;">
-      <div class="holiday-info" style="width:100%;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-          <div class="holiday-label">Spent on tickets this year</div>
-          <span id="spending-card-dismiss" style="cursor:pointer; color:var(--ink-dim); font-size:16px; line-height:1; padding:0 4px;">&times;</span>
-        </div>
-        <div class="holiday-date" style="font-size:22px; font-weight:600; color:var(--amber);">£${yearToDateTotal.toFixed(2)}</div>
-        <div class="holiday-label" style="margin-top:2px;">${yearToDatePurchases.length} ticket${yearToDatePurchases.length===1?'':'s'} logged this year · tap to manage</div>
-      </div>
-    </div>` : ''}
+    ${moneyHtml}
 
-    ${holidayHtml}
-
-    ${todayIsWeekend ? '' : `
-    <div class="section-label">Today's comment</div>
-    <div class="comment-card" id="today-comment-card">
-      <div class="chip-row" id="chip-row"></div>
-      <input type="text" id="custom-comment" placeholder="Or type your own" value="${escapeHtml(todayComment && !PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment : '')}" />
-      <label style="display:flex; align-items:center; gap:8px; margin:10px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
-        <input type="checkbox" id="today-override-checkbox" ${travelOverrides[todayKey] ? 'checked' : ''} style="width:16px; height:16px;" />
-        I still used the ticket today
-      </label>
-      <button class="save-btn" id="save-today-btn">Save</button>
-    </div>`}
-
-    <div class="section-label">Upcoming &amp; recent days</div>
-    ${railDaysBack < RAIL_MAX_DAYS_BACK ? `<div class="day-nav-btn" id="show-earlier-link"><span class="arrow-icon">&#8593;</span> Show earlier days</div>` : ''}
-    <div class="day-list">${rows}</div>
-    ${state.daysAhead < MAX_DAYS_AHEAD ? `<div class="day-nav-btn" id="show-more-link">Show more days <span class="arrow-icon">&#8595;</span></div>` : ''}
+    <div style="height:var(--space-5);"></div>
 
     <nav class="bottom-nav">
       <div class="bottom-nav-item ${state.activeTab==='today'?'active':''}" id="bottom-nav-today">${NAV_ICONS.today}<span class="bn-label">Home</span></div>
@@ -663,66 +442,39 @@ function render(){
     </nav>
   `;
 
-  // wire up chip row for today (only exists on non-weekend days)
-  const chipRow = document.getElementById('chip-row');
-  if (chipRow){
-    let selectedPreset = PRESET_TAGS.includes(todayComment.toUpperCase()) ? todayComment.toUpperCase() : null;
-    chipRow.innerHTML = PRESET_TAGS.map(tag => `<div class="chip ${selectedPreset===tag?'active':''}" data-tag="${tag}">${tag}</div>`).join('') +
-      `<div class="chip ${!selectedPreset && !todayComment ? '' : (!selectedPreset && todayComment ? '' : '')}" data-tag="__clear">Clear</div>`;
-
-    chipRow.querySelectorAll('.chip').forEach(chip => {
-      chip.addEventListener('click', async () => {
-        const tag = chip.dataset.tag;
-        const cb = document.getElementById('today-override-checkbox');
-        if (tag === '__clear'){
-          comments[todayKey] = '';
-          delete travelOverrides[todayKey];
-        } else {
-          comments[todayKey] = tag;
-          document.getElementById('custom-comment').value = '';
-          if (cb && cb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
-        }
-        await saveComments();
-        await saveTravelOverrides();
-        render();
-      });
-    });
-
-    document.getElementById('save-today-btn').addEventListener('click', async () => {
-      const val = document.getElementById('custom-comment').value.trim();
-      const cb = document.getElementById('today-override-checkbox');
-      if (val !== ''){
-        comments[todayKey] = val;
-        if (cb && cb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
-        await saveComments();
-        await saveTravelOverrides();
-        render();
-      }
-    });
-
-    const todayOverrideCb = document.getElementById('today-override-checkbox');
-    if (todayOverrideCb){
-      todayOverrideCb.addEventListener('change', async () => {
-        if (todayOverrideCb.checked) travelOverrides[todayKey] = true; else delete travelOverrides[todayKey];
-        await saveTravelOverrides();
-        render();
-        if (todayOverrideCb.checked) railSyncMissingDates();
-      });
-    }
-  }
-
-  document.querySelectorAll('.day-row').forEach(row => {
-    row.addEventListener('click', (e) => {
-      if (e.target.classList.contains('rail-blob')){
-        e.stopPropagation();
-        openRailDetail(e.target.dataset.railKey);
-      } else if (row.dataset.weekend === '1'){
-        // weekends have nothing to tag — no editor to open
-      } else {
-        openDayEditor(row.dataset.key);
-      }
-    });
+  // ---------- Home wiring ----------
+  const panelEl = document.getElementById('home-day-panel');
+  homeWireDayPanel(panelEl);
+  const stripEl = document.getElementById('home-strip');
+  stripEl.querySelectorAll('.ui-day').forEach(b => b.addEventListener('click', () => {
+    homeSelectedDayKey = b.dataset.dayKey;
+    stripEl.querySelectorAll('.ui-day').forEach(x => x.classList.toggle('is-selected', x === b));
+    panelEl.innerHTML = homeBuildDayPanel(homeSelectedDayKey, ctx);
+    homeWireDayPanel(panelEl);
+  }));
+  let swipeX = null, swipeY = null;
+  stripEl.addEventListener('touchstart', (e) => { swipeX = e.touches[0].clientX; swipeY = e.touches[0].clientY; }, { passive: true });
+  stripEl.addEventListener('touchend', (e) => {
+    if (swipeX === null) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipeX, dy = t.clientY - swipeY;
+    swipeX = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) homeShiftWeek(dx < 0 ? 1 : -1);
   });
+  const weekTodayLink = document.getElementById('home-week-today');
+  if (weekTodayLink) weekTodayLink.addEventListener('click', () => { homeWeekOffset = 0; homeSelectedDayKey = null; render(); });
+  document.getElementById('home-month-link').addEventListener('click', () => openCalendarView());
+  const holidayLine = document.getElementById('home-holiday-line');
+  if (holidayLine) holidayLine.addEventListener('click', () => openCalendarView());
+  const moneyEl = document.getElementById('home-money');
+  if (moneyEl) moneyEl.addEventListener('click', () => openMoneyDetails());
+  const moneyLink = document.getElementById('home-money-link');
+  if (moneyLink) moneyLink.addEventListener('click', () => openMoneyDetails());
+  const liveLink = document.getElementById('home-live-link');
+  if (liveLink) liveLink.addEventListener('click', () => homeOpenLive());
+  homeWireTrains();
+  homeEnsureBoards();
+
 
   const delayRepayBadgeEl = document.getElementById('delay-repay-badge');
   if (delayRepayBadgeEl){
@@ -772,10 +524,10 @@ function render(){
     closeAllModals();
     menuOpen = false;
     state.activeTab = 'today';
+    homeWeekOffset = 0;
+    homeSelectedDayKey = null;
     render();
-    const todayRow = document.querySelector('.day-row.is-today');
-    if (todayRow) todayRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    else window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   });
   const renewalBannerTap = document.getElementById('renewal-banner-tap');
   if (renewalBannerTap) renewalBannerTap.addEventListener('click', () => { openBuyScreen('season'); });
@@ -899,40 +651,6 @@ function render(){
   }
   const calendarSyncPrompt = document.getElementById('calendar-sync-prompt');
 
-  const likelyTrainYesBtn = document.getElementById('likely-train-yes-btn');
-  if (likelyTrainYesBtn){
-    likelyTrainYesBtn.addEventListener('click', async () => {
-      const s = likelyTrainSuggestion;
-      // 2026-09-27: Copy for WhatsApp rides along with this tap — must be
-      // the first thing that happens, before any await below.
-      if (s) maybeCopyJourneyText(s.dateKey, s.direction, s.trainKey, s.label, 'prompt');
-      if (s){
-        if (!confirmedTrains[s.dateKey]) confirmedTrains[s.dateKey] = {};
-        confirmedTrains[s.dateKey][s.direction] = s.trainKey;
-        await saveConfirmedTrains();
-        // 2026-09-14: the two silent-confirm paths (checkLikelyTrain,
-        // checkLikelyArrival) already push to the Worker so a watch
-        // ping around the same moment doesn't independently resolve
-        // the same thing — this interactive path was missing the same
-        // call, which let a departure-side watch mis-match pre-empt a
-        // correct interactive confirm (see departure-match-drift-spec).
-        pushConfirmedTrain(s.dateKey, s.direction, s.trainKey, s.label);
-      }
-      likelyTrainSuggestion = null;
-      noteJourneyTextTarget();
-      render();
-    });
-  }
-  const likelyTrainNoBtn = document.getElementById('likely-train-no-btn');
-  if (likelyTrainNoBtn){
-    likelyTrainNoBtn.addEventListener('click', () => {
-      if (likelyTrainSuggestion) dismissedLikelyTrainKeys.add(`${likelyTrainSuggestion.dateKey}-${likelyTrainSuggestion.direction}-${likelyTrainSuggestion.trainKey}`);
-      likelyTrainSuggestion = null;
-      noteJourneyTextTarget();
-      render();
-    });
-  }
-
   if (calendarSyncPrompt){
     calendarSyncPrompt.addEventListener('click', async () => {
       let result;
@@ -955,79 +673,5 @@ function render(){
     });
   }
 
-  const dismissBtn = document.getElementById('month-estimate-dismiss');
-  if (dismissBtn){
-    dismissBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      dismissedMonths[estMonthKey] = true;
-      await saveDismissedMonths();
-      render();
-    });
-  }
-  const estimatePrevBtn = document.getElementById('estimate-prev');
-  if (estimatePrevBtn){
-    estimatePrevBtn.addEventListener('click', () => {
-      estimateOffset = Math.max(0, estimateOffset - 1);
-      render();
-    });
-  }
-  const estimateNextBtn = document.getElementById('estimate-next');
-  if (estimateNextBtn){
-    estimateNextBtn.addEventListener('click', () => {
-      estimateOffset = Math.min(24, estimateOffset + 1);
-      render();
-    });
-  }
-  const spendingCard = document.getElementById('spending-card');
-  if (spendingCard){
-    spendingCard.addEventListener('click', openManagePurchases);
-  }
-  const spendingCardDismiss = document.getElementById('spending-card-dismiss');
-  if (spendingCardDismiss){
-    spendingCardDismiss.addEventListener('click', async (e) => {
-      e.stopPropagation(); // otherwise this bubbles up to the whole card's own click handler and opens Manage Purchases too
-      ticketsSpentCardDismissed = true;
-      await saveTicketsSpentCardDismissed();
-      render();
-    });
-  }
-  const parkingSavingsDismiss = document.getElementById('parking-savings-dismiss');
-  if (parkingSavingsDismiss){
-    parkingSavingsDismiss.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      dismissedParkingSavingsPeriods[fmtKey(realCurrentPeriod.start)] = true;
-      await saveDismissedParkingSavingsPeriods();
-      render();
-    });
-  }
-  const parkingSavingsPrevBtn = document.getElementById('parking-savings-prev');
-  if (parkingSavingsPrevBtn){
-    parkingSavingsPrevBtn.addEventListener('click', () => {
-      parkingSavingsOffset -= 1;
-      render();
-    });
-  }
-  const parkingSavingsNextBtn = document.getElementById('parking-savings-next');
-  if (parkingSavingsNextBtn){
-    parkingSavingsNextBtn.addEventListener('click', () => {
-      parkingSavingsOffset = Math.min(0, parkingSavingsOffset + 1); // never past the current period
-      render();
-    });
-  }
-
-  const showMoreBtn = document.getElementById('show-more-link');
-  if (showMoreBtn){
-    showMoreBtn.addEventListener('click', () => {
-      state.daysAhead = Math.min(state.daysAhead + DAYS_AHEAD_STEP, MAX_DAYS_AHEAD);
-      render();
-    });
-  }
-  const showEarlierBtn = document.getElementById('show-earlier-link');
-  if (showEarlierBtn){
-    showEarlierBtn.addEventListener('click', () => {
-      railDaysBack = Math.min(railDaysBack + RAIL_DAYS_BACK_STEP, RAIL_MAX_DAYS_BACK);
-      render();
-      railSyncMissingDates();
-    });
-  }
+  if (homePageRefresh) homePageRefresh(); // keeps an open Month view / Money details in step with the data
 }

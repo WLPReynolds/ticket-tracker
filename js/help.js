@@ -32,7 +32,7 @@ Your Flexi Season Ticket gives you **{{USES}} day-passes** to use within a **{{P
 ## 2. Managing Your Daily Schedule
 
 ### Tagging Non-Travel Days
-1. Tap any weekday on the Home tab or in the upcoming day list.
+1. Tap any day in the week strip on the Home tab (swipe or use This week to move between weeks), then tap **Edit day**. The Month view works the same way.
 2. Choose a preset tag (**WFH**, **HOLIDAY**, **DENTIST**, **SICK**) or type your own reason.
 3. Tap **Save**. That day's pass is restored and your renewal date adjusts automatically.
 
@@ -46,7 +46,7 @@ Tick **"I parked today"** in a day's editor to record what you actually paid (it
 The app checks the official gov.uk bank holiday feed and tags weekday public holidays as **BANK HOLIDAY** automatically.
 
 ### Holiday Countdown
-When a holiday is coming up, a Home tab card counts down the working days left. On your last working day it switches to an hour countdown to home time, then shows **"Enjoy your holiday!"** with your return date for the whole break.
+From five working days out, a line on the Home tab shows the next holiday; the Month view has the full countdown card. On your last working day it switches to an hour countdown to home time, then shows **"Enjoy your holiday!"** with your return date for the whole break.
 
 ---
 
@@ -164,7 +164,8 @@ Avanti asks for a photo of your ticket and your smartcard number. Add both once 
 ### ROI Dashboard
 **More → ROI dashboard** shows what the commute has cost and clawed back: Delay Repay totals (confirmed, pending and expired), claims recovered against ticket spend over a rolling 12 months, monthly claims, parking spent and saved, and a **What if** projection of how many tickets a different pattern of office days would need over the next 12 months.
 
-### Home Tab Cards
+### Home Tab Money
+The money row at the bottom of Home shows the three figures; tap it for **Money** details, where the **‹** and **›** arrows move between pay periods.
 * **Set aside on payday:** Counts the tickets and parking days in your pay period (paid on the 28th, moved earlier for weekends and bank holidays) and totals what to set aside. Use the **‹** and **›** arrows to preview future periods. The same figures can be shared with your Personal Finance app — see **Sharing Estimates with Personal Finance** below.
 * **Savings card:** What parking has saved you this ticket period.
 * **Spending card:** What you've spent on tickets this year.
@@ -215,7 +216,7 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 
 | Nav / Menu Item | Primary Function |
 | :--- | :--- |
-| **Home Tab** | Pass counter, {{PERIOD}}-day bar, claim badge, payday/savings/spending cards, holiday countdown, day list. |
+| **Home Tab** | Tickets left and next buy date, {{PERIOD}}-day bar, claim badge, your trains, a seven-day strip with day panel, the money row, holiday line. Month view holds the holiday countdown. |
 | **Live Tab** | Your usual trains, watch alert target, tracked trains, and the optional Emergency tab. |
 | **Buy Tab** | Log season or single tickets; purchase advisor. |
 | **Calendar Tab** | Monthly grid of notes, travel days, and delay indicators. |

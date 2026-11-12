@@ -1,4 +1,4 @@
-// screen-calendar.js — openDayEditor, calendar view, calendar day detail.
+// screen-calendar.js — openDayEditor, Month view (openCalendarView).
 // Part of the ticket tracker PWA. Read CODEMAP.md first: it lists what each file owns and the load order.
 
 function openDayEditor(key){
@@ -129,98 +129,45 @@ function openDayEditor(key){
   overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
-function openCalendarDayDetail(key){
-  const d = parseKey(key);
-  const todayKeyLocal = fmtKey(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()));
-  const comment = (comments[key] || '').trim();
-  const dayPerf = railPerfCache[key] || {};
-  const eligible = isEligibleRailDay(d, todayKeyLocal);
-  const hasDelayData = eligible && Object.keys(dayPerf).length > 0;
-
-  const commentHtml = comment ? `
-    <div class="rail-col-header">Logged</div>
-    <div class="rail-detail-row"><span>${escapeHtml(comment)}</span>${travelOverrides[key] ? '<span style="color:var(--ink-dim);">counted anyway</span>' : ''}</div>
-  ` : '';
-
-  const buyHtml = isBuyTicketDay(key, todayKeyLocal) ? `
-    <div style="${commentHtml ? 'margin-top:14px;' : ''}">
-      <div class="rail-detail-row"><span><span class="cal-dot-buy" style="display:inline-block; margin:0 8px 1px 0;"></span>Buy Ticket</span></div>
-    </div>
-  ` : '';
-
-  let delayHtml = '';
-  if (hasDelayData){
-    const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
-    const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a, b) => a.time.localeCompare(b.time));
-    delayHtml = `
-      <div style="display:flex; gap:24px;">
-        <div style="flex:1;">
-          <div class="rail-col-header">Morning</div>
-          ${amTrains.length ? railDetailRowsForClaim(amTrains, dayPerf, key, 'AM') : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
-        </div>
-        <div style="flex:1;">
-          <div class="rail-col-header">Evening</div>
-          ${pmTrains.length ? railDetailRowsForClaim(pmTrains, dayPerf, key, 'PM') : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
-        </div>
-      </div>`;
-  }
-
-  const bodyHtml = (commentHtml || buyHtml || delayHtml) ? (commentHtml + buyHtml + delayHtml) : `<div class="sub">Nothing logged for this day.</div>`;
-
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>${dateLabel(d)}</h3>
-      ${bodyHtml}
-      <div class="modal-close" id="cal-day-detail-close-btn" style="margin-top:16px;">Close</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  wireClaimHandlers(overlay, () => { document.body.removeChild(overlay); openCalendarDayDetail(key); });
-  document.getElementById('cal-day-detail-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
-}
-
 function openCalendarView(){
+  // Month view (facelift stage 3): a full page with the holiday countdown on top,
+  // the month grid, and the same day panel as the Home strip underneath.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay cal-overlay';
-  overlay.innerHTML = `
-    <div class="modal cal-modal">
+  overlay.className = 'ui-page';
+  overlay.innerHTML = `${uiPageBar('Month', { backId: 'cal-close-btn', backLabel: 'Back to Home' })}
+    <div class="ui-page-body">
+      <div id="cal-countdown"></div>
       <div class="cal-nav">
-        <div class="cal-nav-btn" id="cal-prev">&#8249;</div>
+        <div class="cal-nav-btn" id="cal-prev" role="button" aria-label="Previous month">&#8249;</div>
         <div class="cal-nav-title" id="cal-title"></div>
-        <div class="cal-nav-btn" id="cal-next">&#8250;</div>
+        <div class="cal-nav-btn" id="cal-next" role="button" aria-label="Next month">&#8250;</div>
       </div>
       <div class="cal-grid" id="cal-grid"></div>
-      <div class="modal-close" id="cal-close-btn" style="margin-top:16px;">Close</div>
-    </div>
-  `;
+      <div class="ui-card" id="cal-panel" style="margin-top:var(--space-4);"></div>
+    </div>`;
   document.body.appendChild(overlay);
 
   const realToday = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const todayKeyLocal = fmtKey(realToday);
   let viewYear = realToday.getFullYear();
   let viewMonth = realToday.getMonth(); // 0-indexed
+  let selectedKey = todayKeyLocal;
 
   const weekdayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
   function drawMonth(){
     const title = new Date(viewYear, viewMonth, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
     document.getElementById('cal-title').textContent = title;
+    document.getElementById('cal-countdown').innerHTML = homeCountdownCardHtml(realToday);
 
     const firstOfMonth = new Date(viewYear, viewMonth, 1);
-    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const lastOfMonth = new Date(viewYear, viewMonth + 1, 0);
+    const daysInMonth = lastOfMonth.getDate();
     // Monday-first offset: JS getDay() is 0=Sun..6=Sat, shift so Mon=0..Sun=6
     const leadingBlanks = (firstOfMonth.getDay() + 6) % 7;
 
-    // Projected "Buy Ticket" days for this month, from the same
-    // computeStates() buyFlag that drives the main list's Buy Ticket line.
-    // Only today onwards — same rule as findNextBuyDateKey(), and past
-    // days have no live reminder to show.
-    const buyStates = computeStates(new Date(viewYear, viewMonth + 1, 0));
+    // One shared view of the days — the same one the Home strip uses.
+    const ctx = homeDayCtx(lastOfMonth);
 
     let cells = weekdayLabels.map(w => `<div class="cal-weekday">${w}</div>`).join('');
     for (let i = 0; i < leadingBlanks; i++){
@@ -229,22 +176,16 @@ function openCalendarView(){
     for (let day = 1; day <= daysInMonth; day++){
       const d = new Date(viewYear, viewMonth, day);
       const key = fmtKey(d);
-      const weekend = isWeekend(d);
-      const isToday = key === todayKeyLocal;
-      const hasEntry = !!(comments[key] || '').trim();
-      let delayStatus = null;
-      if (isEligibleRailDay(d, todayKeyLocal)){
-        delayStatus = getDelayStatus(key);
-      }
-      const delayDotHtml = delayStatus === 'confirmed' ? '<span class="cal-dot-confirmed"></span>'
-        : delayStatus === 'maybe' ? '<span class="cal-dot-delay"></span>'
-        : delayStatus === 'declined' ? '<span class="cal-dot-declined"></span>'
+      const info = homeDayInfo(d, ctx);
+      const isBuyDay = key >= todayKeyLocal && !!(ctx.states[key] && ctx.states[key].buyFlag);
+      const delayDotHtml = info.delay === 'confirmed' ? '<span class="cal-dot-confirmed"></span>'
+        : info.delay === 'maybe' ? '<span class="cal-dot-delay"></span>'
+        : info.delay === 'declined' ? '<span class="cal-dot-declined"></span>'
         : '';
-      const isBuyDay = key >= todayKeyLocal && !!(buyStates[key] && buyStates[key].buyFlag);
-      const dots = (hasEntry || isBuyDay || delayStatus)
-        ? `<span class="cal-dot-row">${hasEntry ? '<span class="cal-dot"></span>' : ''}${isBuyDay ? '<span class="cal-dot-buy"></span>' : ''}${delayDotHtml}</span>`
+      const dots = (info.comment || isBuyDay || info.delay)
+        ? `<span class="cal-dot-row">${info.comment ? '<span class="cal-dot"></span>' : ''}${isBuyDay ? '<span class="cal-dot-buy"></span>' : ''}${delayDotHtml}</span>`
         : '';
-      cells += `<div class="cal-day ${weekend ? 'weekend' : ''} ${isToday ? 'today' : ''}" data-key="${key}">
+      cells += `<div class="cal-day ${info.weekend ? 'weekend' : ''} ${info.isToday ? 'today' : ''} ${key === selectedKey ? 'selected' : ''}" data-key="${key}">
         <span>${day}</span>${dots}
       </div>`;
     }
@@ -252,8 +193,12 @@ function openCalendarView(){
 
     document.querySelectorAll('#cal-grid .cal-day[data-key]').forEach(cell => {
       cell.style.cursor = 'pointer';
-      cell.addEventListener('click', () => openCalendarDayDetail(cell.dataset.key));
+      cell.addEventListener('click', () => { selectedKey = cell.dataset.key; drawMonth(); });
     });
+
+    const panel = document.getElementById('cal-panel');
+    panel.innerHTML = homeBuildDayPanel(selectedKey, ctx);
+    homeWireDayPanel(panel);
   }
 
   document.getElementById('cal-prev').addEventListener('click', () => {
@@ -267,9 +212,12 @@ function openCalendarView(){
     drawMonth();
   });
   document.getElementById('cal-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
+    homePageRefresh = null;
+    overlay.remove();
+    state.activeTab = 'today'; // the Calendar tab opened this page; Home is what is underneath
+    render();
   });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 
+  homePageRefresh = drawMonth; // render() calls this after an edit so the page stays current
   drawMonth();
 }

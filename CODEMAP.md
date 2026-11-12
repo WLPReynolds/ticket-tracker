@@ -47,8 +47,9 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 13. `emergency-routes.js` — `checkEmergencyRoute`, `checkAllEmergencyRoutes`, `openAlternativeRoutesManager`.
 
 **Screens**
-14. `screen-home.js` — `render()`: the Home tab and bottom nav.
-15. `screen-calendar.js` — `openDayEditor`, `openCalendarView`, `openCalendarDayDetail`.
+14. `home-sections.js` — Home's building blocks (declarations only): the day strip and day panel (`homeDayInfo`, `homeBuildStrip`, `homeBuildDayPanel`), holiday line and countdown card, Your trains card (`homeTrainsInnerHtml`, `homeEnsureBoards`), money row and `openMoneyDetails`.
+15. `screen-home.js` — `render()`: the Home tab and bottom nav, assembled from the `home-sections.js` parts.
+15a. `screen-calendar.js` — `openDayEditor`, `openCalendarView` (the Month page).
 16. `screen-live.js` — `openLiveScreen`: the Live tab.
 17. `train-status.js` — `describePointStatus`, Staff overrides and time columns, journey-state notifications, formation display.
 18. `train-progress-build.js` — `buildTrainProgress`.
@@ -115,8 +116,9 @@ Each version gets its own service-worker cache and every CSS/JS URL carries `?v=
 - **confirm-train.js** (22 KB) — `checkLikelyTrain`, `checkLikelyArrival`, `computeLikelyTrainCheckDelay`, `runLikelyTrainCycle`, `startLikelyTrainChecks`, `stopLikelyTrainChecks`, `openConfirmTrain`
 - **journey-share.js** (19 KB) — `mountSilentConfirmBanner`, `renderSilentConfirmBanner`, `journeyTodayKey`, `getJourneyCopyState`, `getJourneyCopyStatus`, `setJourneyCopyStatus`, `isJourneyCopyDone`, `journeyIsClockTime`, `journeyClockMinutes`, `journeyMinutesToClock`, `findJourneyArrivalService`, `journeyPointDelay`, `journeyCarriedDelay`, `buildJourneyShareText`, `fetchJourneyArrivals`, `buildJourneyTextsForAllPm`, `bannerJourneyTarget`, `suggestionJourneyTarget`, `currentJourneyTextTarget`, `stopJourneyTextRefresh`, `noteJourneyTextTarget`, `refreshJourneyText`, `maybeCopyJourneyText`, `copyJourneyText`, `mountCatchupBanner`, `renderCatchupBanner`
 - **emergency-routes.js** (18 KB) — `checkEmergencyRoute`, `checkAllEmergencyRoutes`, `openAlternativeRoutesManager`
-- **screen-home.js** (54 KB) — `render`
-- **screen-calendar.js** (13 KB) — `openDayEditor`, `openCalendarDayDetail`, `openCalendarView`
+- **home-sections.js** — `homeDayCtx`, `homeDayInfo`, `homeBuildStrip`, `homeShiftWeek`, `homeBuildDayPanel`, `homeWireDayPanel`, `homeHolidayLineHtml`, `homeCountdownCardHtml`, `homeTrainsInnerHtml`, `homeWireTrains`, `homeEnsureBoards`, `homeMoneyRowHtml`, `openMoneyDetails`
+- **screen-home.js** — `render`
+- **screen-calendar.js** — `openDayEditor`, `openCalendarView`
 - **screen-live.js** (57 KB) — `openLiveScreen`
 - **train-status.js** (38 KB) — `describePointStatus`, `pruneConfirmedPointStatusCache`, `saveConfirmedPointStatusCache`, `pruneLastSeenJourneyState`, `saveLastSeenJourneyState`, `pruneLastSeenStaffMatch`, `saveLastSeenStaffMatch`, `isClockTimeEarlier`, `isoTimeToHHMM`, `staffMinutesDiff`, `buildStaffTimeColumnsHtml`, `shiftClockTime`, `staffPlatformStatusFor`, `staffConfirmsArrival`, `journeyNotifyBody`, `diffAndNotifyJourneyState`, `findCallingPointSchedTime`, `findServiceOriginPoint`, `describePointStatusRemembered`, `addMinutesToTime`, `getLengthOnlyFormationLetters`, `buildNoseSvg`, `shouldReverseFallbackLetters`, `buildFormationHtml`, `buildFormationDebugHtml`
 - **train-progress-build.js** (60 KB) — `buildTrainProgress`

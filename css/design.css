@@ -259,3 +259,131 @@
 
 /* A button that spans the full width of its container. */
 .ui-btn-block{ display: flex; width: 100%; }
+
+/* A bottom-sheet modal opened while a full-screen page is showing (Edit day from
+   Month view, Manage purchases from Money details…) must sit above that page. */
+.ui-page ~ .modal-overlay{ z-index: 70; }
+
+/* ---------- Home header (stage 3) ----------
+   Date left with the version stamp beneath; delay repay chip right, in normal flow. */
+header.top.ui-home-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: calc(var(--space-4) + env(safe-area-inset-top)) var(--margin) var(--space-3);
+  border-bottom: none;
+  background: none;
+}
+.ui-home-head .ui-home-date{ font-size: var(--fs-title); font-weight: 700; }
+.ui-home-head .ui-home-version{ font-size: var(--fs-label); color: var(--ink-dim); opacity: 0.7; margin-top: 2px; }
+.ui-home-head .delay-repay-badge-wrap{ position: static; margin-left: auto; }
+.ui-home-head .bunting-row,
+.ui-home-head .christmas-header{ flex: 0 0 100%; }
+
+/* ---------- Ticket pair: tickets left and next buy date, equal halves ---------- */
+.ui-pair{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.ui-pair-half{ display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; background: none; border: none; padding: 0; margin: 0; color: inherit; font-family: inherit; text-align: left; }
+.ui-pair-half + .ui-pair-half{ border-left: 1px solid var(--line); padding-left: var(--space-4); }
+.ui-pair-big{ display: flex; align-items: baseline; gap: 6px; }
+.ui-pair-big .ui-pair-num{ font-size: var(--fs-hero); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.ui-pair-big .ui-pair-unit{ font-size: var(--fs-body); color: var(--ink-dim); }
+.ui-pair-big .ui-pair-unit.ui-pair-unit-strong{ font-size: var(--fs-title); font-weight: 700; color: var(--ink); }
+.ui-pair-half.ui-pair-action{ cursor: pointer; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+.ui-pair-half.ui-pair-buy .ui-pair-num,
+.ui-pair-half.ui-pair-buy .ui-pair-unit-strong{ color: var(--amber); }
+.ui-segments{ display: flex; gap: var(--space-1); margin-top: var(--space-4); }
+.ui-segments span{ flex: 1; height: 8px; border-radius: 4px; background: var(--line); }
+.ui-segments span.on{ background: var(--amber); }
+.ui-banner-note{ margin-top: var(--space-3); font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-banner-note.ui-tap{ color: var(--amber); font-weight: 600; cursor: pointer; }
+
+/* ---------- Holiday line (final working days and the holiday itself) ---------- */
+.ui-holiday-line{
+  display: flex; align-items: center; gap: var(--space-3);
+  margin: var(--space-2) var(--margin) 0;
+  padding: 0 var(--space-4);
+  min-height: var(--tap);
+  border-radius: var(--radius-md);
+  background: rgba(127,201,232,0.10);
+  border: 1px solid rgba(127,201,232,0.30);
+  color: var(--holiday);
+  font-size: var(--fs-small);
+  cursor: pointer; touch-action: manipulation;
+}
+.ui-holiday-line strong{ font-weight: 700; }
+.ui-holiday-line .ui-holiday-sub{ color: var(--ink-dim); }
+.ui-holiday-line .ui-holiday-text{ flex: 1; min-width: 0; padding: var(--space-2) 0; }
+
+/* ---------- Train card ---------- */
+.ui-train-main{ display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4); cursor: pointer; touch-action: manipulation; }
+.ui-train-main .ui-train-info{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.ui-train-time-row{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ui-train-time{ font-size: var(--fs-large); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.ui-train-route{ font-size: var(--fs-body); }
+.ui-train-sub{ font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-train-line{ display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); min-height: var(--tap); border-top: 1px solid var(--line); cursor: pointer; touch-action: manipulation; }
+.ui-train-line .ui-train-line-time{ font-size: var(--fs-title); font-weight: 700; font-variant-numeric: tabular-nums; }
+.ui-train-line .ui-train-line-text{ flex: 1; min-width: 0; font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-train-suggest{ padding: var(--space-4); border-top: 1px solid var(--line); }
+.ui-train-suggest-title{ font-size: var(--fs-body); font-weight: 700; }
+.ui-train-suggest-text{ font-size: var(--fs-small); color: var(--ink-dim); margin: var(--space-1) 0 var(--space-3); }
+.ui-train-suggest-btns{ display: flex; gap: var(--space-3); }
+.ui-train-suggest-btns .ui-btn-primary,
+.ui-train-suggest-btns .ui-btn-secondary{ flex: 1; }
+.ui-train-chev{ display: flex; color: var(--ink-dim); }
+.ui-train-chev svg{ width: 18px; height: 18px; }
+
+/* ---------- Seven-day strip ---------- */
+.ui-strip{ display: flex; gap: 6px; padding: 0 var(--margin); touch-action: pan-y; }
+.ui-day{
+  flex: 1 1 0; min-width: 0; height: 84px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1);
+  padding: 0; background: var(--board-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  color: var(--ink); font-family: inherit; cursor: pointer; touch-action: manipulation;
+}
+.ui-day.is-selected{ background: var(--tile); border-color: var(--ink-dim); }
+.ui-day.is-today{ border: 2px solid var(--amber); }
+.ui-day-wk{ font-size: var(--fs-label); color: var(--ink-dim); font-weight: 600; }
+.ui-day-date{ font-size: var(--fs-body); font-weight: 700; }
+.ui-day-mark{ font-size: var(--fs-small); font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: clip; white-space: nowrap; }
+.ui-day-mark.dim{ color: var(--ink-dim); }
+.ui-day-mark.buy{ color: var(--amber); }
+.ui-day-dot{ width: 6px; height: 6px; border-radius: 50%; }
+.ui-day-dot.maybe{ background: var(--amber); }
+.ui-day-dot.confirmed{ background: var(--salmon); }
+.ui-day-dot.declined{ background: var(--ink-dim); }
+.ui-daypanel{ display: flex; flex-direction: column; gap: var(--space-3); }
+.ui-daypanel-head{ display: flex; align-items: center; gap: var(--space-3); }
+.ui-daypanel-text{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ui-daypanel-title{ font-size: var(--fs-body); font-weight: 700; }
+.ui-daypanel-sub{ font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-daypanel-claims{ border-top: 1px solid var(--line); padding-top: var(--space-2); }
+.ui-daypanel-claims .rail-col-header{ margin-top: var(--space-2); }
+
+/* ---------- Money row ---------- */
+.ui-money{ display: flex; gap: var(--space-4); cursor: pointer; touch-action: manipulation; }
+.ui-money > .ui-figure{ flex: 1 1 0; }
+.ui-money > .ui-figure + .ui-figure{ border-left: 1px solid var(--line); padding-left: var(--space-4); }
+.ui-money .ui-figure-value{ font-size: var(--fs-title); }
+.ui-good{ color: var(--good); }
+.ui-bad{ color: var(--salmon); }
+.ui-amber{ color: var(--amber); }
+
+/* Period selector: ‹ label › */
+.ui-period{ display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.ui-period-btn{ flex: 0 0 auto; width: var(--tap); height: var(--tap); display: flex; align-items: center; justify-content: center; padding: 0; border: none; background: none; color: var(--ink-dim); font-family: inherit; font-size: var(--fs-title); cursor: pointer; touch-action: manipulation; }
+.ui-period-btn[disabled]{ opacity: 0.35; cursor: default; }
+.ui-period-label{ flex: 1; text-align: center; font-size: var(--fs-small); font-weight: 600; color: var(--ink-dim); }
+.ui-block + .ui-block{ margin-top: var(--space-4); }
+.ui-block-title{ font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: var(--space-2); }
+
+/* Countdown card at the top of Month view */
+.ui-countdown{ display: flex; align-items: center; gap: var(--space-4); }
+.ui-countdown-num{ font-size: var(--fs-hero); font-weight: 700; line-height: 1; color: var(--holiday); font-variant-numeric: tabular-nums; min-width: 56px; text-align: center; }
+.ui-countdown-num.small{ font-size: var(--fs-title); }
+.ui-countdown-text{ display: flex; flex-direction: column; gap: 2px; }
+.ui-page-body .cal-nav{ margin-top: var(--space-4); }
+.cal-day.selected{ box-shadow: inset 0 0 0 1.5px var(--ink-dim); }
+.cal-day.today.selected{ box-shadow: none; }

@@ -22,6 +22,7 @@
     'confirm-train.js':        typeof openConfirmTrain !== 'undefined',
     'journey-share.js':        typeof mountCatchupBanner !== 'undefined',
     'emergency-routes.js':     typeof checkEmergencyRoute !== 'undefined',
+    'home-sections.js':        typeof homeBuildStrip !== 'undefined',
     'screen-home.js':          typeof render !== 'undefined',
     'screen-calendar.js':      typeof openCalendarView !== 'undefined',
     'screen-live.js':          typeof openLiveScreen !== 'undefined',
