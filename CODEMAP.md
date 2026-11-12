@@ -47,7 +47,7 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 13. `emergency-routes.js` — `checkEmergencyRoute`, `checkAllEmergencyRoutes`, `openAlternativeRoutesManager`.
 
 **Screens**
-14. `home-sections.js` — Home's building blocks (declarations only): the day strip and day panel (`homeDayInfo`, `homeBuildStrip`, `homeBuildDayPanel`), holiday line and countdown card, Your trains card (`homeTrainsInnerHtml`, `homeEnsureBoards`), money row and `openMoneyDetails`.
+14. `home-sections.js` — Home's building blocks (declarations only): the day strip and day panel (`homeDayInfo`, `homeBuildStrip`, `homeBuildDayPanel`), holiday line and countdown card, Your trains card (`homeJourney` picks the trains, `homeHasDeparted`, `homeTrainsInnerHtml`, `homeEnsureBoards`), money row and `openMoneyDetails`.
 15. `screen-home.js` — `render()`: the Home tab and bottom nav, assembled from the `home-sections.js` parts.
 15a. `screen-calendar.js` — `openDayEditor`, `openCalendarView` (the Month page).
 16. `screen-live.js` — `openLiveScreen`: the Live tab.

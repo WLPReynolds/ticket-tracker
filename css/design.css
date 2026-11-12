@@ -326,6 +326,7 @@ header.top.ui-home-head{
 .ui-train-line{ display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); min-height: var(--tap); border-top: 1px solid var(--line); cursor: pointer; touch-action: manipulation; }
 .ui-train-line .ui-train-line-time{ font-size: var(--fs-title); font-weight: 700; font-variant-numeric: tabular-nums; }
 .ui-train-line .ui-train-line-text{ flex: 1; min-width: 0; font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-train-line.is-gone .ui-train-line-time{ color: var(--ink-dim); }
 .ui-train-suggest{ padding: var(--space-4); border-top: 1px solid var(--line); }
 .ui-train-suggest-title{ font-size: var(--fs-body); font-weight: 700; }
 .ui-train-suggest-text{ font-size: var(--fs-small); color: var(--ink-dim); margin: var(--space-1) 0 var(--space-3); }

@@ -195,26 +195,88 @@ function homeCountdownCardHtml(today){
 function homeTimeLabel(t){ return t.slice(0, 2) + ':' + t.slice(2, 4); }
 function homeStationLabel(crs){ return stationNameForCrs(crs) || crs; }
 
-function homeTargetTrain(dir, dateKey){
-  const trains = railTrains.filter(t => t.direction === dir).sort((a, b) => a.time.localeCompare(b.time));
-  const ov = (targetTrainOverrides[dateKey] || {})[dir];
-  return trains.find(t => t.key === ov) || trains.find(t => t.key === defaultTargetTrains[dir]) || trains[0] || null;
-}
-
 function homeServiceFor(train){
   if (!homeBoardsCache.boards) return null;
   const board = homeBoardsCache.boards[`${train.fromLoc}-${train.toLoc}`] || [];
   return board.find(s => s.std === homeTimeLabel(train.time)) || null;
 }
 
-// { text, cls } describing a train's live state, or null while nothing is known.
-function homeTrainStatus(train, service){
-  if (!homeBoardsCache.boards){
-    return homeBoardsCache.error ? { text: 'No live data', cls: '' } : { text: 'Checking…', cls: '' };
+// ---- Which trains the card shows (2026-11-12, Wayne) ----
+// Every train set up in Settings → Trains for the journey in hand:
+// today's morning trains until the last one has actually left, then today's
+// evening trains until the last one has left, then the next working day's
+// morning trains. The big slot goes to the next train that hasn't left yet,
+// judged from live data, so a late 16:31 still at the platform at 17:00
+// stays big. A cancelled train is never promoted.
+const HOME_DEPART_GRACE_MIN = 2;
+
+function homeMinutes(hhmm){ return parseInt(hhmm.slice(0, 2), 10) * 60 + parseInt(hhmm.slice(2, 4), 10); }
+function homeNowMinutes(){ const p = londonParts(new Date()); return p.hour * 60 + p.minute; }
+function homeTrainsFor(dir){ return railTrains.filter(t => t.direction === dir).sort((a, b) => a.time.localeCompare(b.time)); }
+
+// Expected departure in minutes past midnight from a board service (etd "HH:MM"), else the schedule.
+function homeExpectedMinutes(train, service){
+  if (service && /^\d{2}:\d{2}$/.test(service.etd || '')) return homeMinutes(service.etd.replace(':', ''));
+  return homeMinutes(train.time);
+}
+
+// Has today's run of this train left? Live board first, schedule as the fallback.
+function homeHasDeparted(train, service){
+  const now = homeNowMinutes();
+  if (service){
+    if (service.atd) return true;
+    if (service.isCancelled) return now > homeMinutes(train.time) + HOME_DEPART_GRACE_MIN;
+    if (service.etd === 'Delayed') return false;
+    return now > homeExpectedMinutes(train, service) + HOME_DEPART_GRACE_MIN;
   }
-  if (!service) return { text: 'No live data', cls: '' };
-  if (service.isCancelled) return { text: 'Cancelled', cls: 'ui-pill-bad' };
+  // Not on the board: once its time has come it has dropped off, i.e. left.
+  if (homeBoardsCache.boards) return now >= homeMinutes(train.time);
+  return now > homeMinutes(train.time) + HOME_DEPART_GRACE_MIN;
+}
+
+function homeNextTravelDay(from){
+  for (let i = 1; i <= 21; i++){
+    const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + i);
+    if (!nonTravelLabelFor(fmtKey(d))) return { date: d, offset: i };
+  }
+  return null;
+}
+
+// { dir, live, label, trains } for the card, or null with nothing set up.
+function homeJourney(){
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const todayKey = fmtKey(today);
+  if (!nonTravelLabelFor(todayKey)){
+    for (const dir of ['AM', 'PM']){
+      const trains = homeTrainsFor(dir);
+      if (trains.some(t => !homeHasDeparted(t, homeServiceFor(t)))){
+        return { dir, live: true, label: dir === 'AM' ? 'This morning' : 'This evening', trains };
+      }
+    }
+  }
+  const trains = homeTrainsFor('AM');
+  if (!trains.length) return null;
+  const next = homeNextTravelDay(today);
+  let label = 'Next morning';
+  if (next){
+    if (next.offset === 1) label = 'Tomorrow morning';
+    else if (next.offset < 7) label = `${next.date.toLocaleDateString('en-GB', { weekday: 'long' })} morning`;
+    else label = `${dateLabelShort(next.date)} morning`;
+  }
+  return { dir: 'AM', live: false, label, trains };
+}
+
+// { text, cls } describing a train's state. live=false: a future day, no live data yet.
+function homeTrainStatus(train, service, live){
+  if (!live) return { text: 'Scheduled', cls: '' };
+  if (service && service.isCancelled) return { text: 'Cancelled', cls: 'ui-pill-bad' };
+  if (homeHasDeparted(train, service)) return { text: 'Departed', cls: '' };
+  if (!service){
+    if (!homeBoardsCache.boards && !homeBoardsCache.error) return { text: 'Checking…', cls: '' };
+    return { text: 'Scheduled', cls: '' };
+  }
   if (!service.etd || service.etd === 'On time') return { text: 'On time', cls: 'ui-pill-good' };
+  if (service.etd === 'Delayed') return { text: 'Delayed', cls: 'ui-pill-warn' };
   return { text: `Now ${service.etd}`, cls: 'ui-pill-warn' };
 }
 
@@ -227,54 +289,48 @@ function homeOpenLive(){
 }
 
 function homeTrainsInnerHtml(){
-  const todayKey = fmtKey(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()));
-  const off = nonTravelLabelFor(todayKey);
-  if (off){
-    return `<div class="ui-card"><div class="ui-train-sub">${escapeHtml(off)} — no commute today</div></div>`;
-  }
-  const hour = londonParts(new Date()).hour;
-  const dir = hour < 12 ? 'AM' : 'PM';
-  const otherDir = dir === 'AM' ? 'PM' : 'AM';
-  const main = homeTargetTrain(dir, todayKey);
-  const other = homeTargetTrain(otherDir, todayKey);
-  if (!main && !other) return '';
+  const j = homeJourney();
+  if (!j || !j.trains.length) return '';
 
   const suggestion = likelyTrainSuggestion ? `
     <div class="ui-train-suggest">
       <div class="ui-train-suggest-title">Is this your train?</div>
-      <div class="ui-train-suggest-text">Looks like you might be on the delayed <strong style="color:var(--amber);">${escapeHtml(likelyTrainSuggestion.label)}</strong> instead of your usual one.</div>
+      <div class="ui-train-suggest-text">Looks like you might be on the delayed <strong class="ui-amber">${escapeHtml(likelyTrainSuggestion.label)}</strong> instead of your usual one.</div>
       <div class="ui-train-suggest-btns"><button type="button" class="ui-btn-primary" id="likely-train-yes-btn">Yes, that's me</button><button type="button" class="ui-btn-secondary" id="likely-train-no-btn">No</button></div>
     </div>` : '';
 
-  let mainHtml = '';
-  if (main){
-    const svc = homeServiceFor(main);
-    const st = homeTrainStatus(main, svc);
-    const pill = st ? `<span class="ui-pill ${st.cls}">${escapeHtml(st.text)}</span>` : '';
-    const plat = svc && svc.platform ? `Platform ${escapeHtml(String(svc.platform))}` : '';
-    mainHtml = `<div class="ui-train-main" data-home-train="${main.key}">
-      <div class="ui-train-info">
-        <div class="ui-label">${dir === 'AM' ? 'This morning' : 'This evening'}</div>
-        <div class="ui-train-time-row"><span class="ui-train-time">${homeTimeLabel(main.time)}</span>${pill}</div>
-        <div class="ui-train-route">${escapeHtml(homeStationLabel(main.fromLoc))} to ${escapeHtml(homeStationLabel(main.toLoc))}</div>
-        ${plat ? `<div class="ui-train-sub">${plat}</div>` : ''}
-      </div>
+  const rows = j.trains.map(t => {
+    const svc = j.live ? homeServiceFor(t) : null;
+    return { t, svc, st: homeTrainStatus(t, svc, j.live), gone: j.live && homeHasDeparted(t, svc) };
+  });
+  // The big one: the next train that hasn't left and isn't cancelled; failing that, the next not gone.
+  const main = rows.find(r => !r.gone && !(r.svc && r.svc.isCancelled)) || rows.find(r => !r.gone) || rows[0];
+  const pill = r => r.st ? `<span class="ui-pill ${r.st.cls}">${escapeHtml(r.st.text)}</span>` : '';
+  const plat = r => r.svc && r.svc.platform && !r.gone ? `Platform ${escapeHtml(String(r.svc.platform))}` : '';
+
+  const html = rows.map(r => {
+    if (r === main){
+      return `<div class="ui-train-main" data-home-train="${r.t.key}">
+        <div class="ui-train-info">
+          <div class="ui-label">${escapeHtml(j.label)}</div>
+          <div class="ui-train-time-row"><span class="ui-train-time">${homeTimeLabel(r.t.time)}</span>${pill(r)}</div>
+          <div class="ui-train-route">${escapeHtml(homeStationLabel(r.t.fromLoc))} to ${escapeHtml(homeStationLabel(r.t.toLoc))}</div>
+          ${plat(r) ? `<div class="ui-train-sub">${plat(r)}</div>` : ''}
+        </div>
+        <span class="ui-train-chev">${UI_ICON_CHEV}</span>
+      </div>`;
+    }
+    return `<div class="ui-train-line${r.gone ? ' is-gone' : ''}" data-home-train="${r.t.key}">
+      <span class="ui-train-line-time">${homeTimeLabel(r.t.time)}</span>
+      ${pill(r)}
+      <span class="ui-train-line-text">${plat(r)}</span>
       <span class="ui-train-chev">${UI_ICON_CHEV}</span>
     </div>`;
-  }
-  let otherHtml = '';
-  if (other){
-    const svc = dir === 'AM' ? homeServiceFor(other) : null; // tomorrow morning has no live data tonight
-    const st = dir === 'AM' && svc ? homeTrainStatus(other, svc) : null;
-    const when = dir === 'AM' ? 'this evening' : 'tomorrow morning';
-    otherHtml = `<div class="ui-train-line" data-home-train="${other.key}">
-      <span class="ui-train-line-time">${homeTimeLabel(other.time)}</span>
-      ${st ? `<span class="ui-pill ${st.cls}">${escapeHtml(st.text)}</span>` : ''}
-      <span class="ui-train-line-text">${escapeHtml(homeStationLabel(other.fromLoc))} to ${escapeHtml(homeStationLabel(other.toLoc))} · ${when}</span>
-      <span class="ui-train-chev">${UI_ICON_CHEV}</span>
-    </div>`;
-  }
-  return `<div class="ui-card ui-card-flush">${mainHtml}${otherHtml}${suggestion}</div>`;
+  });
+  // Main first, then the others in time order.
+  const mainIdx = rows.indexOf(main);
+  const ordered = [html[mainIdx], ...html.filter((_, i) => i !== mainIdx)];
+  return `<div class="ui-card ui-card-flush">${ordered.join('')}${suggestion}</div>`;
 }
 
 function homeWireLikelyTrainButtons(){
