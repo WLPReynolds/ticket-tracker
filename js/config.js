@@ -16,7 +16,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-11-12.14:02'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-11-12.16:04'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 const DRIVE_BACKUP_THROTTLE_MS = 30 * 60 * 1000; // 30 minutes
 const DRIVE_BACKUP_FOLDER_NAME = 'Ticket Tracker Backups';
 const DRIVE_BACKUP_KEEP_COUNT = 2;

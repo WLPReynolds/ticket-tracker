@@ -216,7 +216,7 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 
 | Nav / Menu Item | Primary Function |
 | :--- | :--- |
-| **Home Tab** | Tickets left and next buy date, {{PERIOD}}-day bar, claim badge, your trains, a seven-day strip with day panel, the money row, holiday line. Month view holds the holiday countdown. |
+| **Home Tab** | Tickets left and next buy date, {{PERIOD}}-day bar, claim badge, your trains (all of the morning or evening trains you've set up, whichever journey is next; the next one still to leave is shown large, so a late train stays there until it goes), a seven-day strip with day panel, the money row, holiday line. Month view holds the holiday countdown. |
 | **Live Tab** | Your usual trains, watch alert target, tracked trains, and the optional Emergency tab. |
 | **Buy Tab** | Log season or single tickets; purchase advisor. |
 | **Calendar Tab** | Monthly grid of notes, travel days, and delay indicators. |
