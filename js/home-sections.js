@@ -299,10 +299,12 @@ function homeTrainsInnerHtml(){
       <div class="ui-train-suggest-btns"><button type="button" class="ui-btn-primary" id="likely-train-yes-btn">Yes, that's me</button><button type="button" class="ui-btn-secondary" id="likely-train-no-btn">No</button></div>
     </div>` : '';
 
+  // Trains that have left (or were cancelled and their time has passed) drop off the card.
   const rows = j.trains.map(t => {
     const svc = j.live ? homeServiceFor(t) : null;
     return { t, svc, st: homeTrainStatus(t, svc, j.live), gone: j.live && homeHasDeparted(t, svc) };
-  });
+  }).filter(r => !r.gone);
+  if (!rows.length) return '';
   // The big one: the next train that hasn't left and isn't cancelled; failing that, the next not gone.
   const main = rows.find(r => !r.gone && !(r.svc && r.svc.isCancelled)) || rows.find(r => !r.gone) || rows[0];
   const pill = r => r.st ? `<span class="ui-pill ${r.st.cls}">${escapeHtml(r.st.text)}</span>` : '';
