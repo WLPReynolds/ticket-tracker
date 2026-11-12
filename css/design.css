@@ -459,6 +459,8 @@ header.top.ui-home-head{
 .ui-inline-label{ flex: 1; min-width: 0; font-size: var(--fs-small); }
 .ui-inline-note{ font-size: var(--fs-small); color: var(--ink-dim); white-space: nowrap; }
 .ui-inline-note.ui-fixed{ flex: 0 0 84px; }
+/* A trailing Remove/Clear in an inline row: fixed width so stacked inputs end at the same place. */
+.ui-link.ui-inline-action{ flex: 0 0 72px; justify-content: flex-end; padding-left: 0; }
 .ui-page-body .ui-inline > input.ui-input-short,
 .ui-sheet .ui-inline > input.ui-input-short{ flex: 0 0 88px; width: 88px; }
 .ui-inline + .ui-inline{ margin-top: var(--space-2); }
