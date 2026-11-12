@@ -669,3 +669,22 @@ header.top.ui-home-head{
 /* Inside converted screens the hidden attribute always wins over a part's own display. */
 .ui-page [hidden],
 .ui-sheet [hidden]{ display: none !important; }
+
+/* Ticket purchase days (2026-11-12, Wayne): the whole cell is amber, in the
+   week strip and the Month grid. The mark sits on a dark pill; today and the
+   selected day use a light outline, since amber on amber would vanish. */
+.ui-day.is-buy,
+.cal-day.is-buy{ background: var(--amber); border-color: var(--amber); color: var(--board); }
+.ui-day.is-buy .ui-day-wk{ color: var(--board); opacity: 0.75; }
+.ui-day.is-buy .ui-day-date{ color: var(--board); }
+.ui-day.is-buy .ui-day-mark,
+.ui-day.is-buy .ui-day-mark.dim,
+.ui-day.is-buy .ui-day-mark.buy{ color: var(--amber); background: var(--board); border-radius: var(--radius-pill); padding: 0 var(--space-2); }
+.ui-day.is-buy.is-today{ border: 2px solid var(--ink); }
+.ui-day.is-buy.is-selected{ box-shadow: inset 0 0 0 2px var(--ink); }
+.cal-day.is-buy.today{ border: 1.5px solid var(--ink); }
+.cal-day.is-buy.selected{ box-shadow: inset 0 0 0 2px var(--ink); }
+.ui-day.is-buy .ui-day-dot.maybe,
+.ui-day.is-buy .ui-day-dot.confirmed,
+.ui-day.is-buy .ui-day-dot.declined,
+.cal-day.is-buy .cal-dot-row > span{ box-shadow: 0 0 0 1.5px var(--board); }
