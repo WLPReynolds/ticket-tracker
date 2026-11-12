@@ -56,7 +56,7 @@ function homeDayInfo(d, ctx){
     info.markClass = 'dim';
   } else {
     info.mark = String(s.usedCount);
-    info.markClass = '';
+    info.markClass = 'ticket';
     info.ticketDay = s.usedCount;
   }
   if (s.buyFlag) info.markClass = 'buy';
