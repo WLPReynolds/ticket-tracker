@@ -231,10 +231,16 @@ function openPollingSettingsEditor(cameFromSettings){
     ${uiPageBar('Polling', { backId: 'poll-settings-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'poll-settings-save' })}
     <div class="ui-page-body">
       <div class="sub">A train that's already been cancelled shows up the moment you open the screen either way — this only affects how often it keeps checking in afterward, while it hasn't departed yet.</div>
-      <div style="margin-top:14px; font-size:13px; color:var(--ink-dim);">Resume normal checking this many minutes before scheduled departure</div>
-      <input type="number" id="poll-before-departure-input" value="${pollBeforeDepartureMin}" step="1" min="0" max="${POLL_BEFORE_DEPARTURE_MIN_MAX}" style="margin-bottom:12px;" />
-      <div style="font-size:13px; color:var(--ink-dim);">Longest gap allowed between checks before that</div>
-      <input type="number" id="poll-check-in-input" value="${pollCheckInIntervalMin}" step="1" min="1" max="${POLL_CHECK_IN_INTERVAL_MIN_MAX}" style="margin-bottom:12px;" />
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="poll-before-departure-input">Resume normal checking (minutes before departure)</label>
+          <input type="number" inputmode="numeric" id="poll-before-departure-input" value="${pollBeforeDepartureMin}" step="1" min="0" max="${POLL_BEFORE_DEPARTURE_MIN_MAX}" />
+        </div>
+        <div class="ui-field">
+          <label class="ui-field-label" for="poll-check-in-input">Longest gap between checks before that (minutes)</label>
+          <input type="number" inputmode="numeric" id="poll-check-in-input" value="${pollCheckInIntervalMin}" step="1" min="1" max="${POLL_CHECK_IN_INTERVAL_MIN_MAX}" />
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -269,10 +275,13 @@ function openPwaWriteSecretEditor(cameFromSettings){
     ${uiPageBar('Write secret', { backId: 'pwa-write-secret-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'pwa-write-secret-save' })}
     <div class="ui-page-body">
       <div class="sub">Lets this device save settings to the Worker (watch config, geofence radii, trains). Needed once per browser or phone. The value is in Bitwarden (PWA_SHARED_SECRET).</div>
-      <input type="password" id="pwa-write-secret-input" value="${escapeHtml(pwaWriteSecret)}" autocomplete="off" autocapitalize="off" spellcheck="false" style="margin-top:14px; margin-bottom:6px;" />
-      <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-dim); margin-bottom:16px; cursor:pointer; -webkit-user-select:none; user-select:none;">
-        <input type="checkbox" id="pwa-write-secret-show" /> Show
-      </label>
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="pwa-write-secret-input">Write secret</label>
+          <input type="password" id="pwa-write-secret-input" value="${escapeHtml(pwaWriteSecret)}" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          ${uiCheck('pwa-write-secret-show', 'Show', false, { small: true })}
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -312,15 +321,13 @@ function openDriveCheckEditor(cameFromSettings){
   function routeRowHtml(r, i){
     const vias = [0, 1, 2].map(n => `
       <input type="text" class="dc-via" data-route="${i}" data-via="${n}" inputmode="decimal" autocomplete="off" spellcheck="false"
-        placeholder="Via point ${n + 1}${n === 0 ? '' : ' (optional)'} — lat, lng" value="${escapeHtml(fmtLatLng(r.via[n]))}" style="margin-bottom:6px;" />`).join('');
+        placeholder="Via point ${n + 1}${n === 0 ? '' : ' (optional)'} — lat, lng" value="${escapeHtml(fmtLatLng(r.via[n]))}" />`).join('');
     return `
-      <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px;">
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-          <input type="text" class="dc-route-name" data-route="${i}" maxlength="24" value="${escapeHtml(r.name)}" placeholder="Route name" style="flex:1;" />
-          <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:var(--ink-dim); white-space:nowrap;">
-            <input type="radio" name="dc-usual" class="dc-usual" data-route="${i}" ${r.usual ? 'checked' : ''} /> Usual
-          </label>
-          ${draft.routes.length > 1 ? `<span class="modal-close" data-dc-remove="${i}" style="margin:0; font-size:13px;">Remove</span>` : ''}
+      <div class="ui-subcard ui-stack">
+        <div class="ui-inline">
+          <input type="text" class="dc-route-name" data-route="${i}" maxlength="24" value="${escapeHtml(r.name)}" placeholder="Route name" />
+          <label class="ui-check ui-check-small"><input type="radio" name="dc-usual" class="dc-usual" data-route="${i}" ${r.usual ? 'checked' : ''} /><span>Usual</span></label>
+          ${draft.routes.length > 1 ? `<span class="ui-link ui-link-dim" role="button" data-dc-remove="${i}">Remove</span>` : ''}
         </div>
         ${vias}
       </div>`;
@@ -392,10 +399,10 @@ function openDriveCheckEditor(cameFromSettings){
     const slotRows = amTrains.map(t => {
       const alertAt = trainAlertConfig[t.key] && trainAlertConfig[t.key].checkTime;
       return `
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-          <span style="font-size:13px; min-width:92px;">${escapeHtml(t.label)} train<br><span style="font-size:11px; color:var(--ink-dim);">${alertAt ? `watch alert ${escapeHtml(alertAt)}` : 'no watch alert'}</span></span>
-          <input type="time" class="dc-slot" data-key="${t.key}" value="${escapeHtml(draft.checkTimesByTrain[t.key] || '')}" style="flex:1;" />
-          <span class="modal-close" data-dc-clear-slot="${t.key}" style="margin:0; font-size:13px;">Clear</span>
+        <div class="ui-inline">
+          <span class="ui-inline-label">${escapeHtml(t.label)} train<br><span class="ui-dim">${alertAt ? `watch alert ${escapeHtml(alertAt)}` : 'no watch alert'}</span></span>
+          <input type="time" class="dc-slot" data-key="${t.key}" value="${escapeHtml(draft.checkTimesByTrain[t.key] || '')}" />
+          <span class="ui-link ui-link-dim" role="button" data-dc-clear-slot="${t.key}">Clear</span>
         </div>`;
     }).join('');
     const homeText = draft._homeText !== undefined ? draft._homeText : fmtLatLng(driveCheckHome);
@@ -406,40 +413,46 @@ function openDriveCheckEditor(cameFromSettings){
       <div class="ui-page-body">
         <div class="sub">Just before you leave for the station, your watch checks live traffic on each route below and tells you which way to go — "Go via…", "…slow", or "…clear" when the usual way is fine. Nothing happens on weekends or tagged days (WFH, holiday, etc).</div>
 
-        <label style="display:flex; align-items:center; gap:8px; margin:14px 0; font-size:14px; cursor:pointer;">
-          <input type="checkbox" id="dc-enabled" ${draft.enabled ? 'checked' : ''} /> Drive check on
-        </label>
+        <div class="ui-card">${uiCheck('dc-enabled', 'Drive check on', draft.enabled)}</div>
 
-        <div class="rail-col-header">Check at (follows that morning's target train)</div>
-        ${slotRows || '<div class="sub">No morning trains set up — add them in Settings → Trains.</div>'}
+        <div class="ui-subhead">Check at (follows that morning's target train)</div>
+        <div class="ui-card">${slotRows || '<div class="ui-empty">No morning trains set up — add them in Settings → Trains.</div>'}</div>
 
-        <div class="rail-col-header" style="margin-top:14px;">Locations</div>
-        <div class="sub" style="margin-bottom:8px;">Paste "lat, lng" — on a computer, right-click the spot in Google Maps and click the numbers at the top of the menu. Home stays on this device and the Worker only; it isn't included in backups.</div>
-        <div style="font-size:13px; color:var(--ink-dim); margin-bottom:4px;">Home (on the road outside)</div>
-        <input type="text" id="dc-home" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="lat, lng" value="${escapeHtml(homeText)}" style="margin-bottom:10px;" />
-        <div style="font-size:13px; color:var(--ink-dim); margin-bottom:4px;">Station car park entrance</div>
-        <input type="text" id="dc-station" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="lat, lng" value="${escapeHtml(stationText)}" style="margin-bottom:14px;" />
+        <div class="ui-subhead">Locations</div>
+        <div class="sub">Paste "lat, lng" — on a computer, right-click the spot in Google Maps and click the numbers at the top of the menu. Home stays on this device and the Worker only; it isn't included in backups.</div>
+        <div class="ui-card">
+          <div class="ui-field">
+            <label class="ui-field-label" for="dc-home">Home (on the road outside)</label>
+            <input type="text" id="dc-home" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="lat, lng" value="${escapeHtml(homeText)}" />
+          </div>
+          <div class="ui-field">
+            <label class="ui-field-label" for="dc-station">Station car park entrance</label>
+            <input type="text" id="dc-station" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="lat, lng" value="${escapeHtml(stationText)}" />
+          </div>
+        </div>
 
-        <div class="rail-col-header">Routes</div>
-        <div class="sub" style="margin-bottom:8px;">Each route is forced through its via points, in order. Put them mid-way along a plain stretch of road, away from junctions, on the side you drive along.</div>
+        <div class="ui-subhead">Routes</div>
+        <div class="sub">Each route is forced through its via points, in order. Put them mid-way along a plain stretch of road, away from junctions, on the side you drive along.</div>
         ${draft.routes.map(routeRowHtml).join('')}
-        ${draft.routes.length < DRIVE_CHECK_MAX_ROUTES ? '<div class="settings-link" id="dc-add-route" style="margin-bottom:14px;">+ Add another route</div>' : ''}
+        ${draft.routes.length < DRIVE_CHECK_MAX_ROUTES ? '<span class="ui-link" role="button" id="dc-add-route">Add another route</span>' : ''}
 
-        <div class="rail-col-header">Thresholds (minutes)</div>
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-          <span style="font-size:13px; flex:1;">Alert if usual route is this much over normal</span>
-          <input type="number" id="dc-delay" min="1" max="30" step="1" value="${Number.isFinite(draft.delayThresholdMin) ? draft.delayThresholdMin : 5}" style="width:70px;" />
+        <div class="ui-subhead">Thresholds (minutes)</div>
+        <div class="ui-card">
+          <div class="ui-inline">
+            <label class="ui-inline-label" for="dc-delay">Alert if usual route is this much over normal</label>
+            <input type="number" inputmode="numeric" class="ui-input-short" id="dc-delay" min="1" max="30" step="1" value="${Number.isFinite(draft.delayThresholdMin) ? draft.delayThresholdMin : 5}" />
+          </div>
+          <div class="ui-inline">
+            <label class="ui-inline-label" for="dc-switch">Suggest another route if it saves at least</label>
+            <input type="number" inputmode="numeric" class="ui-input-short" id="dc-switch" min="1" max="30" step="1" value="${Number.isFinite(draft.switchThresholdMin) ? draft.switchThresholdMin : 5}" />
+          </div>
+          <div class="ui-field-help ui-gap-top-sm">"Normal" is Google's empty-road time plus 5 minutes.</div>
         </div>
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-          <span style="font-size:13px; flex:1;">Suggest another route if it saves at least</span>
-          <input type="number" id="dc-switch" min="1" max="30" step="1" value="${Number.isFinite(draft.switchThresholdMin) ? draft.switchThresholdMin : 5}" style="width:70px;" />
-        </div>
-        <div class="sub" style="margin-bottom:14px;">"Normal" is Google's empty-road time plus 5 minutes.</div>
 
-        <div id="dc-error" style="color:var(--danger); font-size:13px; margin-bottom:10px; display:none;"></div>
-        <div id="dc-result" style="display:none; margin-bottom:12px;"></div>
+        <div class="ui-notice ui-notice-bad ui-gap-top" id="dc-error" hidden></div>
+        <div class="ui-notice ui-gap-top" id="dc-result" hidden></div>
 
-        <button type="button" class="ui-btn-secondary ui-btn-block" id="dc-test">Save &amp; test now</button>
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top" id="dc-test">Save &amp; test now</button>
       </div>
     `;
 
@@ -473,7 +486,7 @@ function openDriveCheckEditor(cameFromSettings){
     const showError = (msg) => {
       const el = overlay.querySelector('#dc-error');
       el.textContent = msg || '';
-      el.style.display = msg ? 'block' : 'none';
+      el.hidden = !msg;
     };
 
     overlay.querySelector('#dc-save').addEventListener('click', async () => {
@@ -506,7 +519,7 @@ function openDriveCheckEditor(cameFromSettings){
         const data = await resp.json().catch(() => null);
         if (!resp.ok || !data){ showError(`Test failed: ${resp.status}`); return; }
         resultEl.innerHTML = renderDriveCheckResult(data);
-        resultEl.style.display = 'block';
+        resultEl.hidden = false;
       } catch(e){
         showError('Test failed — are you offline?');
       } finally {
@@ -534,22 +547,22 @@ function renderDriveCheckResult(data, opts){
     const why = data.reason === 'no-maps-key' ? 'The Worker has no MAPS_API_KEY secret yet.'
       : data.reason === 'usual-route-failed' ? 'Google couldn\'t route the usual way — check its via points.'
       : `(${escapeHtml(data.reason || 'unknown')})`;
-    return `<div style="font-size:13px;"><strong>Couldn't check traffic.</strong> ${why}</div>`;
+    return `<div><strong>Couldn't check traffic.</strong> ${why}</div>`;
   }
   if (data.status === 'skipped'){
-    return `<div style="font-size:13px;">Skipped: ${escapeHtml(data.reason || '')}</div>`;
+    return `<div>Skipped: ${escapeHtml(data.reason || '')}</div>`;
   }
   const rows = (data.routes || []).map(r => `
     <tr>
-      <td style="padding:2px 8px 2px 0;">${escapeHtml(r.name)}${r.usual ? ' <span style="color:var(--ink-dim);">(usual)</span>' : ''}</td>
-      <td style="padding:2px 8px; text-align:right;">${r.failed ? '—' : `${r.minutes} min`}</td>
-      <td style="padding:2px 0 2px 8px; text-align:right; color:var(--ink-dim);">${r.failed ? 'no route' : `empty road ${r.freeFlowMinutes}`}</td>
+      <td>${escapeHtml(r.name)}${r.usual ? ' <span class="ui-dim">(usual)</span>' : ''}</td>
+      <td>${r.failed ? '—' : `${r.minutes} min`}</td>
+      <td class="ui-dim">${r.failed ? 'no route' : `empty road ${r.freeFlowMinutes}`}</td>
     </tr>`).join('');
   return `
-    <div style="font-size:14px; font-weight:600;">${escapeHtml(data.title || '')}</div>
-    <div style="font-size:13px; margin-bottom:6px; white-space:pre-line;">${escapeHtml(data.text || '')}</div>
-    <table style="font-size:13px; border-collapse:collapse;">${rows}</table>
-    <div style="font-size:11px; color:var(--ink-dim); margin-top:4px;">Checked ${escapeHtml(data.checkedAt || '')}.${showPinHint ? ' If a route looks far too long, one of its via pins has probably snapped to the wrong road.' : ''}</div>`;
+    <div class="dc-result-title">${escapeHtml(data.title || '')}</div>
+    <div class="dc-result-text">${escapeHtml(data.text || '')}</div>
+    <table class="ui-data-table">${rows}</table>
+    <div class="dc-result-checked">Checked ${escapeHtml(data.checkedAt || '')}.${showPinHint ? ' If a route looks far too long, one of its via pins has probably snapped to the wrong road.' : ''}</div>`;
 }
 
 function openGeofenceSettingsEditor(cameFromSettings){
@@ -560,17 +573,18 @@ function openGeofenceSettingsEditor(cameFromSettings){
     <div class="ui-page-body">
       <div class="sub">How close you need to be to a station before the app will silently confirm a train or suggest one. Tighter catches false positives (like a nearby office on your walk in), but too tight risks missing a real detection if GPS wanders once you're on the platform itself.</div>
 
-      <div style="margin-top:14px; font-size:13px; color:var(--ink-dim);">Crewe radius (metres)</div>
-      <input type="number" id="geofence-crewe-input" value="${geofenceRadiusCrewe}" step="10" min="${GEOFENCE_RADIUS_MIN_M}" max="${GEOFENCE_RADIUS_MAX_M}" style="margin-bottom:6px;" />
-      <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-dim); margin-bottom:16px; cursor:pointer; -webkit-user-select:none; user-select:none;">
-        <input type="checkbox" id="geofence-crewe-match" ${geofenceCreweMatchesWigan ? 'checked' : ''} /> Match Wigan
-      </label>
-
-      <div style="font-size:13px; color:var(--ink-dim);">Wigan radius (metres)</div>
-      <input type="number" id="geofence-wigan-input" value="${geofenceRadiusWigan}" step="10" min="${GEOFENCE_RADIUS_MIN_M}" max="${GEOFENCE_RADIUS_MAX_M}" style="margin-bottom:6px;" />
-      <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-dim); margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none;">
-        <input type="checkbox" id="geofence-wigan-match" ${geofenceWiganMatchesCrewe ? 'checked' : ''} /> Match Crewe
-      </label>
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="geofence-crewe-input">Crewe radius (metres)</label>
+          <input type="number" inputmode="numeric" id="geofence-crewe-input" value="${geofenceRadiusCrewe}" step="10" min="${GEOFENCE_RADIUS_MIN_M}" max="${GEOFENCE_RADIUS_MAX_M}" />
+          ${uiCheck('geofence-crewe-match', 'Match Wigan', geofenceCreweMatchesWigan, { small: true })}
+        </div>
+        <div class="ui-field">
+          <label class="ui-field-label" for="geofence-wigan-input">Wigan radius (metres)</label>
+          <input type="number" inputmode="numeric" id="geofence-wigan-input" value="${geofenceRadiusWigan}" step="10" min="${GEOFENCE_RADIUS_MIN_M}" max="${GEOFENCE_RADIUS_MAX_M}" />
+          ${uiCheck('geofence-wigan-match', 'Match Crewe', geofenceWiganMatchesCrewe, { small: true })}
+        </div>
+      </div>
 
     </div>
   `;
@@ -643,7 +657,12 @@ function openPreferredGoogleEditor(cameFromSettings){
     ${uiPageBar('Google account', { backId: 'preferred-google-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'preferred-google-save' })}
     <div class="ui-page-body">
       <div class="sub">If you have more than one Google account, entering the email here skips the account picker when connecting to Calendar.</div>
-      <input type="email" id="preferred-google-input" value="${escapeHtml(preferredGoogleEmail)}" placeholder="you@gmail.com" style="margin-bottom:12px;" />
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="preferred-google-input">Google account email</label>
+          <input type="email" id="preferred-google-input" value="${escapeHtml(preferredGoogleEmail)}" placeholder="you@gmail.com" />
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);

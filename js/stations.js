@@ -130,13 +130,12 @@ function createStationPicker(opts){
   const initialName = opts && opts.initialName;
 
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:relative; flex:1;';
+  wrap.className = 'ui-picker';
   const initialValue = initialCode ? (initialName ? `${initialName} (${initialCode})` : initialCode) : '';
   wrap.innerHTML = `
-    <input type="text" class="station-picker-input" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(initialValue)}"
-      style="width:100%; padding:10px 32px 10px 10px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); box-sizing:border-box;" />
-    <span class="station-picker-clear" style="display:${initialValue ? 'flex' : 'none'}; position:absolute; right:6px; top:0; bottom:0; width:22px; align-items:center; justify-content:center; cursor:pointer; color:var(--ink-dim); font-size:15px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">✕</span>
-    <div class="station-picker-dropdown" style="display:none; position:absolute; left:0; right:0; top:100%; margin-top:4px; background:var(--board-2); border:1px solid var(--line); border-radius:8px; max-height:220px; overflow-y:auto; z-index:20;"></div>
+    <input type="text" class="station-picker-input ui-picker-input" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(initialValue)}" />
+    <span class="station-picker-clear ui-picker-clear" role="button" aria-label="Clear"${initialValue ? '' : ' style="display:none;"'}>${UI_ICON_CLOSE}</span>
+    <div class="station-picker-dropdown ui-picker-list" style="display:none;"></div>
   `;
   const input = wrap.querySelector('.station-picker-input');
   const dropdown = wrap.querySelector('.station-picker-dropdown');
@@ -183,7 +182,7 @@ function createStationPicker(opts){
     matches = matches.slice(0, 8);
     if (!matches.length){
       if (/^[A-Z]{3}$/.test(upperQ)){
-        dropdown.innerHTML = `<div style="padding:10px 12px; font-size:12.5px; color:var(--ink-dim);">Not in the station list — will be used as typed: <strong style="color:var(--ink);">${escapeHtml(upperQ)}</strong></div>`;
+        dropdown.innerHTML = `<div class="ui-picker-note">Not in the station list — will be used as typed: <strong>${escapeHtml(upperQ)}</strong></div>`;
         dropdown.style.display = 'block';
       } else {
         closeDropdown();
@@ -191,9 +190,9 @@ function createStationPicker(opts){
       return;
     }
     dropdown.innerHTML = matches.map(m => `
-      <div class="station-picker-option" data-crs="${m.crs}" style="padding:10px 12px; cursor:pointer; border-bottom:1px solid var(--line); -webkit-user-select:none; user-select:none;">
-        <span style="color:var(--ink);">${escapeHtml(m.name)}</span>
-        <span style="color:var(--ink-dim); float:right;">${m.crs}</span>
+      <div class="station-picker-option ui-picker-option" data-crs="${m.crs}">
+        <span>${escapeHtml(m.name)}</span>
+        <span class="ui-dim">${m.crs}</span>
       </div>
     `).join('');
     dropdown.style.display = 'block';

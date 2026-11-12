@@ -6,36 +6,32 @@ function openDayEditor(key){
   const weekend = isWeekend(d);
   const current = comments[key] || '';
   const isTravelDay = !weekend && (current === '' || travelOverrides[key]);
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>${dateLabel(d)}</h3>
-      <div class="sub">${weekend ? 'Weekend day — always skipped' : 'Add a reason this day doesn\'t count (or leave blank for a normal travel day)'}</div>
-      <div class="chip-row" id="modal-chip-row">
-        ${PRESET_TAGS.map(tag => `<div class="chip ${current.toUpperCase()===tag?'active':''}" data-tag="${tag}">${tag}</div>`).join('')}
-        <div class="chip" data-tag="__clear">Clear</div>
+  // Facelift stage 4: a quick bottom sheet (uiOpenSheet). Same ids and the same
+  // save-as-you-go behaviour as before: a preset tag saves and closes at once,
+  // the two ticks save when changed, Save stores a typed reason.
+  const customValue = current && !PRESET_TAGS.includes(current.toUpperCase()) ? current : '';
+  const parked = parkedDays[key] !== undefined;
+  const { overlay, close } = uiOpenSheet(dateLabel(d), `
+      <div class="ui-sheet-sub">${weekend ? 'Weekend day — always skipped' : 'Add a reason this day doesn\'t count, or leave it blank for a normal travel day.'}</div>
+      <div class="ui-chips" id="modal-chip-row">
+        ${PRESET_TAGS.map(tag => `<button type="button" class="ui-chip ${current.toUpperCase()===tag?'is-selected':''}" data-tag="${tag}">${tag}</button>`).join('')}
+        <button type="button" class="ui-chip" data-tag="__clear">Clear</button>
       </div>
-      <input type="text" id="modal-custom-comment" placeholder="Or type your own" value="${escapeHtml(current && !PRESET_TAGS.includes(current.toUpperCase()) ? current : '')}" />
+      <div class="ui-field ui-gap-top">
+        <label class="ui-field-label" for="modal-custom-comment">Your own reason</label>
+        <input type="text" id="modal-custom-comment" placeholder="Or type your own" value="${escapeHtml(customValue)}" />
+      </div>
       ${!weekend ? `
-      <label style="display:flex; align-items:center; gap:8px; margin:12px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
-        <input type="checkbox" id="modal-override-checkbox" ${travelOverrides[key] ? 'checked' : ''} style="width:16px; height:16px;" />
-        I still used the ticket this day
-      </label>` : ''}
-      ${!weekend ? `
-      <label style="display:flex; align-items:center; gap:8px; margin:12px 0 4px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
-        <input type="checkbox" id="modal-parked-checkbox" ${parkedDays[key] !== undefined ? 'checked' : ''} style="width:16px; height:16px;" />
-        I parked today
-      </label>
-      <div id="modal-parked-cost-wrap" style="display:${parkedDays[key] !== undefined ? 'flex' : 'none'}; align-items:center; gap:8px; margin-bottom:8px;">
-        <span style="font-size:13px; color:var(--ink-dim);">Cost (£)</span>
-        <input type="number" id="modal-parked-cost-input" value="${(parkedDays[key] !== undefined ? parkedDays[key] : parkingCost).toFixed(2)}" step="0.01" min="0" style="width:100px;" />
+      <div class="ui-gap-top">
+        ${uiCheck('modal-override-checkbox', 'I still used the ticket this day', !!travelOverrides[key])}
+        ${uiCheck('modal-parked-checkbox', 'I parked today', parked)}
+        <div class="ui-inline" id="modal-parked-cost-wrap"${parked ? '' : ' hidden'}>
+          <label class="ui-inline-label" for="modal-parked-cost-input">Parking cost (£)</label>
+          <input type="number" inputmode="decimal" class="ui-input-short" id="modal-parked-cost-input" value="${(parked ? parkedDays[key] : parkingCost).toFixed(2)}" step="0.01" min="0" />
+        </div>
       </div>` : ''}
-      <button class="save-btn" id="modal-save-btn">Save</button>
-      <div class="modal-close" id="modal-close-btn">Cancel</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+      <div class="ui-sheet-actions"><button type="button" class="ui-btn-primary" id="modal-save-btn">Save</button></div>
+  `, { id: 'day-editor-sheet' });
 
   function getOverrideChecked(){
     const cb = document.getElementById('modal-override-checkbox');
@@ -58,11 +54,11 @@ function openDayEditor(key){
   if (modalParkedCb){
     modalParkedCb.addEventListener('change', async () => {
       if (modalParkedCb.checked){
-        modalParkedCostWrap.style.display = 'flex';
+        modalParkedCostWrap.hidden = false;
         const val = parseFloat(modalParkedCostInput.value);
         parkedDays[key] = isNaN(val) ? parkingCost : val;
       } else {
-        modalParkedCostWrap.style.display = 'none';
+        modalParkedCostWrap.hidden = true;
         delete parkedDays[key];
       }
       await saveParkedDays();
@@ -84,7 +80,7 @@ function openDayEditor(key){
     });
   }
 
-  overlay.querySelectorAll('#modal-chip-row .chip').forEach(chip => {
+  overlay.querySelectorAll('#modal-chip-row .ui-chip').forEach(chip => {
     chip.addEventListener('click', async () => {
       const tag = chip.dataset.tag;
       if (tag === '__clear'){
@@ -104,7 +100,7 @@ function openDayEditor(key){
       await saveComments();
       await saveTravelOverrides();
       await saveParkedDays();
-      document.body.removeChild(overlay); render();
+      close(); render();
     });
   });
   document.getElementById('modal-save-btn').addEventListener('click', async () => {
@@ -118,15 +114,11 @@ function openDayEditor(key){
       await saveComments();
       await saveTravelOverrides();
       await saveParkedDays();
-      document.body.removeChild(overlay); render();
+      close(); render();
     } else {
-      document.body.removeChild(overlay);
+      close();
     }
   });
-  document.getElementById('modal-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
 function openCalendarView(){

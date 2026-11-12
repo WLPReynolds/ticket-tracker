@@ -9,6 +9,9 @@
 #    guard at the top of js/init.js.
 # 3. Version: APP_VERSION in js/config.js, every ?v= in index.html and
 #    VERSION in sw.js all agree.
+# 4. Report only (never fails): how many inline style="…" attributes each
+#    js file still has, so the facelift's progress is visible
+#    (claude/facelift-rollout-spec.md). Set CHECK_QUIET=1 to hide it.
 # Exits non-zero on any failure. Works with macOS's bash 3.2 and Linux.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -65,6 +68,20 @@ want=$(echo "$app_version" | sed 's/^v//; s/://')
 [ "$(echo "$url_versions" | wc -l | tr -d ' ')" = "1" ] || bad "index.html has more than one ?v= value: $(echo $url_versions)"
 [ "$url_versions" = "$want" ] || bad "index.html ?v=$url_versions doesn't match APP_VERSION $app_version"
 [ "$sw_version" = "$want" ] || bad "sw.js VERSION $sw_version doesn't match APP_VERSION $app_version"
+
+# --- 4. Inline styles (report only) -----------------------------------------
+if [ -z "${CHECK_QUIET:-}" ]; then
+  total=0
+  report=""
+  for f in js/*.js; do
+    n=$(grep -o 'style="' "$f" | wc -l | tr -d ' ')
+    total=$((total + n))
+    [ "$n" -gt 0 ] && report="$report$n ${f#js/}
+"
+  done
+  echo "Inline styles left: $total"
+  printf '%s' "$report" | sort -rn | sed 's/^/  /'
+fi
 
 if [ $fail -eq 0 ]; then
   echo "OK — $(echo "$loaded_js" | wc -l | tr -d ' ') scripts wired, version $app_version everywhere."

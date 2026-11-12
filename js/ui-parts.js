@@ -36,3 +36,38 @@ function uiSetSwitch(id, on){
   const el = document.getElementById(id);
   if (el) el.setAttribute('aria-checked', on ? 'true' : 'false');
 }
+
+const UI_ICON_CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+// A bottom sheet (stage 4): a quick edit or choice about one thing.
+// Title bar with a close icon; bodyHtml goes inside .ui-sheet-body.
+// opts: { id, onClose }. Tapping the dim backdrop or the close icon closes it.
+// Returns { overlay, sheet, close }. close() is safe to call more than once.
+function uiOpenSheet(title, bodyHtml, opts){
+  const o = opts || {};
+  const overlay = document.createElement('div');
+  overlay.className = 'ui-sheet-overlay';
+  overlay.innerHTML = `<div class="ui-sheet" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}"${o.id ? ` id="${o.id}"` : ''}>
+    <div class="ui-sheet-bar"><div class="ui-sheet-title">${escapeHtml(title)}</div><button type="button" class="ui-sheet-close" aria-label="Close">${UI_ICON_CLOSE}</button></div>
+    <div class="ui-sheet-body">${bodyHtml}</div></div>`;
+  document.body.appendChild(overlay);
+  const sheet = overlay.querySelector('.ui-sheet');
+  let closed = false;
+  function close(){
+    if (closed) return;
+    closed = true;
+    if (overlay.isConnected) overlay.remove();
+    if (o.onClose) o.onClose();
+  }
+  overlay.querySelector('.ui-sheet-close').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  return { overlay, sheet, close };
+}
+
+// A checkbox with its label; the whole row is the tap target.
+// opts: { small, extra } — small for a secondary option; extra is any extra
+// attributes for the <input>, e.g. 'data-key="x"'.
+function uiCheck(id, label, checked, opts){
+  const o = opts || {};
+  return `<label class="ui-check${o.small ? ' ui-check-small' : ''}"><input type="checkbox"${id ? ` id="${id}"` : ''} ${checked ? 'checked' : ''} ${o.extra || ''} /><span>${escapeHtml(label)}</span></label>`;
+}

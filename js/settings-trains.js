@@ -21,25 +21,28 @@ function openRailConfig(cameFromSettings){
   function buildSectionHtml(direction, title, fromLoc, toLoc){
     const trains = draftTrains.filter(t => t.direction === direction).sort((a, b) => a.time.localeCompare(b.time));
     const rows = trains.map(t => `
-      <div style="margin-bottom:12px;">
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-          <input type="time" class="rail-time-input" data-key="${t.key}" value="${t.time.slice(0,2)}:${t.time.slice(2,4)}" style="flex:1;" />
-          <span class="modal-close" data-remove-key="${t.key}" style="margin:0; font-size:13px;">Remove</span>
+      <div class="ui-subcard">
+        <div class="ui-inline">
+          <span class="ui-inline-note ui-fixed">Train</span>
+          <input type="time" class="rail-time-input" data-key="${t.key}" value="${t.time.slice(0,2)}:${t.time.slice(2,4)}" />
+          <span class="ui-link ui-link-dim" role="button" data-remove-key="${t.key}">Remove</span>
         </div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-size:12px; color:var(--ink-dim); white-space:nowrap;">Watch alert at</span>
-          <input type="time" class="rail-check-input" data-key="${t.key}" value="${draftAlertCheck[t.key] || ''}" style="flex:1;" />
-          <span class="modal-close" data-clear-check-key="${t.key}" style="margin:0; font-size:13px;">Clear</span>
+        <div class="ui-inline">
+          <span class="ui-inline-note ui-fixed">Watch alert</span>
+          <input type="time" class="rail-check-input" data-key="${t.key}" value="${draftAlertCheck[t.key] || ''}" />
+          <span class="ui-link ui-link-dim" role="button" data-clear-check-key="${t.key}">Clear</span>
         </div>
       </div>`).join('');
     const defaultOptions = `<option value="">None — no alerts</option>` + trains.map(t =>
       `<option value="${t.key}" ${draftDefaultTargets[direction] === t.key ? 'selected' : ''}>${t.label}</option>`).join('');
     return `
-      <div class="rail-col-header">${title} (${fromLoc} → ${toLoc})</div>
+      <div class="ui-subhead">${title} (${fromLoc} → ${toLoc})</div>
       <div id="rail-section-${direction}">${rows}</div>
-      <div class="settings-link" id="rail-add-${direction}" style="margin-top:4px; margin-bottom:16px;">+ Add another time</div>
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Default watch-alert train</label>
-      <select class="rail-default-target" data-direction="${direction}" style="margin-bottom:18px;">${defaultOptions}</select>
+      <span class="ui-link" role="button" id="rail-add-${direction}">Add another time</span>
+      <div class="ui-field ui-gap-top-sm">
+        <label class="ui-field-label" for="rail-default-${direction}">Default watch-alert train</label>
+        <select class="rail-default-target" id="rail-default-${direction}" data-direction="${direction}">${defaultOptions}</select>
+      </div>
     `;
   }
 
@@ -192,11 +195,17 @@ function openHomeWorkStationsManager(cameFromSettings){
       ${uiPageBar('Home and work stations', { backId: 'hw-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'hw-save' })}
       <div class="ui-page-body">
         <div class="sub">Used to work out which Emergency routes get you home vs. to work, so the Emergency tab can group and sort them for whichever direction you're travelling in.</div>
-        <div class="sub" style="font-size:11.5px; margin-bottom:12px;">${stationStatusHtml()}</div>
-        <div class="rail-col-header" style="margin-bottom:4px;">Home station</div>
-        <div id="hw-home-picker" style="margin-bottom:14px;"></div>
-        <div class="rail-col-header" style="margin-bottom:4px;">Work station</div>
-        <div id="hw-work-picker" style="margin-bottom:18px;"></div>
+        <div class="ui-card">
+          <div class="ui-field">
+            <div class="ui-field-label">Home station</div>
+            <div id="hw-home-picker"></div>
+          </div>
+          <div class="ui-field">
+            <div class="ui-field-label">Work station</div>
+            <div id="hw-work-picker"></div>
+            <div class="ui-field-help">${stationStatusHtml()}</div>
+          </div>
+        </div>
       </div>
     `;
     const homePicker = createStationPicker({
