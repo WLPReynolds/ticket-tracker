@@ -327,7 +327,7 @@ function openDriveCheckEditor(cameFromSettings){
         <div class="ui-inline">
           <input type="text" class="dc-route-name" data-route="${i}" maxlength="24" value="${escapeHtml(r.name)}" placeholder="Route name" />
           <label class="ui-check ui-check-small"><input type="radio" name="dc-usual" class="dc-usual" data-route="${i}" ${r.usual ? 'checked' : ''} /><span>Usual</span></label>
-          ${draft.routes.length > 1 ? `<span class="ui-link ui-link-dim" role="button" data-dc-remove="${i}">Remove</span>` : ''}
+          ${draft.routes.length > 1 ? `<span class="ui-link ui-link-dim ui-inline-action" role="button" data-dc-remove="${i}">Remove</span>` : ''}
         </div>
         ${vias}
       </div>`;
@@ -402,7 +402,7 @@ function openDriveCheckEditor(cameFromSettings){
         <div class="ui-inline">
           <span class="ui-inline-label">${escapeHtml(t.label)} train<br><span class="ui-dim">${alertAt ? `watch alert ${escapeHtml(alertAt)}` : 'no watch alert'}</span></span>
           <input type="time" class="dc-slot" data-key="${t.key}" value="${escapeHtml(draft.checkTimesByTrain[t.key] || '')}" />
-          <span class="ui-link ui-link-dim" role="button" data-dc-clear-slot="${t.key}">Clear</span>
+          <span class="ui-link ui-link-dim ui-inline-action" role="button" data-dc-clear-slot="${t.key}">Clear</span>
         </div>`;
     }).join('');
     const homeText = draft._homeText !== undefined ? draft._homeText : fmtLatLng(driveCheckHome);

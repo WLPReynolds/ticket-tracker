@@ -25,12 +25,12 @@ function openRailConfig(cameFromSettings){
         <div class="ui-inline">
           <span class="ui-inline-note ui-fixed">Train</span>
           <input type="time" class="rail-time-input" data-key="${t.key}" value="${t.time.slice(0,2)}:${t.time.slice(2,4)}" />
-          <span class="ui-link ui-link-dim" role="button" data-remove-key="${t.key}">Remove</span>
+          <span class="ui-link ui-link-dim ui-inline-action" role="button" data-remove-key="${t.key}">Remove</span>
         </div>
         <div class="ui-inline">
           <span class="ui-inline-note ui-fixed">Watch alert</span>
           <input type="time" class="rail-check-input" data-key="${t.key}" value="${draftAlertCheck[t.key] || ''}" />
-          <span class="ui-link ui-link-dim" role="button" data-clear-check-key="${t.key}">Clear</span>
+          <span class="ui-link ui-link-dim ui-inline-action" role="button" data-clear-check-key="${t.key}">Clear</span>
         </div>
       </div>`).join('');
     const defaultOptions = `<option value="">None — no alerts</option>` + trains.map(t =>
