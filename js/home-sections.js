@@ -8,6 +8,7 @@ let homeWeekOffset = 0;          // 0 = this week, -1 = last week … (swipe on 
 let homeSelectedDayKey = null;   // day shown in the panel under the strip; null = today
 let homePageRefresh = null;      // set while Month view / Money details is open; render() calls it
 // Live boards for the Your trains card — session-only, refetched at most once a minute.
+let homeStationIndexLoading = false;
 const HOME_BOARDS_MAX_AGE_MS = 60000;
 let homeBoardsCache = { at: 0, boards: null, loading: false, error: null };
 
@@ -392,6 +393,13 @@ function homePaintTrains(){
 // Fetch live boards for the usual trains, at most once a minute, and only on a commute day.
 // Updates the card in place (no full render) so the page doesn't flicker or loop.
 function homeEnsureBoards(){
+  // Full station names: the index is otherwise only loaded by other screens,
+  // so Home showed "CRE to WGN" until one of them had been opened. From the
+  // stored copy this is instant; repaint once it's there.
+  if (!stationIndexCache && !homeStationIndexLoading){
+    homeStationIndexLoading = true;
+    loadStationIndex(false).then(() => homePaintTrains()).catch(() => {}).finally(() => { homeStationIndexLoading = false; });
+  }
   if (!railTrains.length || homeBoardsCache.loading) return;
   const todayKey = fmtKey(new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate()));
   if (nonTravelLabelFor(todayKey)) return;
