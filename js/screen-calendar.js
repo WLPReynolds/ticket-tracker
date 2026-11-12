@@ -175,9 +175,9 @@ function openCalendarView(){
         : info.delay === 'declined' ? '<span class="cal-dot-declined"></span>'
         : '';
       const dots = (info.comment || isBuyDay || info.delay)
-        ? `<span class="cal-dot-row">${info.comment ? '<span class="cal-dot"></span>' : ''}${isBuyDay ? '<span class="cal-dot-buy"></span>' : ''}${delayDotHtml}</span>`
+        ? `<span class="cal-dot-row">${info.comment ? '<span class="cal-dot"></span>' : ''}${isBuyDay && !info.buy ? '<span class="cal-dot-buy"></span>' : ''}${delayDotHtml}</span>`
         : '';
-      cells += `<div class="cal-day ${info.weekend ? 'weekend' : ''} ${info.isToday ? 'today' : ''} ${key === selectedKey ? 'selected' : ''}" data-key="${key}">
+      cells += `<div class="cal-day ${info.weekend ? 'weekend' : ''} ${info.buy ? 'is-buy' : ''} ${info.isToday ? 'today' : ''} ${key === selectedKey ? 'selected' : ''}" data-key="${key}">
         <span>${day}</span>${dots}
       </div>`;
     }

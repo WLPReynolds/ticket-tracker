@@ -86,7 +86,7 @@ function homeBuildStrip(ctx){
     const info = homeDayInfo(d, ctx);
     const dot = info.delay ? `<span class="ui-day-dot ${info.delay}"></span>` : '<span class="ui-day-dot"></span>';
     const label = `${dayNameShort(d)} ${d.getDate()}${info.ticketDay ? `, ticket day ${info.ticketDay}` : ''}${info.delay ? ', delay repay ' + info.delay : ''}`;
-    return `<button type="button" class="ui-day ${info.isToday ? 'is-today' : ''} ${key === homeSelectedDayKey ? 'is-selected' : ''}" data-day-key="${key}" aria-label="${escapeHtml(label)}">
+    return `<button type="button" class="ui-day ${info.buy ? 'is-buy' : ''} ${info.isToday ? 'is-today' : ''} ${key === homeSelectedDayKey ? 'is-selected' : ''}" data-day-key="${key}" aria-label="${escapeHtml(label)}">
       <span class="ui-day-wk">${dayNameShort(d)}</span>
       <span class="ui-day-date">${d.getDate()}</span>
       <span class="ui-day-mark ${info.markClass}">${info.mark}</span>
