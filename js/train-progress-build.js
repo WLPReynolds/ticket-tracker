@@ -1,7 +1,7 @@
 // train-progress-build.js — buildTrainProgress.
 // Part of the ticket tracker PWA. Read CODEMAP.md first: it lists what each file owns and the load order.
 
-const TRAIN_PROGRESS_ROW_HEIGHT = 54; // px — a sensible minimum row height; actual positioning now measures real rendered rows, not this value
+// Row minimum height (54px) lives in css/app.css (.rail-detail-row.tp-row); actual positioning measures the real rendered rows.
 
 function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardOverrides, staffPlatformOverrides, staffLiveStatusOverrides, staffDataAge, staffOverrunLatch){
   const now = new Date();
@@ -541,13 +541,13 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       const finalPoint = points[points.length - 1];
       const locLine = `Terminated at ${last.locationName}`;
       const statusLine = (finalPoint && finalPoint.locationName !== last.locationName) ? `Did not continue to ${finalPoint.locationName}` : '';
-      summaryHtml = `<div>${locLine}</div>${statusLine ? `<div style="font-size:13px; margin-top:4px; opacity:0.9;">${statusLine}</div>` : ''}`;
+      summaryHtml = `<div>${locLine}</div>${statusLine ? `<div class="tp-summary-sub">${statusLine}</div>` : ''}`;
     } else if (!afterLast){
       journeyFinished = true;
       // Genuinely reached the final booked destination — no "running",
       // the journey's over.
       const arrivalText = status.minutesLate === null ? status.text : (status.minutesLate > 0 ? `${status.minutesLate} min late` : 'On time');
-      summaryHtml = `<div>Arrived at ${last.locationName}</div><div style="font-size:13px; margin-top:4px; opacity:0.9;">${arrivalText}</div>`;
+      summaryHtml = `<div>Arrived at ${last.locationName}</div><div class="tp-summary-sub">${arrivalText}</div>`;
     } else {
       // Darwin sometimes only attaches a specific recalculated number to
       // some points and not others on a given poll, leaving nearby
@@ -672,8 +672,8 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
         ? `Currently at ${atPlatformPoint.locationName}${atPlatformText}`
         : `Currently between ${last.locationName} and ${afterLast.locationName}`;
       summaryHtml = `<div>${locationLine}</div>` +
-        `<div style="font-size:13px; margin-top:4px; opacity:0.9;">${runningText}</div>` +
-        (primaryReason ? `<div style="font-size:13px; margin-top:4px; opacity:0.85;">${primaryReason}</div>` : '');
+        `<div class="tp-summary-sub">${runningText}</div>` +
+        (primaryReason ? `<div class="tp-summary-sub is-reason">${primaryReason}</div>` : '');
     }
   } else if (points.length){
     summaryHtml = `Not yet departed ${points[0].locationName}`;
@@ -700,10 +700,9 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       // fix), so this is just comparing each point's real date to the
       // one before it; no new date logic needed.
       const daySeparator = (i > 0 && pointDates[i] && pointDates[i-1] && pointDates[i].toDateString() !== pointDates[i-1].toDateString())
-        ? `<div style="text-align:center; font-size:13px; color:var(--amber); padding:8px 0; border-bottom:1px solid var(--line); margin-left:6px;">${pointDates[i].toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'})}</div>`
+        ? `<div class="tp-day">${pointDates[i].toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'})}</div>`
         : '';
       const status = describePointStatusRemembered(service.serviceID, p.crs || `idx-${i}`, p.schedTime, p.liveTime, p.isCancelled);
-      const nameColor = (p.isYourStation || isToLocRow) ? 'var(--amber)' : 'var(--ink)';
       // The reason text often stays attached even once a point's own
       // status has recovered to genuinely on time — show it whenever
       // there's real uncertainty or an actual problem, but not once a
@@ -717,7 +716,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
       const isStaleReason = !p.isCancelled && inheritedReasons.has(normalizeReason(p.reason));
       const showReason = !!p.reason && status.minutesLate !== 0 && (showAllReasons || (p.reason !== lastShownReason && !isStaleReason));
       if (p.reason) lastShownReason = p.reason;
-      const reasonHtml = showReason ? `<div style="font-size:13px; color:#ff8b7e; margin-top:1px;">${p.reason}</div>` : '';
+      const reasonHtml = showReason ? `<div class="tp-reason">${p.reason}</div>` : '';
       // Cross out the scheduled time and show the real one whenever
       // Darwin gave a genuine specific delayed time (not just a status
       // word) — same idea as Avanti's own calling-points view.
@@ -740,11 +739,11 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
 
       let timeHtml, statusText, statusColor;
       if (hasRealTime){
-        timeHtml = `<span style="text-decoration:line-through; color:var(--ink-dim); font-size:13px;">${p.schedTime || ''}</span><br/><span style="color:${status.color}; font-weight:600;">${p.liveTime}</span>`;
+        timeHtml = `<span class="tp-was">${p.schedTime || ''}</span><br/><span class="tp-now" style="color:${status.color};">${p.liveTime}</span>`;
         statusText = status.text;
         statusColor = status.color;
       } else if (isInferred && inferredTime){
-        timeHtml = `<span style="text-decoration:line-through; color:var(--ink-dim); font-size:13px;">${p.schedTime || ''}</span><br/><span style="color:#e8935f; font-style:italic;">~${inferredTime}</span>`;
+        timeHtml = `<span class="tp-was">${p.schedTime || ''}</span><br/><span class="tp-est">~${inferredTime}</span>`;
         statusText = `~${knownOverallDelay} min late (estimated)`;
         statusColor = '#e8935f';
       } else if (isUnconfirmedOnTime){
@@ -765,7 +764,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
         const staffTimes = (staffFresh && p.crs) ? buildStaffTimeColumnsHtml(staffLiveStatusOverrides[p.crs], p.isCancelled) : null;
         if (staffTimes) timeHtml = staffTimes;
       }
-      const platformText = p.platform ? ` <span style="color:var(--ink-dim);">· Platform ${p.platform}</span>` : '';
+      const platformText = p.platform ? ` <span class="ui-dim">· Platform ${p.platform}</span>` : '';
       // A specific delay figure (or the literal "Delayed" flag) is
       // sometimes shown for a point whose actual departure/arrival
       // hasn't been confirmed by Darwin at all yet (raw at/atd/ata still
@@ -878,7 +877,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
         // word (found live 2026-09-29) — the pill already says it.
       }
       const atPlatformPill = (isAtPlatformViaStaff && !staffOverrun)
-        ? ` <span style="background:#2fa360; color:#fff; font-weight:700; font-size:11px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">AT PLATFORM</span>`
+        ? ` <span class="tp-pill tp-pill-here">AT PLATFORM</span>`
         : '';
       // Only the very next point after the last confirmed one gets the
       // pill. Once the train hasn't genuinely departed/arrived *there*,
@@ -902,19 +901,19 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
         staffOverrun || (dueMomentPassed && isGenuinelyUnconfirmedDelay(p) && i === lastPassedIdx + 1)
       );
       const notYetDepartedPill = showNotYetPill
-        ? ` <span style="background:#ff4d3d; color:#fff; font-weight:700; font-size:11px; letter-spacing:0.3px; padding:2px 7px; border-radius:10px; white-space:nowrap;">NOT YET ${isFinalPoint ? 'ARRIVED' : 'DEPARTED'}</span>`
+        ? ` <span class="tp-pill tp-pill-stuck">NOT YET ${isFinalPoint ? 'ARRIVED' : 'DEPARTED'}</span>`
         : '';
       const debugHtml = (showRawDebug && p.raw)
-        ? `<div style="font-family:monospace; font-size:10px; color:#6a7a8a; margin-top:2px;">${Object.entries(p.raw).map(([k,v]) => `${k}=${v === undefined || v === null ? '·' : v}`).join('  ')}</div>`
+        ? `<div class="tp-raw">${Object.entries(p.raw).map(([k,v]) => `${k}=${v === undefined || v === null ? '·' : v}`).join('  ')}</div>`
         : '';
       return `
         ${daySeparator}
-        <div class="rail-detail-row" data-idx="${i}" style="align-items:center; min-height:${TRAIN_PROGRESS_ROW_HEIGHT}px; padding-left:22px; position:relative;${inMyJourney ? ' background:color-mix(in srgb, var(--amber) 8%, transparent);' : ''}">
-          <span style="position:absolute; left:2px; width:8px; height:8px; border-radius:50%; background:var(--line); top:50%; transform:translateY(-50%);"></span>
-          <span style="min-width:56px;">${timeHtml}</span>
-          <span style="flex:1; text-align:right;">
-            <span class="wx-badge" data-wx-idx="${i}" style="margin-right:6px; font-size:13px; white-space:nowrap;"></span><span style="color:${nameColor}; font-weight:${(p.isYourStation||isToLocRow)?600:400};">${p.locationName || 'Unknown'}</span>
-            <div style="color:${statusColor}; font-size:13px; margin-top:1px;">${statusText}${atPlatformPill}${notYetDepartedPill}${platformText}</div>
+        <div class="rail-detail-row tp-row${inMyJourney ? ' is-mine' : ''}" data-idx="${i}">
+          <span class="tp-dot"></span>
+          <span class="tp-time">${timeHtml}</span>
+          <span class="tp-where">
+            <span class="wx-badge" data-wx-idx="${i}"></span><span class="tp-name${(p.isYourStation || isToLocRow) ? ' is-yours' : ''}">${p.locationName || 'Unknown'}</span>
+            <div class="tp-status" style="color:${statusColor};">${statusText}${atPlatformPill}${notYetDepartedPill}${platformText}</div>
             ${reasonHtml}
             ${debugHtml}
           </span>
@@ -922,7 +921,7 @@ function buildTrainProgress(train, service, showRawDebug, showAllReasons, boardO
     }catch(e){
       // One malformed calling point shouldn't take the whole list down —
       // show what we can and keep going.
-      return `<div class="rail-detail-row" data-idx="${i}"><span>${p.locationName || 'Unknown'}</span><span style="color:var(--ink-dim);">—</span></div>`;
+      return `<div class="rail-detail-row" data-idx="${i}"><span>${p.locationName || 'Unknown'}</span><span class="ui-dim">—</span></div>`;
     }
   }).join('');
 

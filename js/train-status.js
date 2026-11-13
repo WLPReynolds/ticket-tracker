@@ -208,22 +208,22 @@ function buildStaffTimeColumnsHtml(status, isCancelled){
     const shownIso = actualConfirmed ? actualIso : estIso;
     const shown = isoTimeToHHMM(shownIso);
     const diff = shown ? staffMinutesDiff(shownIso, schedIso) : null;
-    const labelHtml = `<span style="display:block; font-size:11px; letter-spacing:0.4px; text-transform:uppercase; color:var(--ink-dim); opacity:0.8;">${label}</span>`;
+    const labelHtml = `<span class="tp-col-label">${label}</span>`;
     if (!shown || diff === null){
-      return `<span style="display:inline-block; min-width:42px; vertical-align:top;">${labelHtml}<span>${sched}</span></span>`;
+      return `<span class="tp-col">${labelHtml}<span>${sched}</span></span>`;
     }
-    const color = diff > 0 ? '#ff8b7e' : 'var(--good)';
+    const timeClass = `tp-col-time ${diff > 0 ? 'is-late' : 'is-ok'} ${actualConfirmed ? 'is-confirmed' : 'is-est'}`;
     const changed = shown !== sched;
     const schedHtml = changed
-      ? `<span style="display:block; text-decoration:line-through; color:var(--ink-dim); font-size:13px;">${sched}</span>`
-      : `<span style="display:block; color:var(--ink-dim); font-size:13px;">${sched}</span>`;
-    return `<span style="display:inline-block; min-width:42px; vertical-align:top;">${labelHtml}${schedHtml}<span style="color:${color}; font-weight:${actualConfirmed ? 600 : 400};${actualConfirmed ? '' : ' font-style:italic;'}">${shown}</span></span>`;
+      ? `<span class="tp-col-sched is-changed">${sched}</span>`
+      : `<span class="tp-col-sched">${sched}</span>`;
+    return `<span class="tp-col">${labelHtml}${schedHtml}<span class="${timeClass}">${shown}</span></span>`;
   };
   const arrCol = sta ? column('arr', status.sta, status.ata, !!status.ataSpecified, status.etaSpecified ? status.eta : null) : '';
   const depCol = std ? column('dep', status.std, status.atd, !!status.atdSpecified, status.etdSpecified ? status.etd : null) : '';
   if (sta && std){
     if (sta === std) return null; // no dwell to show — leave the row as it was
-    return `<span style="white-space:nowrap;">${arrCol}<span style="display:inline-block; width:6px;"></span>${depCol}</span>`;
+    return `<span class="tp-cols">${arrCol}${depCol}</span>`;
   }
   return arrCol || depCol;
 }
@@ -509,7 +509,7 @@ function getLengthOnlyFormationLetters(service){
 // is the rear coach, so the fallback letters are displayed reversed and
 // the nose sits beside the last letter (see shouldReverseFallbackLetters).
 function buildNoseSvg(){
-  return `<div style="flex:0 0 auto; margin-right:2px; display:flex; align-items:center;"><svg width="22" height="34" viewBox="0 0 22 34" style="display:block;"><path d="M22,0 L5,32 Q3,34 6,34 L22,34 Z" fill="color-mix(in srgb, var(--ink) 45%, var(--tile))" stroke="var(--line)" stroke-width="1"/></svg></div>`;
+  return `<div class="tp-nose"><svg width="22" height="34" viewBox="0 0 22 34"><path d="M22,0 L5,32 Q3,34 6,34 L22,34 Z" fill="color-mix(in srgb, var(--ink) 45%, var(--tile))" stroke="var(--line)" stroke-width="1"/></svg></div>`;
 }
 
 // Whether the tier-2 (length-only) coach letters should be displayed in
@@ -570,30 +570,30 @@ function buildFormationHtml(service, train){
       let loadingBar = '';
       if (c.loadingSpecified && typeof c.loading === 'number'){
         const pct = Math.max(0, Math.min(100, c.loading));
-        const barColor = pct >= 70 ? '#e05a4e' : (pct >= 35 ? 'var(--amber)' : 'var(--good)');
-        loadingBar = `<div style="position:absolute; left:3px; right:3px; bottom:2px; height:3px; border-radius:2px; background:rgba(255,255,255,0.15); overflow:hidden;"><div style="width:${pct}%; height:100%; background:${barColor};"></div></div>`;
+        const loadClass = pct >= 70 ? 'is-high' : (pct >= 35 ? 'is-mid' : 'is-low');
+        loadingBar = `<div class="tp-load ${loadClass}"><div style="width:${pct}%;"></div></div>`;
       }
-      return `<div style="flex:0 0 auto; position:relative; width:36px; height:34px; margin-right:2px; background:${isFirstClass ? 'color-mix(in srgb, var(--amber) 20%, var(--tile))' : 'var(--tile)'}; border:1px solid var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:var(--ink);">${label}${loadingBar}</div>`;
+      return `<div class="tp-coach${isFirstClass ? ' is-first' : ''}">${label}${loadingBar}</div>`;
     }).join('');
     return `
-      <div id="train-progress-formation" style="margin-bottom:10px;">
-        <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${coaches.length} coach${coaches.length === 1 ? '' : 'es'}${anyFirstClass ? ' · amber = 1st class' : ''}</div>
-        <div style="display:flex; align-items:center; overflow-x:auto; padding-bottom:2px;">${buildNoseSvg()}${boxes}</div>
+      <div id="train-progress-formation" class="tp-formation">
+        <div class="tp-formation-caption">${coaches.length} coach${coaches.length === 1 ? '' : 'es'}${anyFirstClass ? ' · amber = 1st class' : ''}</div>
+        <div class="tp-coaches">${buildNoseSvg()}${boxes}</div>
       </div>`;
   }
 
   const baseLetters = getLengthOnlyFormationLetters(service);
   if (!baseLetters){
-    return `<div id="train-progress-formation" style="margin-bottom:10px; font-size:11px; color:var(--ink-dim);">Coach information not available for this service</div>`;
+    return `<div id="train-progress-formation" class="tp-formation-none">Coach information not available for this service</div>`;
   }
   const letters = shouldReverseFallbackLetters(train, service) ? baseLetters.slice().reverse() : baseLetters;
   const boxes = letters.map((letter) => {
-    return `<div style="flex:0 0 auto; position:relative; width:36px; height:34px; margin-right:2px; background:var(--tile); border:1px solid var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:var(--ink);">${letter}</div>`;
+    return `<div class="tp-coach">${letter}</div>`;
   }).join('');
   return `
-    <div id="train-progress-formation" style="margin-bottom:10px;">
-      <div style="font-size:11px; color:var(--ink-dim); margin-bottom:4px;">${letters.length} coaches*</div>
-      <div style="display:flex; align-items:center; overflow-x:auto; padding-bottom:2px;">${buildNoseSvg()}${boxes}</div>
+    <div id="train-progress-formation" class="tp-formation">
+      <div class="tp-formation-caption">${letters.length} coaches*</div>
+      <div class="tp-coaches">${buildNoseSvg()}${boxes}</div>
     </div>`;
 }
 
@@ -616,7 +616,7 @@ function buildFormationDebugHtml(service, showRawDebug, fetchedServiceId){
       ? `(no "formation" field — showing length-only fallback: length=${length}, operatorCode=VT)`
       : `(no "formation" field in this GetServiceDetails response — length=${length ?? '·'}, operatorCode=${(service && service.operatorCode) || '·'})`;
   }
-  return `<div id="train-progress-formation-debug" style="font-family:monospace; font-size:10px; color:#6a7a8a; white-space:pre-wrap; margin-bottom:10px; max-height:160px; overflow-y:auto; border:1px dashed var(--line); border-radius:6px; padding:6px;">formation debug:
+  return `<div id="train-progress-formation-debug" class="tp-formation-debug">formation debug:
 serviceId: ${escapeHtml(fetchedServiceId || (service && service.serviceID) || '·')}
 ${escapeHtml(body)}</div>`;
 }
