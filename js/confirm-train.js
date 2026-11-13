@@ -322,9 +322,6 @@ function stopLikelyTrainChecks(){
 function openConfirmTrain(dateKey){
   const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
   const suggested = (typeof dateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) ? dateKey : fmtKey(today);
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-
   function optionsFor(direction, existingKey){
     const trains = railTrains.filter(t => t.direction === direction).sort((a,b) => a.time.localeCompare(b.time));
     let opts = `<option value="">— None / didn't travel —</option>`;
@@ -337,24 +334,26 @@ function openConfirmTrain(dateKey){
   function renderForDate(dateKey){
     const existing = confirmedTrains[dateKey] || {};
     document.getElementById('confirm-train-fields').innerHTML = `
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Morning train actually caught</label>
-      <select id="confirm-am-select" style="margin-bottom:12px;">${optionsFor('AM', existing.AM)}</select>
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Evening train actually caught</label>
-      <select id="confirm-pm-select" style="margin-bottom:12px;">${optionsFor('PM', existing.PM)}</select>
+      <div class="ui-field">
+        <label class="ui-field-label" for="confirm-am-select">Morning train actually caught</label>
+        <select id="confirm-am-select">${optionsFor('AM', existing.AM)}</select>
+      </div>
+      <div class="ui-field">
+        <label class="ui-field-label" for="confirm-pm-select">Evening train actually caught</label>
+        <select id="confirm-pm-select">${optionsFor('PM', existing.PM)}</select>
+      </div>
     `;
   }
 
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Confirm train used</h3>
-      <div class="sub">Records which specific train you actually caught, in case it wasn't your usual one (e.g. you caught an earlier delayed service instead). This doesn't affect your ticket usage tracking — it's just for more accurate delay repay matching.</div>
-      <input type="date" id="confirm-date-input" value="${suggested}" style="margin-bottom:12px;" />
-      <div id="confirm-train-fields"></div>
-      <button class="save-btn" id="confirm-train-save">Save</button>
-      <div class="modal-close" id="confirm-train-close">Cancel</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
+  // Stage 7 (2026-11-13): a bottom sheet with Save at the bottom.
+  const sheet = uiOpenSheet('Confirm train used', `
+      <div class="ui-sheet-sub">Records which specific train you actually caught, in case it wasn't your usual one (e.g. you caught an earlier delayed service instead). This doesn't affect your ticket usage tracking — it's just for more accurate delay repay matching.</div>
+      <div class="ui-field">
+        <label class="ui-field-label" for="confirm-date-input">Date</label>
+        <input type="date" id="confirm-date-input" value="${suggested}" />
+      </div>
+      <div class="ui-gap-top" id="confirm-train-fields"></div>
+      <div class="ui-sheet-actions"><button type="button" class="ui-btn-primary" id="confirm-train-save">Save</button></div>`, { id: 'confirm-train-sheet' });
   renderForDate(suggested);
 
   // 2026-09-27: Copy for WhatsApp — the chosen train isn't known until
@@ -401,11 +400,7 @@ function openConfirmTrain(dateKey){
     }
     await saveConfirmedTrains();
     renderSilentConfirmBanner(); // 2026-09-27: a changed evening train retires any Copy button still offering the old one
-    document.body.removeChild(overlay);
+    sheet.close();
     render();
   });
-  document.getElementById('confirm-train-close').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }

@@ -177,16 +177,16 @@ async function triggerPassPhotoDownload(){
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+// Stage 7 (2026-11-13): row colours come from classes on .rail-detail-row —
+// .is-ok (green), .is-late (salmon), .is-dim (grey) — not inline styles.
 function railDetailRows(trains, dayPerf){
   return trains.map(t => {
     const perf = dayPerf[t.key];
     if (!perf){
-      return `<div class="rail-detail-row"><span>${t.label}</span><span style="color:var(--ink-dim);">No data</span></div>`;
+      return `<div class="rail-detail-row"><span>${t.label}</span><span class="ui-dim">No data</span></div>`;
     }
     const late = perfBreachesThreshold(perf);
-    const color = late ? '#ff8b7e' : 'var(--good)';
-    const text = railPerfStatusText(perf);
-    return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
+    return `<div class="rail-detail-row ${late ? 'is-late' : 'is-ok'}"><span>${t.label}</span><span>${railPerfStatusText(perf)}</span></div>`;
   }).join('');
 }
 
@@ -211,45 +211,40 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
   return trains.map(t => {
     const perf = dayPerf[t.key];
     if (!perf){
-      return `<div class="rail-detail-row"><span>${t.label}</span><span style="color:var(--ink-dim);">No data</span></div>`;
+      return `<div class="rail-detail-row"><span>${t.label}</span><span class="ui-dim">No data</span></div>`;
     }
     const late = perfBreachesThreshold(perf);
     if (t.key === confirmedKey && late){
       const claim = (delayClaims[dateKey] || {})[direction];
       const status = claim ? claim.status : null;
       if (!status){
-        const delayText = railPerfStatusText(perf);
-        return `<div class="rail-detail-row claimable-row" data-claim-date="${dateKey}" data-claim-direction="${direction}"
-             style="cursor:pointer; margin:0 -10px; padding:8px 10px; background:#e05a4e; border-radius:8px; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-          <span style="color:#14161f; font-weight:700;">${t.label}</span>
-          <span style="color:#14161f;">${delayText}</span>
+        // A solid salmon pill: claim available — tap to start the claim.
+        return `<div class="rail-detail-row claimable-row" role="button" data-claim-date="${dateKey}" data-claim-direction="${direction}">
+          <span>${t.label}</span>
+          <span>${railPerfStatusText(perf)}</span>
         </div>`;
       }
       // 2026-09-30: Not claiming — the delay still happened, so the time
       // stays, but the row goes quiet grey with the decision on it.
       if (status === 'declined'){
-        return `<div class="rail-detail-row" style="flex-wrap:wrap; gap:2px 8px;">
-          <span style="color:var(--ink-dim); font-weight:600;">${t.label}</span>
-          <span style="color:var(--ink-dim);">Declined delay repay</span>
+        return `<div class="rail-detail-row is-dim">
+          <span>${t.label}</span>
+          <span>Declined delay repay</span>
         </div>`;
       }
       if (status === 'expired'){
-        const delayText = railPerfStatusText(perf);
-        return `<div class="rail-detail-row">
-          <span style="color:#ff8b7e; font-weight:600;">${t.label} <span style="color:var(--danger); font-size:11px; font-weight:700; margin-left:4px;">EXPIRED</span></span>
-          <span style="color:#ff8b7e;">${delayText}</span>
+        return `<div class="rail-detail-row is-late">
+          <span>${t.label} <span class="claim-tag-expired">Expired</span></span>
+          <span>${railPerfStatusText(perf)}</span>
         </div>`;
       }
       const checkColor = status === 'confirmed' ? '#3fb950' : '#8b949e';
-      const delayText = railPerfStatusText(perf);
-      return `<div class="rail-detail-row">
-        <span style="color:#ff8b7e; font-weight:600;">${t.label} <span title="${status === 'confirmed' ? 'Claim confirmed' : 'Claim started'}">${checkCircleIcon(checkColor)}</span></span>
-        <span style="color:#ff8b7e;">${delayText}</span>
+      return `<div class="rail-detail-row is-late">
+        <span>${t.label} <span title="${status === 'confirmed' ? 'Claim confirmed' : 'Claim started'}">${checkCircleIcon(checkColor)}</span></span>
+        <span>${railPerfStatusText(perf)}</span>
       </div>`;
     }
-    const color = late ? '#ff8b7e' : 'var(--good)';
-    const text = railPerfStatusText(perf);
-    return `<div class="rail-detail-row"><span style="color:${color}; font-weight:600;">${t.label}</span><span style="color:${color};">${text}</span></div>`;
+    return `<div class="rail-detail-row ${late ? 'is-late' : 'is-ok'}"><span>${t.label}</span><span>${railPerfStatusText(perf)}</span></div>`;
   }).join('') + notClaimingButtonHtml(dateKey, direction);
 }
 
@@ -257,7 +252,7 @@ function railDetailRowsForClaim(trains, dayPerf, dateKey, direction){
 // direction has an unclaimed pill (confirmed train 15+ late, no record).
 function notClaimingButtonHtml(dateKey, direction){
   if (!isDirectionClaimable(dateKey, direction)) return '';
-  return `<div class="not-claiming-btn" data-claim-date="${dateKey}" data-claim-direction="${direction}">Not claiming</div>`;
+  return `<button type="button" class="ui-btn-secondary not-claiming-btn" data-claim-date="${dateKey}" data-claim-direction="${direction}">Not claiming</button>`;
 }
 
 // Wires up the claim pill inside a just-appended detail overlay. reopen()
@@ -364,9 +359,8 @@ async function startDelayClaimForDate(dateKey, bandByDir, reopen){
 // Wayne picks the band for the delay he actually had. onPick runs from the
 // band button's own click, keeping it a trusted user gesture.
 function openCancelledBandPicker(dateKey, dirs, onPick){
-  const picker = document.createElement('div');
-  picker.className = 'modal-overlay';
-  picker.style.zIndex = '60'; // above the day-detail sheet (.modal-overlay is 50)
+  // Stage 7: a bottom sheet (uiOpenSheet), which stacks above any sheet or
+  // page it was opened from — no inline z-index needed any more.
   const chosen = {};
   const bands = [15, 30, 60, 120];
   const dirLabel = (dir) => {
@@ -375,35 +369,25 @@ function openCancelledBandPicker(dateKey, dirs, onPick){
     return `${train ? train.label : dir} (${dir === 'AM' ? 'morning' : 'evening'})`;
   };
   const rowsHtml = dirs.map(dir => `
-    <div style="margin-bottom:14px;">
-      <div style="font-weight:600; margin-bottom:6px;">${dirLabel(dir)} — cancelled</div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        ${bands.map(b => `<div class="band-pick-btn" data-dir="${dir}" data-band="${b}"
-          style="flex:1 1 calc(50% - 4px); box-sizing:border-box; text-align:center; padding:10px 8px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${delayRepayBandLabel(b)}<div style="font-size:11px; color:var(--ink-dim); margin-top:2px;">£${cappedDelayRepayAmount(b, dateKey, dir).toFixed(2)}</div></div>`).join('')}
+    <div class="band-pick-group">
+      <div class="band-pick-title">${dirLabel(dir)} — cancelled</div>
+      <div class="band-pick-grid">
+        ${bands.map(b => `<button type="button" class="band-pick-btn" data-dir="${dir}" data-band="${b}">${delayRepayBandLabel(b)}<span>£${cappedDelayRepayAmount(b, dateKey, dir).toFixed(2)}</span></button>`).join('')}
       </div>
     </div>`).join('');
-  picker.innerHTML = `
-    <div class="modal">
-      <h3>Choose your delay band</h3>
-      <div class="sub" style="margin-bottom:14px;">Your train was cancelled — choose the band for the delay you actually experienced, measured from when your planned train should have arrived. Enter the planned train as your intended journey on Avanti's form.</div>
-      ${rowsHtml}
-      <div class="modal-close" id="band-pick-cancel" style="text-align:center; margin-top:4px;">Cancel</div>
-    </div>`;
-  document.body.appendChild(picker);
-  const close = () => picker.remove();
-  picker.querySelector('#band-pick-cancel').addEventListener('click', close);
-  picker.addEventListener('click', (e) => { if (e.target === picker) close(); });
+  const sheet = uiOpenSheet('Choose your delay band', `
+      <div class="ui-sheet-sub">Your train was cancelled — choose the band for the delay you actually experienced, measured from when your planned train should have arrived. Enter the planned train as your intended journey on Avanti's form.</div>
+      ${rowsHtml}`);
+  const picker = sheet.overlay;
   picker.querySelectorAll('.band-pick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       chosen[btn.dataset.dir] = Number(btn.dataset.band);
       picker.querySelectorAll(`.band-pick-btn[data-dir="${btn.dataset.dir}"]`).forEach(b => {
-        const on = b === btn;
-        b.style.background = on ? 'var(--amber)' : 'var(--tile)';
-        b.style.color = on ? '#14161f' : 'var(--ink)';
+        b.classList.toggle('is-selected', b === btn);
       });
       // Once every cancelled direction has a band, this tap starts the claim.
       if (dirs.every(d => typeof chosen[d] === 'number')){
-        close();
+        sheet.close();
         onPick({ ...chosen });
       }
     });
@@ -427,49 +411,48 @@ function openDelayClaimsManager(){
   }
   entries.sort((a, b) => b.dateKey < a.dateKey ? -1 : (b.dateKey > a.dateKey ? 1 : 0));
 
-  const rowsHtml = entries.length ? entries.map(e => {
+  // Stage 7 (2026-11-13): a full-screen page; each claim is a row in one
+  // card — details on the left, its state (Confirmed tick, Declined or
+  // Expired, plus Undo) on the right. Same classes and handlers.
+  const rowsHtml = entries.length ? `<div class="ui-card ui-card-flush">${entries.map(e => {
     // 2026-09-30: declined and never-claimed-then-expired entries have no
     // Avanti reference to record, so no input for them.
     const isDeclined = e.claim.status === 'declined';
     const noRefField = isDeclined || !!e.claim.unclaimed;
+    const lateText = e.claim.minutesLate === null || e.claim.minutesLate === undefined
+      ? `Cancelled${typeof e.claim.bandMinutes === 'number' ? ` (${delayRepayBandLabel(e.claim.bandMinutes)})` : ''}`
+      : `${e.claim.minutesLate} min late`;
+    let dueHtml = '';
+    if (e.claim.status === 'started' && e.claim.claimRef && e.claim.submittedAt){
+      const dueKey = fmtKey(addDays(parseKey(e.claim.submittedAt), DELAY_REPAY_RESPONSE_DAYS));
+      const overdue = fmtKey(new Date()) >= dueKey;
+      dueHtml = `<div class="claim-due ${overdue ? 'ui-bad' : 'ui-amber'}">Claimed ${dateLabelShort(parseKey(e.claim.submittedAt))} · reply due ${dateLabelShort(parseKey(dueKey))}${overdue ? ' — chase Avanti' : ''}</div>`;
+    }
+    const undo = `<span class="ui-link ui-link-dim claim-undo-link" role="button" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}">Undo</span>`;
+    const side = e.claim.status === 'expired'
+      ? '<span class="ui-pill ui-pill-bad">Expired</span>'
+      : isDeclined
+        ? `<span class="ui-pill">Declined</span>${undo}`
+        : `<label class="ui-check ui-check-small${e.claim.status === 'confirmed' ? ' ui-good' : ''}"><input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" ${e.claim.status === 'confirmed' ? 'checked' : ''} /><span>Confirmed</span></label>${undo}`;
     return `
-    <div class="rail-detail-row" style="align-items:flex-start; padding:10px 0;">
-      <div style="flex:1; min-width:0;">
-        <div style="font-weight:600;">${dateLabel(parseKey(e.dateKey))}</div>
-        <div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${e.label} (${e.dir}) — ${e.claim.minutesLate === null || e.claim.minutesLate === undefined ? `Cancelled${typeof e.claim.bandMinutes === 'number' ? ` (${delayRepayBandLabel(e.claim.bandMinutes)})` : ''}` : `${e.claim.minutesLate} min late`} — £${(e.claim.amount || 0).toFixed(2)}${e.claim.unclaimed ? ' — never claimed' : ''}</div>
-        ${(e.claim.status === 'started' && e.claim.claimRef && e.claim.submittedAt) ? (() => {
-          const dueKey = fmtKey(addDays(parseKey(e.claim.submittedAt), DELAY_REPAY_RESPONSE_DAYS));
-          const overdue = fmtKey(new Date()) >= dueKey;
-          return `<div style="font-size:12px; margin-top:2px; color:${overdue ? 'var(--danger)' : 'var(--amber)'};">Claimed ${dateLabelShort(parseKey(e.claim.submittedAt))} · reply due ${dateLabelShort(parseKey(dueKey))}${overdue ? ' — chase Avanti' : ''}</div>`;
-        })() : ''}
-        ${noRefField ? '' : `<input type="text" class="claim-ref-input" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" value="${escapeHtml(e.claim.claimRef || '')}" placeholder="AWC reference" style="margin-top:6px; width:100%; max-width:220px; font-size:12px; font-family:monospace; padding:6px 8px; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:6px;" />`}
+    <div class="claim-row">
+      <div class="claim-row-main">
+        <div class="claim-row-date">${dateLabel(parseKey(e.dateKey))}</div>
+        <div class="claim-row-sub">${e.label} (${e.dir}) — ${lateText} — £${(e.claim.amount || 0).toFixed(2)}${e.claim.unclaimed ? ' — never claimed' : ''}</div>
+        ${dueHtml}
+        ${noRefField ? '' : `<input type="text" class="claim-ref-input" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" value="${escapeHtml(e.claim.claimRef || '')}" placeholder="AWC reference" aria-label="Avanti claim reference" />`}
       </div>
-      <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
-        ${e.claim.status === 'expired' ? `
-        <span style="font-size:12px; color:var(--danger); font-weight:600; white-space:nowrap;">Expired</span>
-        ` : isDeclined ? `
-        <span style="font-size:12px; color:var(--ink-dim); font-weight:600; white-space:nowrap;">Declined</span>
-        <span class="claim-undo-link" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" style="font-size:11px; color:var(--ink-dim); text-decoration:underline; cursor:pointer;">Undo</span>
-        ` : `
-        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:${e.claim.status==='confirmed' ? 'var(--good)' : 'var(--ink-dim)'}; cursor:pointer; white-space:nowrap;">
-          <input type="checkbox" class="claim-confirm-checkbox" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" ${e.claim.status==='confirmed'?'checked':''} style="width:15px; height:15px;" />
-          Confirmed
-        </label>
-        <span class="claim-undo-link" data-claim-date="${e.dateKey}" data-claim-direction="${e.dir}" style="font-size:11px; color:var(--ink-dim); text-decoration:underline; cursor:pointer;">Undo</span>
-        `}
-      </div>
-    </div>
-  `;
-  }).join('') : `<div class="sub" style="margin-top:0;">No claims started yet — tap a red delay entry on any day to begin one.</div>`;
+      <div class="claim-row-side">${side}</div>
+    </div>`;
+  }).join('')}</div>` : `<div class="ui-empty">No claims started yet — tap a red delay entry on any day to begin one.</div>`;
 
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Delay repay claims</h3>
+    ${uiPageBar('Delay repay claims', { backId: 'delay-claims-close-btn', backLabel: 'Back' })}
+    <div class="ui-page-body">
       <div class="sub">Tick a claim off once you've actually submitted and it's been accepted — not just when you've opened the link.</div>
       ${rowsHtml}
-      <div class="modal-close" id="delay-claims-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -481,7 +464,7 @@ function openDelayClaimsManager(){
       delayClaims[dateKey][dir].status = cb.checked ? 'confirmed' : 'started';
       await saveDelayClaims();
       render(); // 2026-09-30: keep the header badge in step
-      document.body.removeChild(overlay);
+      overlay.remove();
       openDelayClaimsManager();
     });
   });
@@ -495,7 +478,7 @@ function openDelayClaimsManager(){
       }
       await saveDelayClaims();
       render();
-      document.body.removeChild(overlay);
+      overlay.remove();
       openDelayClaimsManager();
     });
   });
@@ -522,10 +505,7 @@ function openDelayClaimsManager(){
       render();
     });
   });
-  document.getElementById('delay-claims-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.getElementById('delay-claims-close-btn').addEventListener('click', () => overlay.remove());
 }
 
 function openPassPhotoManager(cameFromSettings){
@@ -535,14 +515,18 @@ function openPassPhotoManager(cameFromSettings){
     ${uiPageBar('Smartcard photo', { backId: 'pass-photo-close-btn', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'smartcard-number-save-btn' })}
     <div class="ui-page-body">
       <div class="sub">Photo and smartcard number, kept together — everything needed to start a delay repay claim.</div>
-      <div id="pass-photo-preview-wrap" style="margin:14px 0; text-align:center;"></div>
-      <input type="file" accept="image/*" id="pass-photo-input" style="display:none;" />
-      <button type="button" class="ui-btn-secondary ui-btn-block" id="pass-photo-choose-btn">Choose photo</button>
-      <div id="pass-photo-remove-wrap" style="text-align:center; margin-top:10px; display:none;">
-        <span id="pass-photo-remove-link" style="font-size:12px; color:#ff8b7e; text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Remove saved photo</span>
+      <div class="ui-card">
+        <div class="pass-photo-preview" id="pass-photo-preview-wrap"></div>
+        <input type="file" accept="image/*" id="pass-photo-input" hidden />
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top" id="pass-photo-choose-btn">Choose photo</button>
+        <div class="pass-photo-remove" id="pass-photo-remove-wrap" hidden>
+          <span class="ui-link ui-bad" role="button" id="pass-photo-remove-link">Remove saved photo</span>
+        </div>
       </div>
-      <div class="sub" style="margin-top:20px; margin-bottom:4px;">Smartcard number</div>
-      <input type="text" id="smartcard-number-input" value="${escapeHtml(smartcardNumber)}" maxlength="${SMARTCARD_NUMBER_MAX_LENGTH}" placeholder="e.g. 302012345678901234" style="font-family:monospace;" />
+      <div class="ui-subhead">Smartcard number</div>
+      <div class="ui-card">
+        <input type="text" class="ui-mono" id="smartcard-number-input" value="${escapeHtml(smartcardNumber)}" maxlength="${SMARTCARD_NUMBER_MAX_LENGTH}" placeholder="e.g. 302012345678901234" aria-label="Smartcard number" />
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -551,7 +535,7 @@ function openPassPhotoManager(cameFromSettings){
   const removeWrap = document.getElementById('pass-photo-remove-wrap');
 
   async function refreshPreview(){
-    previewWrap.innerHTML = `<div class="sub" style="margin-top:0;">Loading…</div>`;
+    previewWrap.innerHTML = `<div class="ui-empty">Loading…</div>`;
     try{
       const record = await getPassPhoto();
       if (!overlay.isConnected) return;
@@ -559,17 +543,17 @@ function openPassPhotoManager(cameFromSettings){
         const url = URL.createObjectURL(record.blob);
         const uploadedDate = record.uploadedAt ? new Date(record.uploadedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '';
         previewWrap.innerHTML = `
-          <img src="${url}" style="max-width:100%; max-height:220px; border-radius:8px; border:1px solid var(--line);" />
-          <div class="sub" style="margin-top:8px;">Saved ${uploadedDate}</div>
+          <img src="${url}" alt="Saved smartcard photo" />
+          <div class="ui-field-help">Saved ${uploadedDate}</div>
         `;
-        removeWrap.style.display = 'block';
+        removeWrap.hidden = false;
       } else {
-        previewWrap.innerHTML = `<div class="sub" style="margin-top:0;">No photo saved yet.</div>`;
-        removeWrap.style.display = 'none';
+        previewWrap.innerHTML = `<div class="ui-empty">No photo saved yet.</div>`;
+        removeWrap.hidden = true;
       }
     }catch(e){
       if (!overlay.isConnected) return;
-      previewWrap.innerHTML = `<div class="sub" style="margin-top:0; color:#ff8b7e;">Couldn't load the saved photo (${escapeHtml(e.message)}).</div>`;
+      previewWrap.innerHTML = `<div class="ui-empty ui-bad">Couldn't load the saved photo (${escapeHtml(e.message)}).</div>`;
     }
   }
   refreshPreview();
@@ -580,13 +564,13 @@ function openPassPhotoManager(cameFromSettings){
   document.getElementById('pass-photo-input').addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    previewWrap.innerHTML = `<div class="sub" style="margin-top:0;">Saving…</div>`;
+    previewWrap.innerHTML = `<div class="ui-empty">Saving…</div>`;
     try{
       await savePassPhoto(file); // a File is already a Blob — stores directly, no conversion needed
       await refreshPreview();
     }catch(err){
       if (!overlay.isConnected) return;
-      previewWrap.innerHTML = `<div class="sub" style="margin-top:0; color:#ff8b7e;">Couldn't save that photo (${escapeHtml(err.message)}).</div>`;
+      previewWrap.innerHTML = `<div class="ui-empty ui-bad">Couldn't save that photo (${escapeHtml(err.message)}).</div>`;
     }
   });
   document.getElementById('pass-photo-remove-link').addEventListener('click', async () => {
@@ -597,12 +581,12 @@ function openPassPhotoManager(cameFromSettings){
     const val = document.getElementById('smartcard-number-input').value.trim();
     smartcardNumber = val.slice(0, SMARTCARD_NUMBER_MAX_LENGTH);
     await saveSmartcardNumber();
-    document.body.removeChild(overlay);
+    overlay.remove();
     if (cameFromSettings) openSettingsMenu(); else render();
   });
 
   document.getElementById('pass-photo-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
+    overlay.remove();
     if (cameFromSettings) openSettingsMenu();
   });
 }
