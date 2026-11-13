@@ -77,21 +77,21 @@ function renderPerfHistoryInto(overlay, syncing){
   const perTrainAvg = t => averageFor([t]);
   const trainChipHtml = t => `
     <div class="perf-history-train-chip">
-      <div class="chip-label">${escapeHtml(t.label)} <span style="opacity:0.6;">${escapeHtml(t.direction)}</span></div>
+      <div class="chip-label">${escapeHtml(t.label)} <span class="perf-chip-dir">${escapeHtml(t.direction)}</span></div>
       <div class="chip-value">${(() => { const a = perTrainAvg(t); return a === null ? '—' : `${a.toFixed(1)}m`; })()}</div>
     </div>`;
 
   function cellHtml(dateKey, train){
     const perf = (railPerfCache[dateKey] || {})[train.key];
     if (!perf){
-      return `<td style="color:var(--ink-dim);">–</td>`;
+      return `<td class="perf-history-cell is-empty">–</td>`;
     }
     if (perf.cancelled){
       const attrs = perf.reason ? ` data-perf-date="${dateKey}" data-perf-train="${escapeHtml(train.key)}"` : '';
       return `<td class="perf-history-cell delay-cancelled"${attrs}>Cancelled</td>`;
     }
     if (typeof perf.delayMinutes !== 'number'){
-      return `<td style="color:var(--ink-dim);">–</td>`;
+      return `<td class="perf-history-cell is-empty">–</td>`;
     }
     const mins = perf.delayMinutes;
     let cls = '';
@@ -107,7 +107,7 @@ function renderPerfHistoryInto(overlay, syncing){
   }
 
   const headerCellsHtml = orderedTrains.map(t =>
-    `<th>${escapeHtml(t.label)}<br><span style="font-weight:400; opacity:0.7;">${escapeHtml(t.direction)}</span></th>`
+    `<th>${escapeHtml(t.label)}<br><span class="perf-th-dir">${escapeHtml(t.direction)}</span></th>`
   ).join('');
   const rowsHtml = dateKeys.map(dateKey => `
     <tr>
@@ -117,9 +117,9 @@ function renderPerfHistoryInto(overlay, syncing){
   `).join('');
 
   const tableHtml = (orderedTrains.length === 0)
-    ? `<div class="sub" style="padding:0 18px;">No usual trains configured yet — set them up under More → Settings first.</div>`
+    ? `<div class="ui-empty">No usual trains configured yet — set them up under More → Settings first.</div>`
     : (dateKeys.length === 0
-      ? `<div class="sub" style="padding:0 18px;">${syncing ? 'Fetching performance history…' : 'No performance data recorded yet.'}</div>`
+      ? `<div class="ui-empty">${syncing ? 'Fetching performance history…' : 'No performance data recorded yet.'}</div>`
       : `<div class="perf-history-scroll">
           <table class="perf-history-table">
             <thead><tr><th>Date</th>${headerCellsHtml}</tr></thead>
@@ -133,26 +133,19 @@ function renderPerfHistoryInto(overlay, syncing){
 
   const canLoadMore = railHistoryDaysBack < RAIL_HISTORY_MAX_DAYS_BACK;
 
-  overlay.querySelector('.modal').innerHTML = `
-    <div style="padding:20px 18px 10px; flex-shrink:0; display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
-      <div>
-        <h3>Performance history</h3>
-        <div class="sub" style="margin-bottom:0;">
-          Tap a delayed or cancelled entry to see details
-          ${syncing ? ' — backfilling more history in the background…' : ''}
-        </div>
+  // Stage 8 (2026-11-13): a full-screen page; the statistics icon sits in
+  // the bar and Close is the back arrow. Re-rendered whole each time.
+  overlay.innerHTML = `
+    ${uiPageBar('Performance history', { backId: 'perf-history-close-btn', backLabel: 'Back', actionHtml: `<button type="button" id="perf-history-stats-btn" class="ui-icon-btn" aria-label="Statistics">${PERF_STATS_ICON}</button>` })}
+    <div class="perf-page-body">
+      <div class="perf-intro">Tap a delayed or cancelled entry to see details${syncing ? ' — backfilling more history in the background…' : ''}</div>
+      ${trainChipsHtml}
+      ${tableHtml}
+      <div class="perf-history-avg-bar">
+        ${avgItemHtml('Morning', amAvg)}
+        ${avgItemHtml('Evening', pmAvg)}
       </div>
-      <div id="perf-history-stats-btn" class="perf-history-icon-btn" title="Statistics">${PERF_STATS_ICON}</div>
-    </div>
-    ${trainChipsHtml}
-    ${tableHtml}
-    <div class="perf-history-avg-bar">
-      ${avgItemHtml('Morning', amAvg)}
-      ${avgItemHtml('Evening', pmAvg)}
-    </div>
-    <div style="display:flex; gap:10px; margin:10px 18px; flex-shrink:0;">
-      ${canLoadMore ? `<div class="day-nav-btn" id="perf-history-load-more" style="flex:1; margin:0;">Load more history</div>` : ''}
-      <div class="modal-close" id="perf-history-close-btn" style="flex:1; margin:0; background:var(--board-2); border:1px solid var(--line); border-radius:10px; padding:10px; display:flex; align-items:center; justify-content:center;">Close</div>
+      ${canLoadMore ? `<div class="perf-actions"><button type="button" class="ui-btn-secondary ui-btn-block" id="perf-history-load-more">Load more history</button></div>` : ''}
     </div>
   `;
 
@@ -182,7 +175,7 @@ function renderPerfHistoryInto(overlay, syncing){
   }
 
   const closeBtn = overlay.querySelector('#perf-history-close-btn');
-  if (closeBtn) closeBtn.addEventListener('click', () => { document.body.removeChild(overlay); });
+  if (closeBtn) closeBtn.addEventListener('click', () => overlay.remove());
 }
 
 // Full performance history — every weekday within railHistoryDaysBack
@@ -203,9 +196,7 @@ function openPerformanceHistoryView(){
   ensureReasonCodes();
 
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-full';
-  overlay.style.alignItems = 'stretch';
-  overlay.innerHTML = `<div class="modal" style="display:flex; flex-direction:column; padding:0 0 calc(72px + env(safe-area-inset-bottom)) 0; border-radius:0; overflow:hidden;"></div>`;
+  overlay.className = 'ui-page perf-page';
   document.body.appendChild(overlay);
 
   renderPerfHistoryInto(overlay, true);
@@ -307,7 +298,7 @@ function openPerformanceStatsView(){
   const allTrains = amTrains.concat(pmTrains);
   const overallByWeekday = allTrains.length ? weekdayAverages(allTrains) : [];
   function weekdayRowsHtml(rows){
-    if (rows.length === 0) return `<div class="sub" style="margin:0;">Not enough data yet.</div>`;
+    if (rows.length === 0) return `<div class="ui-empty">Not enough data yet.</div>`;
     const maxAvg = Math.max(...rows.map(r => r.avg), 0.1); // guard against div-by-zero when every average is 0
     return rows.map(r => {
       // Worst-first within the expanded detail — same ordering as the
@@ -329,16 +320,15 @@ function openPerformanceStatsView(){
     }).join('');
   }
 
+  // Stage 8: a full-screen page stacked over Performance history; the back
+  // arrow reveals the history again.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-full';
-  overlay.style.alignItems = 'stretch';
+  overlay.className = 'ui-page perf-page';
   overlay.innerHTML = `
-    <div class="modal" style="display:flex; flex-direction:column; padding:0 0 calc(72px + env(safe-area-inset-bottom)) 0; border-radius:0; overflow:hidden;">
-      <div style="padding:20px 18px 10px; flex-shrink:0;">
-        <h3>Performance statistics</h3>
-        <div class="sub" style="margin-bottom:0;">Based on the history currently backfilled below.</div>
-      </div>
-      <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch;">
+    ${uiPageBar('Performance statistics', { backId: 'perf-stats-close-btn', backLabel: 'Back to history' })}
+    <div class="perf-page-body">
+      <div class="perf-intro">Based on the history currently backfilled.</div>
+      <div class="perf-stats-scroll">
         <div class="perf-stats-section">
           <h4>Worst days — morning</h4>
           ${weekdayRowsHtml(amByWeekday)}
@@ -353,7 +343,7 @@ function openPerformanceStatsView(){
         </div>
         <div class="perf-stats-section">
           <h4>Most common delay reasons</h4>
-          ${topDelayReasons.length ? topDelayReasons.map(reasonRowHtml).join('') : `<div class="sub" style="margin:0;">No delay reasons recorded yet.</div>`}
+          ${topDelayReasons.length ? topDelayReasons.map(reasonRowHtml).join('') : `<div class="ui-empty">No delay reasons recorded yet.</div>`}
         </div>
         ${topCancelReasons.length ? `
         <div class="perf-stats-section">
@@ -361,7 +351,6 @@ function openPerformanceStatsView(){
           ${topCancelReasons.map(reasonRowHtml).join('')}
         </div>` : ''}
       </div>
-      <div class="modal-close" id="perf-stats-close-btn" style="margin:10px 18px; background:var(--board-2); border:1px solid var(--line); border-radius:10px; padding:10px; flex-shrink:0;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -381,7 +370,5 @@ function openPerformanceStatsView(){
     });
   });
 
-  overlay.querySelector('#perf-stats-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
+  overlay.querySelector('#perf-stats-close-btn').addEventListener('click', () => overlay.remove());
 }

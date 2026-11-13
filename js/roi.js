@@ -156,49 +156,48 @@ function openROIDashboardView(){
 
   const money = n => `£${n.toFixed(2)}`;
 
+  // Stage 8 (2026-11-13): a full-screen page of cards. Same figures.
+  const row = (label, value, dim) => `<div class="ui-data-row"><span class="ui-data-row-main">${label}</span><span class="ui-data-row-value ${dim ? 'ui-dim' : 'ui-amber'}">${value}</span></div>`;
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-full';
-  overlay.style.alignItems = 'stretch';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal" style="display:flex; flex-direction:column; padding:0 0 calc(72px + env(safe-area-inset-bottom)) 0; border-radius:0; overflow:hidden;">
-      <div style="padding:20px 18px 10px; flex-shrink:0;">
-        <h3>ROI dashboard</h3>
-        <div class="sub" style="margin-bottom:0;">What the commute has actually cost and clawed back.</div>
+    ${uiPageBar('ROI dashboard', { backId: 'roi-dashboard-close-btn', backLabel: 'Back' })}
+    <div class="ui-page-body">
+      <div class="sub">What the commute has actually cost and clawed back.</div>
+
+      <div class="ui-subhead">Delay repay</div>
+      <div class="ui-card ui-card-flush">
+        ${row('Confirmed and paid', money(claimedConfirmed))}
+        ${row('Pending', money(claimedPending))}
+        ${row('Expired / lost', money(claimedExpired))}
       </div>
-      <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:0 18px;">
 
-        <div class="rail-col-header">Delay repay</div>
-        <div class="rail-detail-row"><span>Confirmed &amp; paid</span><span style="color:var(--amber); font-weight:600;">${money(claimedConfirmed)}</span></div>
-        <div class="rail-detail-row"><span>Pending</span><span style="color:var(--amber); font-weight:600;">${money(claimedPending)}</span></div>
-        <div class="rail-detail-row"><span>Expired / lost</span><span style="color:var(--amber); font-weight:600;">${money(claimedExpired)}</span></div>
-
-        <div class="rail-col-header">ROI vs ticket spend (rolling 12 months)</div>
-        <div class="rail-detail-row"><span>Claimed against spent</span><span style="color:var(--amber); font-weight:600;">${money(claimedConfirmedInWindow)} / ${money(ticketSpendInWindow)}</span></div>
-        <div class="rail-detail-row"><span>Recovered</span><span style="color:var(--amber); font-weight:600;">${recoveredPct === '—' ? '—' : recoveredPct + '%'}</span></div>
-        <div class="rail-detail-row"><span>Still pending</span><span style="color:var(--ink-dim); font-weight:600;">${money(claimedPendingInWindow)}</span></div>
-
-        <div class="rail-col-header">Delay repay claimed by month</div>
-        ${monthBuckets.map(b => `
-          <div class="rail-detail-row"><span>${b.label}</span><span style="color:var(--amber); font-weight:600;">${money(b.total)}</span></div>
-        `).join('')}
-
-        <div class="rail-col-header">Parking (rolling 12 months)</div>
-        <div class="rail-detail-row"><span>Total spent</span><span style="color:var(--amber); font-weight:600;">${money(parkingSpentTotal)}</span></div>
-        <div class="rail-detail-row"><span>Total saved</span><span style="color:var(--amber); font-weight:600;">${money(parkingSavedTotal)}</span></div>
-
-        <div class="rail-col-header">What if — office days (next 12 months)</div>
-        <div class="sub" style="margin:4px 0 8px;">Tap the days you're in the office. Holidays, bank holidays and planned WFH days you've already marked still apply.</div>
-        <div id="roi-whatif"></div>
-
+      <div class="ui-subhead">ROI vs ticket spend (rolling 12 months)</div>
+      <div class="ui-card ui-card-flush">
+        ${row('Claimed against spent', `${money(claimedConfirmedInWindow)} / ${money(ticketSpendInWindow)}`)}
+        ${row('Recovered', recoveredPct === '—' ? '—' : recoveredPct + '%')}
+        ${row('Still pending', money(claimedPendingInWindow), true)}
       </div>
-      <div class="modal-close" id="roi-dashboard-close-btn" style="margin:10px 18px; background:var(--board-2); border:1px solid var(--line); border-radius:10px; padding:10px; flex-shrink:0;">Close</div>
+
+      <div class="ui-subhead">Delay repay claimed by month</div>
+      <div class="ui-card ui-card-flush">
+        ${monthBuckets.map(b => row(b.label, money(b.total))).join('')}
+      </div>
+
+      <div class="ui-subhead">Parking (rolling 12 months)</div>
+      <div class="ui-card ui-card-flush">
+        ${row('Total spent', money(parkingSpentTotal))}
+        ${row('Total saved', money(parkingSavedTotal))}
+      </div>
+
+      <div class="ui-subhead">What if — office days (next 12 months)</div>
+      <div class="sub">Tap the days you're in the office. Holidays, bank holidays and planned WFH days you've already marked still apply.</div>
+      <div class="ui-card" id="roi-whatif"></div>
     </div>
   `;
   document.body.appendChild(overlay);
   renderROIWhatIf(today);
-  document.getElementById('roi-dashboard-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
+  document.getElementById('roi-dashboard-close-btn').addEventListener('click', () => overlay.remove());
 }
 
 // "What if" office-days section. Selections live in memory only for the
@@ -220,20 +219,20 @@ function renderROIWhatIf(today){
   const nowCost = nowR.tickets * price;
   const altCost = altR.tickets * price;
   const diff = nowCost - altCost;
-  const chips = (set, row) => ROI_WHATIF_DAY_LABELS.map(([n, lbl]) => {
-    const on = set.has(n);
-    return `<span data-whatif-row="${row}" data-whatif-day="${n}" style="display:inline-block; cursor:pointer; padding:5px 9px; margin:0 4px 4px 0; border-radius:8px; font-size:12px; border:1px solid ${on ? 'var(--amber)' : 'var(--line)'}; color:${on ? 'var(--amber)' : 'var(--ink-dim)'}; background:var(--board-2);">${lbl}</span>`;
-  }).join('');
+  const chips = (set, row) => `<div class="ui-chips">${ROI_WHATIF_DAY_LABELS.map(([n, lbl]) =>
+    `<button type="button" class="ui-chip${set.has(n) ? ' is-selected' : ''}" data-whatif-row="${row}" data-whatif-day="${n}">${lbl}</button>`).join('')}</div>`;
   const summary = r => `${r.tickets} ticket${r.tickets === 1 ? '' : 's'} · ${r.travelDays} day${r.travelDays === 1 ? '' : 's'}`;
   const diffLabel = diff > 0.005 ? 'Saving' : (diff < -0.005 ? 'Extra cost' : 'Difference');
   host.innerHTML = `
-    <div class="rail-detail-row" style="align-items:flex-start;"><span>Now</span><span style="text-align:right;">${chips(roiWhatIfNow, 'now')}</span></div>
-    <div class="rail-detail-row"><span style="color:var(--ink-dim);">${summary(nowR)}</span><span style="color:var(--amber); font-weight:600;">${money(nowCost)}</span></div>
-    <div class="rail-detail-row" style="align-items:flex-start;"><span>What if</span><span style="text-align:right;">${chips(roiWhatIfAlt, 'alt')}</span></div>
-    <div class="rail-detail-row"><span style="color:var(--ink-dim);">${summary(altR)}</span><span style="color:var(--amber); font-weight:600;">${money(altCost)}</span></div>
-    <div class="rail-detail-row"><span>${diffLabel}</span><span style="color:var(--amber); font-weight:600;">${money(Math.abs(diff))} / yr · ${money(Math.abs(diff) / 12)} / mo</span></div>
-    ${(nowR.unusedDays || altR.unusedDays) ? `<div class="sub" style="margin:4px 0 0;">Days lost to expiry: ${nowR.unusedDays} now, ${altR.unusedDays} what-if.</div>` : ''}
-    <div class="sub" style="margin:4px 0 0;">At £${price.toFixed(2)} per Flexi 8. Ticket cost only — parking isn't counted, since it's only spent on days you actually drive.</div>
+    <div class="ui-field-label">Now</div>
+    <div class="ui-gap-top-sm">${chips(roiWhatIfNow, 'now')}</div>
+    <div class="ui-data-row"><span class="ui-data-row-main ui-dim">${summary(nowR)}</span><span class="ui-data-row-value ui-amber">${money(nowCost)}</span></div>
+    <div class="ui-field-label ui-gap-top">What if</div>
+    <div class="ui-gap-top-sm">${chips(roiWhatIfAlt, 'alt')}</div>
+    <div class="ui-data-row"><span class="ui-data-row-main ui-dim">${summary(altR)}</span><span class="ui-data-row-value ui-amber">${money(altCost)}</span></div>
+    <div class="ui-data-row roi-diff"><span class="ui-data-row-main">${diffLabel}</span><span class="ui-data-row-value ui-amber">${money(Math.abs(diff))} / yr · ${money(Math.abs(diff) / 12)} / mo</span></div>
+    ${(nowR.unusedDays || altR.unusedDays) ? `<div class="ui-field-help">Days lost to expiry: ${nowR.unusedDays} now, ${altR.unusedDays} what-if.</div>` : ''}
+    <div class="ui-field-help ui-gap-top-sm">At £${price.toFixed(2)} per Flexi 8. Ticket cost only — parking isn't counted, since it's only spent on days you actually drive.</div>
   `;
   host.querySelectorAll('[data-whatif-day]').forEach(el => {
     el.addEventListener('click', () => {

@@ -388,7 +388,7 @@ function openTrainProgress(train, service){
       : null;
     lastStaffRawJson = rawSource ? JSON.stringify(rawSource.match, null, 2) : null;
     const copyHtml = rawSource
-      ? `<div style="margin-top:6px;"><span id="train-progress-staff-copy" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Copy raw JSON</span></div>`
+      ? `<div class="tp-gap-sm"><span class="tp-text-link" role="button" id="train-progress-staff-copy">Copy raw JSON</span></div>`
       : '';
     el.innerHTML = `staff (LDBSVWS) comparison:<br>${lines.join('<br>')}${copyHtml}`;
     el.style.display = '';
@@ -606,30 +606,31 @@ function openTrainProgress(train, service){
     saveTrackedTrains();
   }
 
+  // Facelift stage 8 (2026-11-13): a full-screen page with a back arrow.
+  // Only the frame, header and notes changed — the scroll area, line, blob,
+  // rows and formation are built and positioned exactly as before.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-full';
+  overlay.className = 'ui-page tp-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-        <div>
-          <div class="eyebrow">Live progress</div>
-          <h3 style="margin-top:0;">${displayLabel}</h3>
-        </div>
-        ${train.toLoc ? `<span title="One of your configured trains — this shows your own route, not necessarily the train's full journey" style="color:var(--amber); font-size:22px; line-height:1; margin-top:2px;">★</span>` : ''}
+    ${uiPageBar('Live progress', { backId: 'train-progress-close-btn', backLabel: 'Back' })}
+    <div class="tp-body">
+      <div class="tp-head">
+        <div class="tp-title">${displayLabel}</div>
+        ${train.toLoc ? `<span class="tp-star" title="One of your configured trains — this shows your own route, not necessarily the train's full journey">★</span>` : ''}
       </div>
-      <div id="train-progress-reverse-pill">${service.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : ''}</div>
-      <div class="sub">An estimate based on calling-point times.${debugModeEnabled ? ` <span id="raw-debug-toggle" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Show raw data</span>` : ''}</div>
-      <div id="debug-capture-wrap" style="${debugModeEnabled ? '' : 'display:none;'} font-family:monospace; font-size:11px; color:#6a7a8a; border:1px dashed var(--line); border-radius:6px; padding:8px; margin-bottom:10px;"></div>
-      <div id="train-progress-refresh-bar-wrap" style="height:3px; background:var(--tile); border-radius:2px; overflow:hidden; margin-bottom:4px;">
-        <div id="train-progress-refresh-fill" style="height:100%; width:0%; background:var(--amber);"></div>
+      <div id="train-progress-reverse-pill">${service.isReverseFormation ? '<span class="tp-reverse">Reverse formation</span>' : ''}</div>
+      <div class="tp-note">An estimate based on calling-point times.${debugModeEnabled ? ` <span class="tp-text-link" role="button" id="raw-debug-toggle">Show raw data</span>` : ''}</div>
+      <div class="tp-debug tp-debug-box" id="debug-capture-wrap"${debugModeEnabled ? '' : ' hidden'}></div>
+      <div class="tp-refresh-bar" id="train-progress-refresh-bar-wrap">
+        <div id="train-progress-refresh-fill"></div>
       </div>
-      <div id="train-progress-last-check" style="font-size:11px; color:var(--ink-dim); text-align:right; margin-bottom:10px;">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone: 'Europe/London'})}</div>
-      <div id="train-progress-board-debug" style="display:none; font-family:monospace; font-size:10px; color:#6a7a8a; text-align:right; margin-top:-6px; margin-bottom:10px;"></div>
-      <div id="train-progress-staff-debug" style="display:none; font-family:monospace; font-size:10px; color:#6a7a8a; white-space:pre-wrap; text-align:left; margin-bottom:10px; border:1px dashed var(--line); border-radius:6px; padding:6px;"></div>
-      <div id="train-progress-offline-banner" style="display:none; font-size:13px; color:#ff8b7e; background:rgba(224,90,78,0.12); border:1px solid rgba(224,90,78,0.4); border-radius:8px; padding:10px 12px; margin-bottom:10px;">Lost connection — showing estimated progress based on the last data received.</div>
-      <div id="train-progress-summary" style="font-size:13.5px; color:var(--amber); background:rgba(242,169,59,0.1); border:1px solid rgba(242,169,59,0.3); border-radius:8px; padding:10px 12px; margin-bottom:10px;">${initial.summaryHtml}</div>
-      <div id="train-progress-reason-toggle-wrap" style="margin-bottom:10px; ${initial.anyReasonSuppressed ? '' : 'display:none;'}">
-        <span id="show-all-reasons-toggle" style="font-size:12px; text-decoration:underline; color:var(--ink-dim); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
+      <div class="tp-last-check" id="train-progress-last-check">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone: 'Europe/London'})}</div>
+      <div class="tp-debug tp-board-debug" id="train-progress-board-debug" style="display:none;"></div>
+      <div class="tp-debug tp-debug-box tp-staff-debug" id="train-progress-staff-debug" style="display:none;"></div>
+      <div class="ui-notice ui-notice-bad tp-gap" id="train-progress-offline-banner" style="display:none;">Lost connection — showing estimated progress based on the last data received.</div>
+      <div class="ui-notice ui-notice-warn tp-summary tp-gap" id="train-progress-summary">${initial.summaryHtml}</div>
+      <div class="tp-gap" id="train-progress-reason-toggle-wrap"${initial.anyReasonSuppressed ? '' : ' style="display:none;"'}>
+        <span class="tp-text-link tp-dim" role="button" id="show-all-reasons-toggle">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
       </div>
       <div id="train-progress-formation-wrap">${initial.formationHtml}${initial.formationDebugHtml}</div>
       <div id="train-progress-scroll" style="flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
@@ -637,11 +638,10 @@ function openTrainProgress(train, service){
           <div id="train-progress-line" style="position:absolute; left:11px; top:0px; width:2px; height:0px; background:var(--line);"></div>
           <div id="train-progress-blob" style="position:absolute; left:6px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
           <div id="train-progress-rows">${initial.rowsHtml}</div>
-          <div id="train-progress-operator" style="font-size:12px; color:var(--ink-dim); margin-top:5px;">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
-          <div id="train-progress-formation-footnote" style="font-size:11px; color:var(--ink-dim); margin-top:2px; ${initial.formationIsEstimated ? '' : 'display:none;'}">* coach count estimated from formation length, not live per-coach data</div>
+          <div class="tp-footnote" id="train-progress-operator">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
+          <div class="tp-footnote" id="train-progress-formation-footnote"${initial.formationIsEstimated ? '' : ' style="display:none;"'}>* coach count estimated from formation length, not live per-coach data</div>
         </div>
       </div>
-      <div class="modal-close" id="train-progress-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -777,7 +777,7 @@ function openTrainProgress(train, service){
 
     function render(state){
       if (state === 'idle'){
-        wrap.innerHTML = `<span id="debug-capture-start" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:#8fb3c9;">Start recording (debug capture)</span>`;
+        wrap.innerHTML = `<span class="tp-text-link tp-info" role="button" id="debug-capture-start">Start recording (debug capture)</span>`;
         const startBtn = wrap.querySelector('#debug-capture-start');
         if (startBtn) startBtn.addEventListener('click', startSession);
         return;
@@ -793,10 +793,10 @@ function openTrainProgress(train, service){
       const statusWord = meta.status === 'recording' ? '● recording' : `stopped (${meta.stoppedReason || 'unknown'})`;
       wrap.innerHTML = `
         <div>${escapeHtml(statusWord)} — ${meta.snapshotCount || 0} snapshot${meta.snapshotCount === 1 ? '' : 's'}</div>
-        <div style="margin-top:4px; display:flex; gap:14px;">
-          ${meta.status === 'recording' ? `<span id="debug-capture-stop" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Stop</span>` : ''}
-          <span id="debug-capture-copy" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">Copy JSON</span>
-          <span id="debug-capture-clear" style="text-decoration:underline; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:#ff8b7e;">Clear</span>
+        <div class="tp-debug-actions">
+          ${meta.status === 'recording' ? `<span class="tp-text-link" role="button" id="debug-capture-stop">Stop</span>` : ''}
+          <span class="tp-text-link" role="button" id="debug-capture-copy">Copy JSON</span>
+          <span class="tp-text-link ui-bad" role="button" id="debug-capture-clear">Clear</span>
         </div>
       `;
       const stopBtn = wrap.querySelector('#debug-capture-stop');
@@ -995,7 +995,7 @@ function openTrainProgress(train, service){
         positionBlobAndLine(fresh.lastPassedIdx, fresh.fraction);
         renderGeneration++;
         applyWeather(fresh.weatherPoints, fresh.lastPassedIdx, fresh.fraction, renderGeneration);
-        if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? `<span style="display:inline-block; background:var(--amber); color:#14161f; font-weight:700; font-size:11px; letter-spacing:0.5px; padding:4px 10px; border-radius:20px; margin-bottom:10px;">REVERSE FORMATION</span>` : '';
+        if (pillEl) pillEl.innerHTML = freshService.isReverseFormation ? '<span class="tp-reverse">Reverse formation</span>' : '';
         if (operatorEl) operatorEl.textContent = freshService.operator ? `Operator: ${freshService.operator}` : '';
         if (formationFootnoteEl) formationFootnoteEl.style.display = fresh.formationIsEstimated ? '' : 'none';
         if (lastCheckEl) lastCheckEl.textContent = `Updated ${stamp()}`;
@@ -1229,5 +1229,4 @@ function openTrainProgress(train, service){
   function forceClose(){ closeAndStopRefresh(true); }
   activeTrainProgressCleanup = forceClose;
   overlay.querySelector('#train-progress-close-btn').addEventListener('click', () => closeAndStopRefresh(false));
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAndStopRefresh(false); });
 }

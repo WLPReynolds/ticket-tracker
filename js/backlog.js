@@ -7,7 +7,7 @@
 // alongside the version bump and syntax checks, the same way those
 // already happen without being asked each time.
 const BACKLOG_MD = `
-*Last updated: v2026-11-13.18:21*
+*Last updated: v2026-11-13.18:29*
 
 1. **Cancelled-train edge case** — delay repay when a configured train is cancelled outright and a different one is caught instead.
 2. **Silent boarding-confirmation can miss entirely on a worsening delay** — two candidate mechanisms (a "moving target" race between the 2-minute check interval and a delay that keeps growing, or the service dropping off the departure board once sufficiently past its estimate) — needs a live-observed reproduction to tell which. Note: the arrival-side fallback built for exactly this kind of gap has since been confirmed working twice on real, live-delayed trains — so a live occurrence of the original bug now has a safety net either way, even though the underlying detection issue itself is still unfixed and this item still stands on its own.
@@ -20,20 +20,20 @@ const BACKLOG_MD = `
 9. **Blob position: use Staff's junction/pass-points for smoother in-transit interpolation, not just the AT PLATFORM correction already built** — currently the blob's fraction between two calling points is one flat straight line, timed off just those two points' own liveDates; the Staff response already contains every junction/pass-point in between (e.g. WIGASJN, SPRBJN, GOLBRNJ — often only 1–3 minutes apart on the WCML) with their own etd/atd, which could place the blob far more precisely mid-gap. No new polling needed for this — the origin-anchored fetch already returns every pass-point on every regular refresh (60s normally, 20s on the final leg toward your own stop; see \`computeNextRefreshDelay\`), so whichever pass-points the most recent poll happened to confirm can just be used as they arrive, same permissive pattern as everything else — there's no discrete "did it pass yet" gate to design. The actual work: \`buildStaffPlatformOverrides\`/\`buildStaffLiveStatusOverrides\` both explicitly skip anything without a \`crs\` (i.e. every junction/pass-point, by design — correct for platforms and the AT PLATFORM badge, since those aren't real stations), so none of this timing is captured anywhere yet. Needs (a) a separate extraction keeping pass-points between two calling points, keyed by \`tiploc\`/array position rather than \`crs\` since they have none, and (b) interpolation logic that picks the fraction against whichever pass-point is most relevant to "now" within a gap, rather than the current flat line across the whole thing. Deliberately scoped as its own future piece, separate from the AT PLATFORM/overrun pin already shipped (2026-08-26) — that fix only stops the blob claiming progress that didn't happen while genuinely stationary; this would additionally sharpen it while genuinely moving.
 10. **Buying a ticket that starts tomorrow skips next-buy notification/calendar sync until the next day** — the next-buy calculation, 10-second debounce timer, local notification, and Google Calendar sync all live inside \`render()\`'s \`if (!beforePeriod)\` block, gated on \`todayState\` existing for today's date key. When a season ticket is logged with a start date of tomorrow, \`periodStart > today\`, so \`beforePeriod\` is \`true\` tonight and the entire block is skipped — no next-buy date is even computed, let alone notified/synced. It self-corrects the following day once \`periodStart\` matches \`today\` and the app is opened (triggering \`render()\` again), but there's currently no immediate feedback on the purchase night itself. Possible fix: after saving a new season ticket in the Buy screen, independently compute the next-buy date for the *new* period and schedule/sync then, rather than relying on tomorrow's \`render()\` to pick it up.
 11. **Catch-up banner doesn't persist across a reload** — deliberate for now (session-only, see checkPendingConfirmation's 2026-09-25 doc comment): dismissing loses the notice but not the underlying confirmedTrains write, and it never resurrects an already-applied entry. Worth a persisted/acknowledged version if a catch-up notice ever needs to survive an accidental dismiss or an app restart before being seen.
-12. **Facelift: remaining screens** — stages 1–7 are in (shared parts, Settings, Home, form and sheet parts, Live, Buy and money, Delay repay). Next: reports (8) — train progress, performance, ROI, Help and Backlog. Spec: \`claude/facelift-rollout-spec.md\` in the Project.
+12. **Facelift: done** (stages 1–8, 2026-11-11 to 2026-11-13) — every screen is on the shared parts in \`STYLEGUIDE.md\`. Possible follow-ups: move the train-progress row/blob markup onto classes (deliberately left as inline geometry), and match the Wear OS app's colours to the style guide. Spec: \`claude/facelift-rollout-spec.md\` in the Project.
 `;
 
 function openBacklogView(){
+  // Facelift stage 8 (2026-11-13): a full-screen page with a back arrow.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-nav-safe';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Backlog</h3>
+    ${uiPageBar('Backlog', { backId: 'backlog-close-btn', backLabel: 'Back' })}
+    <div class="ui-page-body">
       <div class="help-content">${renderHelpMarkdown(BACKLOG_MD)}</div>
-      <div class="modal-close" id="backlog-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
-  document.getElementById('backlog-close-btn').addEventListener('click', () => { if (overlay.isConnected) document.body.removeChild(overlay); });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.getElementById('backlog-close-btn').addEventListener('click', () => overlay.remove());
 }
+

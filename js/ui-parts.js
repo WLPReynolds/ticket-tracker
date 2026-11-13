@@ -10,9 +10,10 @@ const UI_ICON_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 // opts: { backId, backLabel, saveId, saveLabel }. Put the result at the top of an
 // element with class "ui-page", then the content in a .ui-page-body (form pages)
 // or .ui-page-list (grouped lists).
+// opts.actionHtml: something else for the right of the bar (an icon button) when there's no Save.
 function uiPageBar(title, opts){
   const o = opts || {};
-  const save = o.saveId ? `<button type="button" class="ui-btn-primary ui-page-save" id="${o.saveId}">${o.saveLabel || 'Save'}</button>` : '';
+  const save = o.saveId ? `<button type="button" class="ui-btn-primary ui-page-save" id="${o.saveId}">${o.saveLabel || 'Save'}</button>` : (o.actionHtml || '');
   return `<div class="ui-page-bar"><button type="button" class="ui-page-back" id="${o.backId}" aria-label="${escapeHtml(o.backLabel || 'Back')}">${UI_ICON_BACK}</button><div class="ui-page-title">${escapeHtml(title)}</div>${save}</div>`;
 }
 

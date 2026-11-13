@@ -327,16 +327,16 @@ function buildHelpGuideMd(){
 }
 
 function openHelpGuide(){
+  // Facelift stage 8 (2026-11-13): a full-screen page with a back arrow.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-nav-safe';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Help</h3>
+    ${uiPageBar('Help', { backId: 'help-close-btn', backLabel: 'Back' })}
+    <div class="ui-page-body">
       <div class="help-content">${renderHelpMarkdown(buildHelpGuideMd())}</div>
-      <div class="modal-close" id="help-close-btn" style="margin-top:16px;">Close</div>
     </div>
   `;
   document.body.appendChild(overlay);
-  document.getElementById('help-close-btn').addEventListener('click', () => { if (overlay.isConnected) document.body.removeChild(overlay); });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.getElementById('help-close-btn').addEventListener('click', () => overlay.remove());
 }
+
