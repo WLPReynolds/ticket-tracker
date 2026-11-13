@@ -72,6 +72,10 @@ All prefixed `ui-`, all in `css/design.css`.
 | Data rows | `.ui-data-row` with `.ui-data-row-main`, `.ui-data-row-sub`, `.ui-data-row-value`; `.ui-data-table` for small tables | lists of records |
 | Empty state | `.ui-empty` | "nothing here yet" |
 | Station picker | `.ui-picker` (built by `createStationPicker`) | station name or code |
+| Tab page | `.modal-overlay.ui-tabpage` > `.ui-tabpage-head` (`.ui-tabpage-title` + `.ui-segmented`) and a `.ui-page-body` | a bottom-nav tab drawn full screen with the nav still showing (Live); no back arrow, no Close — tapping another tab leaves it |
+| Disclosure card | `.ui-card.ui-card-flush.ui-disclosure` (`.is-open`) > `.ui-disclosure-head` (label, value, chevron) and `.ui-disclosure-body` | a one-line summary that opens to show more (Watch alert, Drive to station) |
+| Icon button | `button.ui-icon-btn` (`-bad`, `-good`) | a 44px target around a line icon (remove, refresh, dismiss) |
+| Train list | `.ui-card.ui-card-flush.ui-train-list` > `.ui-train-line` (time, `.ui-pill`, text, chevron; `.is-static` when not tappable) | trains listed on their own, matching Home's Your trains card |
 | Spacing helpers | `.ui-gap-top`, `.ui-gap-top-sm`, `.ui-dim` | instead of inline margins and colours |
 
 Colour exception (Wayne, 2026-11-12): in the week strip the ticket number under the date is amber, so "30" and "5" don't read as "305"; purchase days are a full amber cell with the number on a dark pill. Don't "correct" these to the amber-for-actions rule.
@@ -88,7 +92,7 @@ Line SVGs only, 2px stroke, `currentColor`, in the style of `NAV_ICONS` (`js/con
 
 ## Status
 
-Stage 1 (tokens, parts, this guide) is in. Stage 3 (Home, Month view and Money details) is in. Stage 4 (2026-11-12) added the sheet, form and list parts above, converted the Settings sub-page interiors and the day editor, and deleted the unused old Home CSS. Next: Live (stage 5), Buy and money (6), Delay repay (7), reports (8) — see `claude/facelift-rollout-spec.md`. Stage 2 (Settings) uses them: the Settings list and the frame, title bar and back button of all ten sub-pages (`js/ui-parts.js`). Older screens still carry their own inline styles and about 20 odd font sizes; they move onto the parts as they are reworked — Settings (stage 2), Home (stage 3, done), then the rest. Until a screen is converted, do not "tidy" it piecemeal; convert it whole, on its own release.
+Stage 1 (tokens, parts, this guide) is in. Stage 3 (Home, Month view and Money details) is in. Stage 4 (2026-11-12) added the sheet, form and list parts above, converted the Settings sub-page interiors and the day editor, and deleted the unused old Home CSS. Stage 5 (2026-11-13) converted the Live tab, the station board and the Emergency routes manager. Next: Buy and money (6), Delay repay (7), reports (8) — see `claude/facelift-rollout-spec.md`. Stage 2 (Settings) uses them: the Settings list and the frame, title bar and back button of all ten sub-pages (`js/ui-parts.js`). Older screens still carry their own inline styles and about 20 odd font sizes; they move onto the parts as they are reworked — Settings (stage 2), Home (stage 3, done), then the rest. Until a screen is converted, do not "tidy" it piecemeal; convert it whole, on its own release.
 
 Known leftovers, to clear when their screens are reworked: `#ff8b7e` and `#7fc9e8` still appear as literals in JS inline styles and SVG attributes (use `--salmon` / `--holiday` in new work); the old Home styles were deleted in stage 4.
 

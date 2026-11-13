@@ -55,7 +55,7 @@ From five working days out, a line on the Home tab shows the next holiday; the M
 The app connects to National Rail's Darwin live feeds via a private proxy Worker.
 
 ### Live Trains Tab ("My Trains" & "Tracked")
-1. **My Trains:** Live departures for your usual morning (Crewe → Wigan) and evening (Wigan → Crewe) trains — times, platforms, delays and cancellations. Tap a row for its full live journey.
+1. **My Trains:** Live departures for your usual morning (Crewe → Wigan) and evening (Wigan → Crewe) trains — times, platforms, delays and cancellations, shown the same way as Home's Your trains card. Tap a row for its full live journey. To refresh, tap **Live** in the bar at the bottom.
 2. **Tracked Trains:** Follow up to **{{TRACKED_MAX}}** specific services. Tap **Track a train** to search any UK station by name or 3-letter code (e.g. \`CRE\`, \`WGN\`, \`EUS\`). A tracked train stays in the list for up to {{TRACKED_HOURS}} hours.
 
 ### Real-Time Journey Progress
@@ -114,7 +114,7 @@ Just before you leave for the station, your watch checks live traffic on your dr
 * **Locations:** paste "lat, lng" for home, the station car park, and each route's via points. On a computer, right-click the spot in Google Maps and click the numbers at the top of the menu. Your home location stays on this device and the Worker only — it isn't included in backups, so after restoring onto a new device, enter it again.
 * **Save & test now** runs a check straight away (any day, any time) and shows every route's time — use it to make sure each route's via points pick the roads you meant.
 * **On demand:** the **Drive to station** row on the Live tab's My Trains view checks traffic whenever you tap it — any day, any time. The watch has the same thing as a **Drive to station** button. A check from the last few minutes is reused rather than asked for again.
-* **Morning banner:** open the Live tab between 07:30 and 07:45 on a travel day and the check runs by itself, with the result as a banner at the top. Tap **×** to dismiss it for the rest of that morning.
+* **Morning banner:** open the Live tab between 07:30 and 07:45 on a travel day and the check runs by itself, with the result as a banner at the top. Tap the close icon to dismiss it for the rest of that morning.
 
 ### Watch Alert Panel
 On the Live tab, **Watch alert** is a one-line summary of which trains the watch will report on (amber means you've changed it from the default). Tap it to open the full controls — Today/Tomorrow and a train per direction — and tap again to fold it away. It stays however you left it.

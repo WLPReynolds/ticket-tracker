@@ -50,7 +50,7 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 14. `home-sections.js` — Home's building blocks (declarations only): the day strip and day panel (`homeDayInfo`, `homeBuildStrip`, `homeBuildDayPanel`), holiday line and countdown card, Your trains card (`homeJourney` picks the trains, `homeHasDeparted`, `homeTrainsInnerHtml`, `homeEnsureBoards`), money row and `openMoneyDetails`.
 15. `screen-home.js` — `render()`: the Home tab and bottom nav, assembled from the `home-sections.js` parts.
 15a. `screen-calendar.js` — `openDayEditor`, `openCalendarView` (the Month page).
-16. `screen-live.js` — `openLiveScreen`: the Live tab.
+16. `screen-live.js` — `openLiveScreen`: the Live tab, drawn as a tab page (`.ui-tabpage`, nav still showing; stage 5).
 17. `train-status.js` — `describePointStatus`, Staff overrides and time columns, journey-state notifications, formation display.
 18. `train-progress-build.js` — `buildTrainProgress`.
 19. `train-progress.js` — `openTrainProgress`, weather.

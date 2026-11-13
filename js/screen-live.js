@@ -42,23 +42,21 @@ function openLiveScreen(initialSubTab){
 
   const REMOVE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
+  // Facelift stage 5 (2026-11-13): a tab page — full screen with the bottom
+  // nav still showing, no Close link (tap another tab to leave). Keeps the
+  // modal-overlay class so closeAllModals() clears it like before.
   const overlay = document.createElement('div');
-  // nav-safe: without this, the Close button can end up hidden behind
-  // the bottom nav bar — this screen replaces the old Live board, which
-  // was missing this class (Tracked Trains and the debug search both
-  // already had it, which is why only Live was affected).
-  overlay.className = 'modal-overlay modal-overlay-nav-safe';
+  overlay.className = 'modal-overlay ui-tabpage';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Live trains</h3>
-      <div style="display:flex; gap:8px; margin-bottom:14px;">
-        <button class="save-btn" id="live-subtab-yours" style="flex:1; margin:0;">My trains</button>
-        <button class="save-btn" id="live-subtab-tracked" style="flex:1; margin:0;">Tracked</button>
-        ${emergencyTabVisible ? '<button class="save-btn" id="live-subtab-emergency" style="flex:1; margin:0;">Emergency</button>' : ''}
+    <div class="ui-tabpage-head">
+      <div class="ui-tabpage-title">Live trains</div>
+      <div class="ui-segmented" role="tablist">
+        <button type="button" id="live-subtab-yours">My trains</button>
+        <button type="button" id="live-subtab-tracked">Tracked</button>
+        ${emergencyTabVisible ? '<button type="button" id="live-subtab-emergency">Emergency</button>' : ''}
       </div>
-      <div id="live-screen-body"></div>
-      <div class="modal-close" id="live-screen-close-btn" style="margin-top:16px;">Close</div>
     </div>
+    <div class="ui-page-body" id="live-screen-body"></div>
   `;
   document.body.appendChild(overlay);
 
@@ -78,32 +76,31 @@ function openLiveScreen(initialSubTab){
   let emergencyRoutesChecked = null;
 
   function styleTabs(){
-    tabYoursBtn.style.background = activeSubTab === 'yours' ? 'var(--amber)' : 'var(--tile)';
-    tabYoursBtn.style.color = activeSubTab === 'yours' ? '#14161f' : 'var(--ink-dim)';
-    tabTrackedBtn.style.background = activeSubTab === 'tracked' ? 'var(--amber)' : 'var(--tile)';
-    tabTrackedBtn.style.color = activeSubTab === 'tracked' ? '#14161f' : 'var(--ink-dim)';
+    tabYoursBtn.classList.toggle('is-selected', activeSubTab === 'yours');
+    tabTrackedBtn.classList.toggle('is-selected', activeSubTab === 'tracked');
     tabTrackedBtn.textContent = trackedTrains.length ? `Tracked (${trackedTrains.length})` : 'Tracked';
-    if (tabEmergencyBtn){
-      tabEmergencyBtn.style.background = activeSubTab === 'emergency' ? 'var(--amber)' : 'var(--tile)';
-      tabEmergencyBtn.style.color = activeSubTab === 'emergency' ? '#14161f' : 'var(--ink-dim)';
-    }
+    if (tabEmergencyBtn) tabEmergencyBtn.classList.toggle('is-selected', activeSubTab === 'emergency');
   }
 
   // ---- "My trains" tab (your configured AM/PM services) ----
   function timeToHHMM(t){ return t.slice(0,2) + ':' + t.slice(2,4); }
 
+  // One train as a line, using Home's Your trains parts (stage 5) so a
+  // train looks the same in both places: time, status pill, platform.
   function rowForConfigured(train, service){
     if (!service){
-      return `<div class="rail-detail-row"><span>${train.label}</span><span style="color:var(--ink-dim);">No live data right now</span></div>`;
+      return `<div class="ui-train-line is-static"><span class="ui-train-line-time">${train.label}</span><span class="ui-pill">No live data</span><span class="ui-train-line-text"></span></div>`;
     }
     if (service.isCancelled){
-      return `<div class="rail-detail-row"><span style="color:#ff8b7e; font-weight:600;">${train.label}</span><span style="color:#ff8b7e;">Cancelled${service.cancelReason ? ' — ' + service.cancelReason.replace(/^This service has been cancelled /,'') : ''}</span></div>`;
+      const why = service.cancelReason ? service.cancelReason.replace(/^This service has been cancelled /,'') : '';
+      return `<div class="ui-train-line is-static"><span class="ui-train-line-time">${train.label}</span><span class="ui-pill ui-pill-bad">Cancelled</span><span class="ui-train-line-text">${escapeHtml(why)}</span></div>`;
     }
     const onTime = !service.etd || service.etd === 'On time';
-    const color = onTime ? 'var(--good)' : '#ff8b7e';
-    const statusText = onTime ? 'On time' : `Now ${service.etd}`;
-    const platformText = service.platform ? ` · Plat ${service.platform}` : '';
-    return `<div class="rail-detail-row" data-train-key="${train.key}" style="cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;"><span style="color:${color}; font-weight:600;">${train.label}</span><span style="color:${color};">${statusText}${platformText} ›</span></div>`;
+    const pill = onTime ? '<span class="ui-pill ui-pill-good">On time</span>'
+      : service.etd === 'Delayed' ? '<span class="ui-pill ui-pill-warn">Delayed</span>'
+      : `<span class="ui-pill ui-pill-warn">Now ${escapeHtml(service.etd)}</span>`;
+    const platformText = service.platform ? `Platform ${escapeHtml(String(service.platform))}` : '';
+    return `<div class="ui-train-line" data-train-key="${train.key}"><span class="ui-train-line-time">${train.label}</span>${pill}<span class="ui-train-line-text">${platformText}</span><span class="ui-train-chev">${UI_ICON_CHEV}</span></div>`;
   }
 
   // ---- "Watch alert target" strip (2026-09-18, target-train-alert-spec.md) ----
@@ -142,7 +139,7 @@ function openLiveScreen(initialSubTab){
       }
       const opts = `<option value="">${defTrain ? `Default (${defTrain.label})` : 'Default (no alert)'}</option>` +
         trains.map(t => `<option value="${t.key}" ${ovKey === t.key ? 'selected' : ''}>${t.label}</option>`).join('');
-      return `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;"><span style="width:62px; font-size:13px; color:var(--ink-dim);">${label}</span><select data-target-dir="${dir}" style="flex:1;">${opts}</select></div>`;
+      return `<div class="live-target-row"><span>${label}</span><select data-target-dir="${dir}" aria-label="${label} watch alert train">${opts}</select></div>`;
     }
     const rows = rowHtml('AM', 'Morning') + rowHtml('PM', 'Evening');
 
@@ -153,27 +150,30 @@ function openLiveScreen(initialSubTab){
       const ovKey = overrides[dir] || '';
       const eff = trains.find(t => t.key === (ovKey || defaultTargetTrains[dir]));
       if (!eff) return null;
-      return ovKey ? `<span style="color:var(--amber);">${escapeHtml(eff.label)}</span>` : escapeHtml(eff.label);
+      return ovKey ? `<span class="ui-amber">${escapeHtml(eff.label)}</span>` : escapeHtml(eff.label);
     }).filter(Boolean);
     const summary = noCommute ? `${escapeHtml(noCommute)} · no alerts` : (summaryParts.join(' · ') || 'none set');
     const dayWord = targetStripDay === 'today' ? 'Today' : 'Tomorrow';
 
     el.innerHTML = `
-      <div style="padding:${targetStripOpen ? '12px' : '10px 12px'}; background:var(--tile); border:1px solid var(--line); border-radius:10px; margin-bottom:${targetStripOpen ? '14px' : '8px'};">
-        <div data-target-toggle style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;${targetStripOpen ? ' margin-bottom:8px;' : ''}">
-          <span style="font-weight:600; font-size:14px;">Watch alert</span>
-          <span style="font-size:13px; color:var(--ink-dim);">${dayWord}: ${summary} ${targetStripOpen ? '▾' : '▸'}</span>
+      <div class="ui-card ui-card-flush ui-disclosure${targetStripOpen ? ' is-open' : ''}">
+        <div class="ui-disclosure-head" data-target-toggle role="button" aria-expanded="${targetStripOpen}">
+          <span class="ui-disclosure-label">Watch alert</span>
+          <span class="ui-disclosure-value">${dayWord}: ${summary}</span>
+          <span class="ui-disclosure-chev">${UI_ICON_CHEV}</span>
         </div>
         ${targetStripOpen ? `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <span style="font-size:12px; color:var(--ink-dim);">${dateLabel(parseKey(dateKey))}</span>
-          <span style="display:flex; gap:6px;">
-            <span class="chip ${targetStripDay === 'today' ? 'active' : ''}" data-target-day="today" style="padding:5px 11px;">Today</span>
-            <span class="chip ${targetStripDay === 'tomorrow' ? 'active' : ''}" data-target-day="tomorrow" style="padding:5px 11px;">Tomorrow</span>
-          </span>
-        </div>
-        <div style="margin-top:8px;">${rows || '<div class="sub">No trains configured.</div>'}</div>
-        ${notes.map(n => `<div style="font-size:12px; color:var(--ink-dim); margin-top:2px;">${n}</div>`).join('')}` : ''}
+        <div class="ui-disclosure-body">
+          <div class="live-target-date">
+            <span>${dateLabel(parseKey(dateKey))}</span>
+            <div class="ui-segmented">
+              <button type="button" class="${targetStripDay === 'today' ? 'is-selected' : ''}" data-target-day="today">Today</button>
+              <button type="button" class="${targetStripDay === 'tomorrow' ? 'is-selected' : ''}" data-target-day="tomorrow">Tomorrow</button>
+            </div>
+          </div>
+          ${rows || '<div class="ui-empty">No trains configured.</div>'}
+          ${notes.map(n => `<div class="live-note">${n}</div>`).join('')}
+        </div>` : ''}
       </div>`;
 
     el.querySelector('[data-target-toggle]').addEventListener('click', () => {
@@ -213,23 +213,24 @@ function openLiveScreen(initialSubTab){
     if (!el || !overlay.isConnected) return;
     const d = lastDriveCheck && lastDriveCheck.data;
     let right;
-    if (!buildDriveCheckPayload()) right = 'Set up ›';
+    if (!buildDriveCheckPayload()) right = 'Set up';
     else if (driveLoading) right = 'Checking…';
-    else if (driveError) right = `<span style="color:var(--danger);">Couldn't check</span> ›`;
+    else if (driveError) right = `<span class="ui-bad">Couldn't check</span>`;
     else if (d && (d.status === 'alert' || d.status === 'clear')) {
-      const col = d.status === 'alert' ? 'var(--amber)' : 'var(--good)';
-      right = `<span style="color:${col};">${escapeHtml(d.title || '')}</span> ${driveRowOpen ? '▾' : '▸'}`;
-    } else right = 'Check ›';
+      right = `<span class="${d.status === 'alert' ? 'ui-amber' : 'ui-good'}">${escapeHtml(d.title || '')}</span>`;
+    } else right = 'Check';
+    const open = driveRowOpen && !driveLoading && (d || driveError);
     el.innerHTML = `
-      <div style="padding:10px 12px; background:var(--tile); border:1px solid var(--line); border-radius:10px; margin-bottom:14px;">
-        <div data-drive-toggle style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-          <span style="font-weight:600; font-size:14px;">Drive to station</span>
-          <span style="font-size:13px; color:var(--ink-dim);">${right}</span>
+      <div class="ui-card ui-card-flush ui-disclosure${open ? ' is-open' : ''}">
+        <div class="ui-disclosure-head" data-drive-toggle role="button">
+          <span class="ui-disclosure-label">Drive to station</span>
+          <span class="ui-disclosure-value">${right}</span>
+          <span class="ui-disclosure-chev">${UI_ICON_CHEV}</span>
         </div>
         ${driveRowOpen && d && !driveLoading ? `
-        <div style="margin-top:10px;">${renderDriveCheckResult(d, { hidePinHint: true })}</div>
-        <div class="settings-link" data-drive-recheck style="margin-top:8px;">Check again</div>` : ''}
-        ${driveRowOpen && driveError && !driveLoading ? `<div style="font-size:12px; color:var(--ink-dim); margin-top:8px;">${escapeHtml(driveError)}</div>` : ''}
+        <div class="ui-disclosure-body">${renderDriveCheckResult(d, { hidePinHint: true })}
+          <span class="ui-link" role="button" data-drive-recheck>Check again</span></div>` : ''}
+        ${driveRowOpen && driveError && !driveLoading ? `<div class="ui-disclosure-body"><div class="live-note">${escapeHtml(driveError)}</div></div>` : ''}
       </div>`;
     el.querySelector('[data-drive-toggle]').addEventListener('click', () => {
       if (!buildDriveCheckPayload()){ openDriveCheckEditor(false); return; }
@@ -266,13 +267,13 @@ function openLiveScreen(initialSubTab){
     if (!d || (d.status !== 'alert' && d.status !== 'clear') || driveBannerDismissedToday()){ el.innerHTML = ''; return; }
     const isAlert = d.status === 'alert';
     el.innerHTML = `
-      <div style="display:flex; gap:10px; align-items:flex-start; padding:10px 12px; margin-bottom:10px; border-radius:10px; background:var(--tile); border:1px solid ${isAlert ? 'var(--amber)' : 'var(--good)'};">
-        <div style="flex:1;">
-          <div style="font-weight:600; font-size:14px; color:${isAlert ? 'var(--amber)' : 'var(--good)'};">🚗 ${escapeHtml(d.title || '')}</div>
-          <div style="font-size:13px; margin-top:2px;">${escapeHtml(d.text || '')}</div>
-          <div style="font-size:11px; color:var(--ink-dim); margin-top:2px;">Checked ${escapeHtml(d.checkedAt || '')}</div>
+      <div class="ui-notice ${isAlert ? 'ui-notice-warn' : 'ui-notice-good'} live-drive-banner">
+        <div>
+          <div class="live-drive-banner-title ${isAlert ? 'ui-amber' : 'ui-good'}">${escapeHtml(d.title || '')}</div>
+          <div>${escapeHtml(d.text || '')}</div>
+          <div class="ui-dim">Checked ${escapeHtml(d.checkedAt || '')}</div>
         </div>
-        <span data-drive-dismiss style="font-size:20px; line-height:1; color:var(--ink-dim); cursor:pointer; padding:0 2px;" aria-label="Dismiss">×</span>
+        <button type="button" class="ui-icon-btn" data-drive-dismiss aria-label="Dismiss">${UI_ICON_CLOSE}</button>
       </div>`;
     el.querySelector('[data-drive-dismiss]').addEventListener('click', () => {
       try{ localStorage.setItem('drive-banner-dismissed', JSON.stringify(fmtKey(new Date()))); }catch(e){}
@@ -292,7 +293,7 @@ function openLiveScreen(initialSubTab){
   }
 
   function renderYoursTab(){
-    bodyEl.innerHTML = `<div id="live-drive-banner"></div><div id="live-target-strip"></div><div id="live-drive-row"></div><div class="sub" id="live-board-status">Loading…</div><div id="live-board-content"></div>`;
+    bodyEl.innerHTML = `<div id="live-drive-banner"></div><div id="live-target-strip"></div><div id="live-drive-row" class="ui-gap-top-sm"></div><div id="live-board-content"></div><div class="live-status" id="live-board-status">Loading…</div>`;
     renderTargetStrip();
     renderDriveRow();
     maybeAutoDriveCheck();
@@ -316,13 +317,13 @@ function openLiveScreen(initialSubTab){
       }
 
       const statusEl = document.getElementById('live-board-status');
-      if (statusEl) statusEl.textContent = 'Live from National Rail — tap a train for its progress, or Close and reopen to refresh.';
+      if (statusEl) statusEl.textContent = 'Live from National Rail. Tap a train for its progress; tap Live in the bar below to refresh.';
       const contentEl = document.getElementById('live-board-content');
       if (contentEl) contentEl.innerHTML = `
-        <div class="rail-col-header">Morning</div>
-        ${amTrains.length ? sectionHtml(amTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
-        <div class="rail-col-header">Evening</div>
-        ${pmTrains.length ? sectionHtml(pmTrains) : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
+        <div class="ui-section-head"><span class="ui-label">Morning</span></div>
+        <div class="ui-card ui-card-flush ui-train-list">${amTrains.length ? sectionHtml(amTrains) : '<div class="ui-empty">None configured</div>'}</div>
+        <div class="ui-section-head"><span class="ui-label">Evening</span></div>
+        <div class="ui-card ui-card-flush ui-train-list">${pmTrains.length ? sectionHtml(pmTrains) : '<div class="ui-empty">None configured</div>'}</div>
       `;
       document.querySelectorAll('#live-board-content [data-train-key]').forEach(row => {
         row.addEventListener('click', () => {
@@ -340,29 +341,27 @@ function openLiveScreen(initialSubTab){
   // ---- "Tracked" tab (everything tracked, plus adding a new one) ----
   function buildTrackedListHtml(){
     if (trackedTrains.length === 0){
-      return `<div class="sub">Nothing being tracked right now. Use "Track a train" above, or tap one of your usual trains — it'll keep working here even after it leaves the station.</div>`;
+      return `<div class="ui-empty">Nothing being tracked right now. Use "Track a train" above, or tap one of your usual trains — it'll keep working here even after it leaves the station.</div>`;
     }
-    return trackedTrains.map(t => {
+    return `<div class="ui-card ui-card-flush">${trackedTrains.map(t => {
       const ageMin = Math.round((Date.now() - t.addedAt) / 60000);
       const ageLabel = ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin/60)} hr ago`;
       const errorMsg = trackedErrors[t.serviceId];
       const subLine = errorMsg
-        ? `<span style="color:#ff8b7e; font-size:12px;">${escapeHtml(errorMsg)}</span>`
-        : `<span style="color:var(--ink-dim); font-size:12px;">Added ${ageLabel}</span>`;
+        ? `<div class="live-tracked-sub is-bad">${escapeHtml(errorMsg)}</div>`
+        : `<div class="live-tracked-sub">Added ${ageLabel}</div>`;
       const refreshBtn = errorMsg
-        ? `<span class="tracked-refresh-btn" data-refresh-service-id="${t.serviceId}" title="Refresh" style="display:flex; padding:9px; margin:-9px; color:var(--good); cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REFRESH_ICON}</span>`
+        ? `<button type="button" class="ui-icon-btn ui-icon-btn-good tracked-refresh-btn" data-refresh-service-id="${t.serviceId}" aria-label="Refresh">${REFRESH_ICON}</button>`
         : '';
-      return `<div class="rail-detail-row" data-tracked-row="${t.serviceId}" style="flex-direction:column; align-items:stretch; gap:2px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-weight:600;">${t.toLoc ? '<span style="color:var(--amber);">★</span> ' : ''}${t.label}</span>
-          <span style="display:flex; align-items:center; gap:28px;">
-            ${refreshBtn}
-            <span class="tracked-remove-btn" data-remove-service-id="${t.serviceId}" title="Remove" style="display:flex; padding:9px; margin:-9px; color:#ff8b7e; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REMOVE_ICON}</span>
-          </span>
+      return `<div class="live-tracked-row" data-tracked-row="${t.serviceId}">
+        <div class="live-tracked-main">
+          <div class="live-tracked-label">${t.toLoc ? '<span class="ui-amber">★</span> ' : ''}${t.label}</div>
+          ${subLine}
         </div>
-        <div>${subLine}</div>
+        ${refreshBtn}
+        <button type="button" class="ui-icon-btn ui-icon-btn-bad tracked-remove-btn" data-remove-service-id="${t.serviceId}" aria-label="Remove">${REMOVE_ICON}</button>
       </div>`;
-    }).join('');
+    }).join('')}</div>`;
   }
 
   function wireTrackedList(){
@@ -443,7 +442,7 @@ function openLiveScreen(initialSubTab){
         // choice, not lose an existing one without being told.
         const alreadyTracked = trackedTrains.some(t => t.serviceId === serviceId);
         if (!alreadyTracked && trackedTrains.length >= TRACKED_TRAIN_MAX){
-          row.innerHTML = `<span style="color:#ff8b7e; font-size:12px;">You're tracking ${TRACKED_TRAIN_MAX} already — remove one from the list below first.</span>`;
+          row.innerHTML = `<span class="live-result-msg">You're tracking ${TRACKED_TRAIN_MAX} already — remove one from the list below first.</span>`;
           return;
         }
         row.style.opacity = '0.5';
@@ -464,17 +463,15 @@ function openLiveScreen(initialSubTab){
           // reason to hide what was already shown. Any message from an
           // earlier failed attempt on this same row is cleared first, so
           // repeated taps don't stack multiple lines underneath.
-          const existingMsg = row.querySelector('.rail-detail-row-msg');
+          const existingMsg = row.querySelector('.live-result-msg');
           if (existingMsg) existingMsg.remove();
           const msgEl = document.createElement('div');
-          msgEl.className = 'rail-detail-row-msg';
-          msgEl.style.cssText = 'grid-column:1 / -1; margin-top:4px; font-size:12px;';
+          msgEl.className = 'live-result-msg';
           const minsAway = schedTime ? minutesUntilLocalTime(schedTime) : null;
           if (minsAway !== null && minsAway > LIKELY_NOT_YET_ACTIVATED_MIN_AWAY){
-            msgEl.style.color = 'var(--ink-dim)';
+            msgEl.classList.add('is-dim');
             msgEl.textContent = `Not showing live details yet — booked for ${schedTime}, try again closer to departure.`;
           } else {
-            msgEl.style.color = '#ff8b7e';
             msgEl.textContent = `Couldn't load that one (${e.message}) — tap to try again`;
           }
           row.appendChild(msgEl);
@@ -485,14 +482,17 @@ function openLiveScreen(initialSubTab){
 
   function renderTrackedTab(){
     bodyEl.innerHTML = `
-      ${showAddForm ? '' : `<div id="tracked-add-toggle" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:12px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">Track a train</div>`}
-      <div id="tracked-add-form" style="display:${showAddForm ? 'block' : 'none'}; margin-bottom:16px;">
-        <div id="tracked-picker-row" style="display:flex; gap:8px; margin-bottom:10px;"></div>
-        <div id="tracked-station-list-status" style="font-size:11.5px; color:var(--ink-dim); margin-bottom:10px;">Loading station list…</div>
-	<button class="save-btn" id="tracked-search-btn">Search</button>
-        <div id="tracked-add-cancel" style="text-align:center; padding:10px; border:1px dashed var(--line); border-radius:8px; margin-bottom:10px; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation; color:var(--amber); font-weight:600;">Cancel</div>
-        <div id="tracked-search-results" style="margin-top:14px;"></div>
+      ${showAddForm ? '' : `<button type="button" class="ui-btn-secondary ui-btn-block" id="tracked-add-toggle">Track a train</button>`}
+      <div class="ui-card" id="tracked-add-form"${showAddForm ? '' : ' hidden'}>
+        <div class="live-pickers" id="tracked-picker-row"></div>
+        <div class="ui-field-help ui-gap-top-sm" id="tracked-station-list-status">Loading station list…</div>
+        <div class="ui-sheet-actions">
+          <button type="button" class="ui-btn-secondary" id="tracked-add-cancel">Cancel</button>
+          <button type="button" class="ui-btn-primary" id="tracked-search-btn">Search</button>
+        </div>
+        <div id="tracked-search-results" class="ui-gap-top"></div>
       </div>
+      <div class="ui-section-head"><span class="ui-label">Tracked</span></div>
       <div id="tracked-list">${buildTrackedListHtml()}</div>
     `;
     wireTrackedList();
@@ -553,11 +553,11 @@ function openLiveScreen(initialSubTab){
       try{
         const idx = await loadStationIndex(force);
         if (!stationStatusEl.isConnected) return;
-        stationStatusEl.innerHTML = `${stationListSummary(idx)} — <span id="tracked-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Refresh</span>`;
+        stationStatusEl.innerHTML = `${stationListSummary(idx)} — <span class="live-text-link" role="button" id="tracked-station-refresh-link">Refresh</span>`;
         wireStationRefreshLink();
       }catch(e){
         if (!stationStatusEl.isConnected) return;
-        stationStatusEl.innerHTML = `Couldn't load the station list (${escapeHtml(e.message)}) — codes still work, just no name lookup yet. <span id="tracked-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Try again</span>`;
+        stationStatusEl.innerHTML = `Couldn't load the station list (${escapeHtml(e.message)}) — codes still work, just no name lookup yet. <span class="live-text-link" role="button" id="tracked-station-refresh-link">Try again</span>`;
         wireStationRefreshLink();
       }
     }
@@ -567,16 +567,16 @@ function openLiveScreen(initialSubTab){
       const fromCrs = fromPicker.getCode();
       const toCrs = toPicker.getCode();
       if (!fromCrs){
-        resultsEl.innerHTML = `<div class="sub">Pick a station to search from — type a name or a 3-letter code (e.g. EUS, BHM, GLC).</div>`;
+        resultsEl.innerHTML = `<div class="live-note">Pick a station to search from — type a name or a 3-letter code (e.g. EUS, BHM, GLC).</div>`;
         return;
       }
       if (trackedTrains.length >= TRACKED_TRAIN_MAX){
-        resultsEl.innerHTML = `<div class="sub">You're already tracking ${TRACKED_TRAIN_MAX} trains — remove one from the list below before adding another.</div>`;
+        resultsEl.innerHTML = `<div class="live-note">You're already tracking ${TRACKED_TRAIN_MAX} trains — remove one from the list below before adding another.</div>`;
         return;
       }
       const fromLabel = fromPicker.getName() || fromCrs;
       saveLastSearch(fromCrs, fromPicker.getName(), toCrs, toPicker.getName());
-      resultsEl.innerHTML = `<div class="sub">Searching…</div>`;
+      resultsEl.innerHTML = `<div class="live-note">Searching…</div>`;
       try{
         const allServices = await fetchDebugBoard(fromCrs, toCrs);
         // Drop anything already sitting in the Tracked list below — no
@@ -586,11 +586,11 @@ function openLiveScreen(initialSubTab){
         const services = allServices.filter(s => !trackedTrains.some(t => t.serviceId === s.serviceID));
         if (services.length === 0){
           resultsEl.innerHTML = allServices.length
-            ? `<div class="sub">No new services — every live result for that station is already in your Tracked list below.</div>`
-            : `<div class="sub">No live services found for that station right now.</div>`;
+            ? `<div class="live-note">No new services — every live result for that station is already in your Tracked list below.</div>`
+            : `<div class="live-note">No live services found for that station right now.</div>`;
           return;
         }
-        resultsEl.innerHTML = services.slice(0, 15).map(s => {
+        resultsEl.innerHTML = '<div class="ui-card ui-card-flush">' + services.slice(0, 15).map(s => {
           // Darwin's board here is combined arrivals+departures: a result
           // can be a service that departs FROM the searched station
           // (has std), or one that only arrives there — e.g. terminates
@@ -634,27 +634,27 @@ function openLiveScreen(initialSubTab){
           // which pure board (dep/arr) it'll actually be found on. Left
           // empty when time is '?' (no std/sta on this entry) so no
           // recovery is attempted rather than sending an invalid schedTime.
-          return `<div class="rail-detail-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(displayText)}" data-debug-from="${fromCrs}" data-debug-time="${time === '?' ? '' : escapeHtml(time)}" data-debug-departs-here="${departsHere ? '1' : '0'}" style="display:grid; grid-template-columns:44px 1fr auto; column-gap:8px; align-items:start; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">
-            <span style="color:var(--ink-dim); white-space:nowrap;">${escapeHtml(time)}</span>
+          return `<div class="live-result-row" data-debug-service-id="${s.serviceID}" data-debug-label="${escapeHtml(displayText)}" data-debug-from="${fromCrs}" data-debug-time="${time === '?' ? '' : escapeHtml(time)}" data-debug-departs-here="${departsHere ? '1' : '0'}">
+            <span>${escapeHtml(time)}</span>
             <span>${escapeHtml(descriptionText)}</span>
-            <span style="color:var(--ink-dim); text-align:right; white-space:nowrap;">${escapeHtml(statusText)} ›</span>
+            <span>${escapeHtml(statusText)}</span>
           </div>`;
-        }).join('');
+        }).join('') + '</div>';
         wireAddFormResultRows();
       }catch(e){
-        resultsEl.innerHTML = `<div class="sub" style="color:#ff8b7e;">Search failed: ${escapeHtml(e.message)}</div>`;
+        resultsEl.innerHTML = `<div class="live-note ui-bad">Search failed: ${escapeHtml(e.message)}</div>`;
       }
     });
   }
 
   // ---- "Emergency" tab (pre-defined fallback routes, checked live) ----
   function legTimeLabel(leg){
-    if (leg.error) return `<span style="color:#ff8b7e;">${escapeHtml(leg.error)}</span>`;
+    if (leg.error) return `<span class="is-bad">${escapeHtml(leg.error)}</span>`;
     if (!leg.candidate){
       const boardNote = (leg.board && leg.board.length)
         ? `${leg.board.length} service${leg.board.length === 1 ? '' : 's'} on the board, none usable`
         : 'no services found';
-      return `<span style="color:#ff8b7e;">Dead end — ${boardNote}</span>`;
+      return `<span class="is-bad">Dead end — ${boardNote}</span>`;
     }
     const c = leg.candidate;
     const timeShown = (c.etd && c.etd !== 'On time') ? `${c.std} (now ${c.etd})` : c.std;
@@ -666,46 +666,35 @@ function openLiveScreen(initialSubTab){
   }
 
   function routeCardHtml(result, ri){
-    const legsHtml = result.legs.map((leg, li) => {
-      const isLast = li === result.legs.length - 1;
-      return `
-        <div style="padding:8px 0; ${isLast ? '' : 'border-bottom:1px solid var(--line);'}">
+    const legsHtml = result.legs.map(leg => `
+        <div class="live-leg">
           <div>${escapeHtml(leg.fromName || leg.from)} → ${escapeHtml(leg.toName || leg.to)}</div>
-          <div class="sub" style="margin-top:3px;">${legTimeLabel(leg)}</div>
-        </div>`;
-    }).join('');
+          <div class="live-leg-sub">${legTimeLabel(leg)}</div>
+        </div>`).join('');
     const statusBadge = result.status === 'complete'
-      ? '<span style="color:var(--good); font-weight:600;">Full plan</span>'
-      : '<span style="color:#ff8b7e; font-weight:600;">Partial</span>';
+      ? '<span class="ui-pill ui-pill-good">Full plan</span>'
+      : '<span class="ui-pill ui-pill-bad">Partial</span>';
     // Add to Tracked only offered once a full chained plan exists — a
     // partial/dead route has nothing complete enough to hand off to the
     // tracking flow.
     const addBtn = result.status === 'complete'
-      ? `<div class="settings-link" data-add-route-idx="${ri}" style="margin-top:4px;">Add to Tracked</div>`
+      ? `<span class="ui-link" role="button" data-add-route-idx="${ri}">Add to Tracked</span>`
       : '';
-    // The overall-journey banner now lives once per GROUP (see
-    // groupHeadingHtml below), not per card — routes sharing the same
-    // origin/destination town are clustered together, so repeating it
-    // on every card in that cluster would just be noise.
+    // The overall-journey heading lives once per GROUP (groupHeadingHtml),
+    // not per card — routes sharing the same origin/destination town are
+    // clustered together, so repeating it on every card would be noise.
     return `
-      <div class="rail-detail-row" style="display:block; padding:12px; margin-bottom:10px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-          <strong>${escapeHtml(result.label || 'Untitled route')}</strong>
-          ${statusBadge}
-        </div>
+      <div class="ui-card">
+        <div class="live-route-head"><span>${escapeHtml(result.label || 'Untitled route')}</span>${statusBadge}</div>
         ${legsHtml}
         ${addBtn}
       </div>`;
   }
 
-  // Same background treatment as .holiday-card (the "working days until
-  // your next holiday" card on Home) — reused here so a group heading
-  // reads as a distinct visual band, not just another line of text.
+  // A group heading in the holiday blue, so it reads as a distinct band
+  // above the route cards that share that journey.
   function groupHeadingHtml(originName, destName){
-    return `
-      <div style="margin:0 0 10px; background:linear-gradient(135deg, #2a3b4a, #1c2a35); border:1px solid #3a5468; border-radius:14px; padding:10px 14px; font-size:12.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">
-        ${escapeHtml(originName)} to ${escapeHtml(destName)}
-      </div>`;
+    return `<div class="live-group-head">${escapeHtml(originName)} to ${escapeHtml(destName)}</div>`;
   }
 
   // Commits already-capacity-checked legs into trackedTrains, reusing
@@ -731,50 +720,38 @@ function openLiveScreen(initialSubTab){
   // least `overflow` currently-tracked trains before Confirm is enabled
   // — per the spec, this never self-prunes by just dropping the oldest.
   function openEmergencyCapacityPicker(overflow, legsToAdd){
-    const pickerOverlay = document.createElement('div');
-    pickerOverlay.className = 'modal-overlay';
+    // Stage 5: a bottom sheet (uiOpenSheet). Same rule as before: at least
+    // `overflow` tracked trains must be ticked before Confirm is enabled.
     const selected = new Set();
+    const sheet = uiOpenSheet('Make room to track this route', '<div id="emergency-drop-body"></div>');
 
     function render(){
-      const rows = trackedTrains.map((t, i) => `
-        <div class="rail-detail-row" style="display:flex; align-items:center; gap:10px;">
-          <input type="checkbox" class="emergency-drop-checkbox" data-idx="${i}" ${selected.has(i) ? 'checked' : ''} style="width:16px; height:16px;" />
-          <span>${escapeHtml(t.label)}</span>
-        </div>`).join('');
+      const body = sheet.sheet.querySelector('#emergency-drop-body');
+      if (!body) return;
       const enoughSelected = selected.size >= overflow;
-      pickerOverlay.innerHTML = `
-        <div class="modal">
-          <h3>Make room to track this route</h3>
-          <div class="sub">Adding this route needs ${legsToAdd.length} tracked train${legsToAdd.length === 1 ? '' : 's'}, but you're already at the ${TRACKED_TRAIN_MAX}-train limit. Choose at least ${overflow} to remove.</div>
-          <div id="emergency-drop-list">${rows}</div>
-          <button class="save-btn" id="emergency-drop-confirm" ${enoughSelected ? '' : 'disabled'} style="opacity:${enoughSelected ? '1' : '0.5'};">Remove selected & add route</button>
-          <div class="modal-close" id="emergency-drop-cancel">Cancel</div>
-        </div>
-      `;
-      pickerOverlay.querySelectorAll('.emergency-drop-checkbox').forEach(cb => {
+      body.innerHTML = `
+        <div class="ui-sheet-sub">Adding this route needs ${legsToAdd.length} tracked train${legsToAdd.length === 1 ? '' : 's'}, but you're already at the ${TRACKED_TRAIN_MAX}-train limit. Choose at least ${overflow} to remove.</div>
+        <div id="emergency-drop-list">${trackedTrains.map((t, i) => uiCheck(null, t.label, selected.has(i), { extra: `class="emergency-drop-checkbox" data-idx="${i}"` })).join('')}</div>
+        <div class="ui-sheet-actions"><button type="button" class="ui-btn-primary" id="emergency-drop-confirm" ${enoughSelected ? '' : 'disabled'}>Remove selected and add route</button></div>`;
+      body.querySelectorAll('.emergency-drop-checkbox').forEach(cb => {
         cb.addEventListener('change', () => {
           const idx = Number(cb.dataset.idx);
           if (cb.checked) selected.add(idx); else selected.delete(idx);
           render();
         });
       });
-      document.getElementById('emergency-drop-confirm').addEventListener('click', () => {
+      body.querySelector('#emergency-drop-confirm').addEventListener('click', () => {
         if (!enoughSelected) return;
         trackedTrains = trackedTrains.filter((t, i) => !selected.has(i));
         commitEmergencyLegsToTracked(legsToAdd);
-        pickerOverlay.remove();
+        sheet.close();
         // switchTab (not renderEmergencyTab) so the "Tracked (N)" counter
-        // on the tab button actually refreshes and the person lands on
-        // the Tracked tab to see what they just added (2026-09-16) —
-        // previously this only re-rendered Emergency, leaving both the
-        // counter stale and the newly tracked route out of sight.
+        // on the tab button refreshes and the person lands on the Tracked
+        // tab to see what they just added (2026-09-16).
         switchTab('tracked');
       });
-      document.getElementById('emergency-drop-cancel').addEventListener('click', () => pickerOverlay.remove());
-      pickerOverlay.addEventListener('click', (e) => { if (e.target === pickerOverlay) pickerOverlay.remove(); });
     }
     render();
-    document.body.appendChild(pickerOverlay);
   }
 
   function handleAddRouteToTracked(result){
@@ -963,7 +940,7 @@ function openLiveScreen(initialSubTab){
   function renderEmergencyTab(){
     if (emergencyChecking){
       const totalToCheck = alternativeRoutes.length + 2;
-      bodyEl.innerHTML = `<div class="sub" id="emergency-status">Checking ${totalToCheck} route${totalToCheck === 1 ? '' : 's'}…</div>`;
+      bodyEl.innerHTML = `<div class="ui-empty" id="emergency-status">Checking ${totalToCheck} route${totalToCheck === 1 ? '' : 's'}…</div>`;
       return;
     }
     // The direct-service check is always available (Home/Work stations
@@ -972,14 +949,14 @@ function openLiveScreen(initialSubTab){
     // there are no authored fallback routes to fall back on beyond it.
     const noRoutesNote = alternativeRoutes.length
       ? ''
-      : `<div class="sub" style="margin-bottom:12px;">No fallback routes configured yet — showing the direct service only. Add some in Settings → Emergency routes for more coverage.</div>`;
+      : `<div class="ui-notice ui-notice-info ui-gap-top">No fallback routes configured yet — showing the direct service only. Add some in Settings → Emergency routes for more coverage.</div>`;
     const groups = groupedEmergencyResults();
     const resultsHtml = groups.map(g => {
       const cardsHtml = g.members.map(({ result, originalIndex }) => routeCardHtml(result, originalIndex)).join('');
-      return `<div style="margin-bottom:16px;">${groupHeadingHtml(g.originName, g.destName)}${cardsHtml}</div>`;
+      return `<div>${groupHeadingHtml(g.originName, g.destName)}${cardsHtml}</div>`;
     }).join('');
     bodyEl.innerHTML = `
-      <button class="save-btn" id="emergency-recheck-btn" style="margin-bottom:14px;">${emergencyResults ? 'Recheck' : 'Check now'}</button>
+      <button type="button" class="ui-btn-secondary ui-btn-block" id="emergency-recheck-btn">${emergencyResults ? 'Recheck' : 'Check now'}</button>
       ${noRoutesNote}
       <div id="emergency-results">${resultsHtml}</div>
     `;
@@ -1009,8 +986,4 @@ function openLiveScreen(initialSubTab){
   styleTabs();
   switchTab(activeSubTab);
 
-  document.getElementById('live-screen-close-btn').addEventListener('click', () => {
-    if (overlay.isConnected) overlay.remove();
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay && overlay.isConnected) overlay.remove(); });
 }
