@@ -524,31 +524,9 @@
   .modal h3{ margin:0 0 4px; font-size:16px; }
   .modal .sub{ color: var(--ink-dim); font-size:13px; margin-bottom:14px; }
 
-  .modal-overlay-full{
-    align-items: stretch;
-  }
-  .modal-overlay-full .modal{
-    border-radius: 0;
-    height: 100dvh;
-    max-height: 100dvh;
-    display: flex;
-    flex-direction: column;
-    /* A generous fixed allowance for the bottom nav bar sitting on top of
-       this modal (same reasoning as the base .modal fix) — this was
-       previously only reserving 20px total, nowhere near enough, which
-       is why Close ended up trapped underneath the bar. */
-    padding-bottom: calc(72px + env(safe-area-inset-bottom));
-  }
-
-
-  /* Bottom-sheet modals sit below the app's bottom nav in the stacking
-     order. Reserve the nav's height inside the modal so its own controls
-     (especially Close) cannot end up underneath the nav. This is the same
-     safe-area principle used by the full-screen train-progress modal, but
-     without making the bottom-sheet itself full-screen. */
-  .modal-overlay-nav-safe .modal{
-    padding-bottom: calc(72px + env(safe-area-inset-bottom));
-  }
+  /* .modal-overlay-full and .modal-overlay-nav-safe were removed in facelift
+     stage 8 (2026-11-13): every full-height screen is now a .ui-page or the
+     Live .ui-tabpage. */
   .modal-close{
     text-align:center;
     margin-top: 14px;
@@ -895,7 +873,7 @@
   /* Help guide — rendered from Markdown, styled to match the rest of the
      app's dark theme rather than looking like a foreign document. */
   .help-content h2{
-    font-size: 17px;
+    font-size: var(--fs-title);
     color: var(--amber);
     margin: 22px 0 8px;
     border-bottom: 1px solid var(--line);
@@ -903,18 +881,18 @@
   }
   .help-content h2:first-child{ margin-top: 0; }
   .help-content h3{
-    font-size: 15px;
+    font-size: var(--fs-body);
     color: var(--ink);
     margin: 16px 0 6px;
   }
   .help-content h4{
-    font-size: 13.5px;
+    font-size: var(--fs-small);
     color: var(--ink);
     margin: 12px 0 4px;
     font-weight: 700;
   }
   .help-content p{
-    font-size: 14px;
+    font-size: var(--fs-body);
     color: var(--ink);
     line-height: 1.5;
     margin: 0 0 10px;
@@ -924,7 +902,7 @@
     padding-left: 20px;
   }
   .help-content li{
-    font-size: 14px;
+    font-size: var(--fs-body);
     color: var(--ink);
     line-height: 1.5;
     margin-bottom: 4px;
@@ -934,7 +912,7 @@
     background: var(--tile);
     border-radius: 4px;
     padding: 1px 5px;
-    font-size: 12.5px;
+    font-size: var(--fs-small);
     font-family: 'Courier New', monospace;
   }
   .help-content a{ color: var(--amber); }
@@ -1052,3 +1030,40 @@
   .pass-photo-preview img{ max-width: 100%; max-height: 220px; border-radius: var(--radius-sm); border: 1px solid var(--line); }
   .pass-photo-remove{ text-align: center; }
   .ui-page-body input.ui-mono:not([type=checkbox]){ font-family: 'Courier New', monospace; }
+
+  /* ---------- Train progress page (facelift stage 8, 2026-11-13) ----------
+     The page frame and header only. The scroll area, line, blob, rows and
+     formation keep their own positioning in train-progress*.js / train-status.js. */
+  .ui-page.tp-page{ overflow: hidden; }
+  .tp-body{ flex: 1; min-height: 0; display: flex; flex-direction: column; padding: var(--space-3) var(--margin) calc(var(--space-3) + env(safe-area-inset-bottom)); }
+  .tp-head{ display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-2); }
+  .tp-title{ font-size: var(--fs-title); font-weight: 700; line-height: 1.25; }
+  .tp-star{ color: var(--amber); font-size: var(--fs-title); line-height: 1; }
+  .tp-reverse{ display: inline-block; margin-top: var(--space-2); padding: 3px var(--space-2); border-radius: var(--radius-pill); background: var(--amber); color: var(--board); font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .tp-note{ font-size: var(--fs-small); color: var(--ink-dim); margin: var(--space-1) 0 var(--space-3); }
+  .tp-text-link{ text-decoration: underline; cursor: pointer; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  .tp-text-link.tp-dim{ font-size: var(--fs-small); color: var(--ink-dim); }
+  .tp-text-link.tp-info{ color: var(--holiday); }
+  .tp-debug{ font-family: monospace; font-size: 11px; color: #6a7a8a; }
+  .tp-debug-box{ border: 1px dashed var(--line); border-radius: 6px; padding: var(--space-2); margin-bottom: var(--space-2); }
+  .tp-board-debug{ text-align: right; margin: -6px 0 var(--space-2); }
+  .tp-staff-debug{ white-space: pre-wrap; text-align: left; }
+  .tp-debug-actions{ display: flex; gap: var(--space-3); margin-top: var(--space-1); }
+  .tp-refresh-bar{ height: 3px; margin-bottom: var(--space-1); border-radius: 2px; overflow: hidden; background: var(--tile); }
+  .tp-refresh-bar > div{ height: 100%; width: 0%; background: var(--amber); }
+  .tp-last-check{ font-size: var(--fs-label); color: var(--ink-dim); text-align: right; margin-bottom: var(--space-2); }
+  .tp-gap{ margin-bottom: var(--space-2); }
+  .tp-gap-sm{ margin-top: var(--space-1); }
+  .tp-summary{ font-size: var(--fs-small); color: var(--amber); }
+  .tp-footnote{ font-size: var(--fs-label); color: var(--ink-dim); margin-top: var(--space-1); }
+
+  /* ---------- Performance pages (facelift stage 8) ---------- */
+  .ui-page.perf-page{ overflow: hidden; }
+  .perf-page-body{ flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom); }
+  .perf-intro{ flex-shrink: 0; padding: var(--space-3) var(--margin); font-size: var(--fs-small); color: var(--ink-dim); }
+  .perf-actions{ flex-shrink: 0; padding: var(--space-2) var(--margin); background: var(--board-2); }
+  .perf-stats-scroll{ flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .perf-page .ui-empty{ padding: var(--space-4) var(--margin); }
+  .perf-th-dir{ font-weight: 400; opacity: 0.7; }
+  .perf-chip-dir{ opacity: 0.6; }
+  .perf-history-cell.is-empty{ color: var(--ink-dim); }

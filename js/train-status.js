@@ -208,15 +208,15 @@ function buildStaffTimeColumnsHtml(status, isCancelled){
     const shownIso = actualConfirmed ? actualIso : estIso;
     const shown = isoTimeToHHMM(shownIso);
     const diff = shown ? staffMinutesDiff(shownIso, schedIso) : null;
-    const labelHtml = `<span style="display:block; font-size:9.5px; letter-spacing:0.4px; text-transform:uppercase; color:var(--ink-dim); opacity:0.8;">${label}</span>`;
+    const labelHtml = `<span style="display:block; font-size:11px; letter-spacing:0.4px; text-transform:uppercase; color:var(--ink-dim); opacity:0.8;">${label}</span>`;
     if (!shown || diff === null){
       return `<span style="display:inline-block; min-width:42px; vertical-align:top;">${labelHtml}<span>${sched}</span></span>`;
     }
     const color = diff > 0 ? '#ff8b7e' : 'var(--good)';
     const changed = shown !== sched;
     const schedHtml = changed
-      ? `<span style="display:block; text-decoration:line-through; color:var(--ink-dim); font-size:11.5px;">${sched}</span>`
-      : `<span style="display:block; color:var(--ink-dim); font-size:11.5px;">${sched}</span>`;
+      ? `<span style="display:block; text-decoration:line-through; color:var(--ink-dim); font-size:13px;">${sched}</span>`
+      : `<span style="display:block; color:var(--ink-dim); font-size:13px;">${sched}</span>`;
     return `<span style="display:inline-block; min-width:42px; vertical-align:top;">${labelHtml}${schedHtml}<span style="color:${color}; font-weight:${actualConfirmed ? 600 : 400};${actualConfirmed ? '' : ' font-style:italic;'}">${shown}</span></span>`;
   };
   const arrCol = sta ? column('arr', status.sta, status.ata, !!status.ataSpecified, status.etaSpecified ? status.eta : null) : '';
@@ -573,7 +573,7 @@ function buildFormationHtml(service, train){
         const barColor = pct >= 70 ? '#e05a4e' : (pct >= 35 ? 'var(--amber)' : 'var(--good)');
         loadingBar = `<div style="position:absolute; left:3px; right:3px; bottom:2px; height:3px; border-radius:2px; background:rgba(255,255,255,0.15); overflow:hidden;"><div style="width:${pct}%; height:100%; background:${barColor};"></div></div>`;
       }
-      return `<div style="flex:0 0 auto; position:relative; width:36px; height:34px; margin-right:2px; background:${isFirstClass ? 'color-mix(in srgb, var(--amber) 20%, var(--tile))' : 'var(--tile)'}; border:1px solid var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${label}${loadingBar}</div>`;
+      return `<div style="flex:0 0 auto; position:relative; width:36px; height:34px; margin-right:2px; background:${isFirstClass ? 'color-mix(in srgb, var(--amber) 20%, var(--tile))' : 'var(--tile)'}; border:1px solid var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:var(--ink);">${label}${loadingBar}</div>`;
     }).join('');
     return `
       <div id="train-progress-formation" style="margin-bottom:10px;">
@@ -588,7 +588,7 @@ function buildFormationHtml(service, train){
   }
   const letters = shouldReverseFallbackLetters(train, service) ? baseLetters.slice().reverse() : baseLetters;
   const boxes = letters.map((letter) => {
-    return `<div style="flex:0 0 auto; position:relative; width:36px; height:34px; margin-right:2px; background:var(--tile); border:1px solid var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:var(--ink);">${letter}</div>`;
+    return `<div style="flex:0 0 auto; position:relative; width:36px; height:34px; margin-right:2px; background:var(--tile); border:1px solid var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:var(--ink);">${letter}</div>`;
   }).join('');
   return `
     <div id="train-progress-formation" style="margin-bottom:10px;">
