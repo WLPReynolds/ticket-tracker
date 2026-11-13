@@ -7,31 +7,16 @@ function openRailDetail(key){
   const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
   const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a, b) => a.time.localeCompare(b.time));
 
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>${dateLabel(d)}</h3>
-      <div class="sub">Performance for your configured trains this day.</div>
-      <div style="display:flex; gap:24px;">
-        <div style="flex:1;">
-          <div class="rail-col-header">Morning</div>
-          ${amTrains.length ? railDetailRowsForClaim(amTrains, dayPerf, key, 'AM') : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
-        </div>
-        <div style="flex:1;">
-          <div class="rail-col-header">Evening</div>
-          ${pmTrains.length ? railDetailRowsForClaim(pmTrains, dayPerf, key, 'PM') : '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>'}
-        </div>
-      </div>
-      <div class="modal-close" id="rail-detail-close-btn" style="margin-top:16px;">Close</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  wireClaimHandlers(overlay, () => { document.body.removeChild(overlay); openRailDetail(key); });
-  document.getElementById('rail-detail-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  // Stage 7 (2026-11-13): a bottom sheet. reopen() closes it and opens a
+  // fresh one, so a claim tap is reflected straight away.
+  const none = '<div class="rail-detail-row"><span class="ui-dim">None configured</span></div>';
+  const sheet = uiOpenSheet(dateLabel(d), `
+      <div class="ui-sheet-sub">Performance for your configured trains this day.</div>
+      <div class="claims-cols">
+        <div><div class="rail-col-header">Morning</div>${amTrains.length ? railDetailRowsForClaim(amTrains, dayPerf, key, 'AM') : none}</div>
+        <div><div class="rail-col-header">Evening</div>${pmTrains.length ? railDetailRowsForClaim(pmTrains, dayPerf, key, 'PM') : none}</div>
+      </div>`, { id: 'rail-detail-sheet' });
+  wireClaimHandlers(sheet.overlay, () => { sheet.close(); openRailDetail(key); });
 }
 
 // Full performance history — every day railPerfCache has ever recorded

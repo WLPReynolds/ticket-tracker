@@ -115,10 +115,10 @@ function homeDayClaimsHtml(key, todayKey){
   if (!(isEligibleRailDay(d, todayKey) && Object.keys(dayPerf).length > 0)) return '';
   const amTrains = railTrains.filter(t => t.direction === 'AM').sort((a, b) => a.time.localeCompare(b.time));
   const pmTrains = railTrains.filter(t => t.direction === 'PM').sort((a, b) => a.time.localeCompare(b.time));
-  const none = '<div class="rail-detail-row"><span style="color:var(--ink-dim);">None configured</span></div>';
-  return `<div class="ui-daypanel-claims"><div style="display:flex; gap:24px;">
-    <div style="flex:1;"><div class="rail-col-header">Morning</div>${amTrains.length ? railDetailRowsForClaim(amTrains, dayPerf, key, 'AM') : none}</div>
-    <div style="flex:1;"><div class="rail-col-header">Evening</div>${pmTrains.length ? railDetailRowsForClaim(pmTrains, dayPerf, key, 'PM') : none}</div>
+  const none = '<div class="rail-detail-row"><span class="ui-dim">None configured</span></div>';
+  return `<div class="ui-daypanel-claims"><div class="claims-cols">
+    <div><div class="rail-col-header">Morning</div>${amTrains.length ? railDetailRowsForClaim(amTrains, dayPerf, key, 'AM') : none}</div>
+    <div><div class="rail-col-header">Evening</div>${pmTrains.length ? railDetailRowsForClaim(pmTrains, dayPerf, key, 'PM') : none}</div>
   </div></div>`;
 }
 

@@ -410,24 +410,8 @@
     font-size: 14px;
     color-scheme: dark;
   }
-  .not-claiming-btn{
-    display: inline-block;
-    margin-top: 8px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ink-dim);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    cursor: pointer;
-    -webkit-user-select: none;
-    user-select: none;
-    touch-action: manipulation;
-  }
-  .not-claiming-btn:active{
-    background: rgba(255,255,255,0.06);
-  }
+  /* Stage 7: the Not claiming button is a .ui-btn-secondary; this only places it. */
+  .not-claiming-btn{ width: 100%; margin-top: var(--space-2); }
   .rail-detail-row{
     display: flex;
     justify-content: space-between;
@@ -1032,3 +1016,39 @@
   .depboard-refresh:empty{ display: none; }
   .depboard-msg{ padding: 10px 0; font-size: var(--fs-small); color: #ff6a5a; }
   .depboard-msg.is-dim{ color: inherit; opacity: 0.7; }
+
+  /* ---------- Delay repay (facelift stage 7, 2026-11-13) ---------- */
+  .claims-cols{ display: flex; gap: var(--space-5); }
+  .claims-cols > div{ flex: 1; min-width: 0; }
+  .claims-cols .rail-detail-row > span:first-child{ font-weight: 600; }
+  .rail-detail-row.is-ok > span{ color: var(--good); }
+  .rail-detail-row.is-late > span{ color: var(--salmon); }
+  .rail-detail-row.is-dim > span{ color: var(--ink-dim); }
+  .rail-detail-row.is-dim{ flex-wrap: wrap; gap: 2px var(--space-2); }
+  .rail-detail-row.claimable-row{ margin: 0 calc(-1 * var(--space-2)); padding: var(--space-2); background: var(--salmon); border-radius: var(--radius-sm); border-bottom: none; color: var(--board); cursor: pointer; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  .rail-detail-row.claimable-row > span{ color: var(--board); }
+  .rail-detail-row.claimable-row > span:first-child{ font-weight: 700; }
+  .claim-tag-expired{ margin-left: var(--space-1); font-size: var(--fs-label); font-weight: 700; text-transform: uppercase; color: var(--salmon); }
+  .band-pick-group + .band-pick-group{ margin-top: var(--space-4); }
+  .band-pick-title{ font-size: var(--fs-body); font-weight: 600; margin-bottom: var(--space-2); }
+  .band-pick-grid{ display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+  .band-pick-btn{ display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 56px; justify-content: center; padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--tile); color: var(--ink); font-family: inherit; font-size: var(--fs-body); font-weight: 600; cursor: pointer; touch-action: manipulation; }
+  .band-pick-btn > span{ font-size: var(--fs-small); font-weight: 500; color: var(--ink-dim); }
+  .band-pick-btn.is-selected{ background: var(--amber); border-color: var(--amber); color: var(--board); }
+  .band-pick-btn.is-selected > span{ color: var(--board); }
+  .claim-row{ display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4); }
+  .claim-row + .claim-row{ border-top: 1px solid var(--line); }
+  .claim-row-main{ flex: 1; min-width: 0; }
+  .claim-row-date{ font-size: var(--fs-body); font-weight: 600; }
+  .claim-row-sub, .claim-due{ font-size: var(--fs-small); color: var(--ink-dim); margin-top: 2px; }
+  .claim-due.ui-bad{ color: var(--salmon); }
+  .claim-due.ui-amber{ color: var(--amber); }
+  .ui-page-body input.claim-ref-input:not([type=checkbox]){ margin-top: var(--space-2); max-width: 240px; min-height: 40px; font-family: 'Courier New', monospace; font-size: var(--fs-small); }
+  .claim-row-side{ display: flex; flex-direction: column; align-items: flex-end; flex: 0 0 auto; }
+  .claim-row-side .ui-pill{ margin: var(--space-2) var(--space-2) 0 0; }
+  .claim-row-side .ui-link{ min-height: 36px; padding-right: var(--space-2); }
+  .claim-row-side .ui-check.ui-good{ color: var(--good); }
+  .pass-photo-preview{ text-align: center; }
+  .pass-photo-preview img{ max-width: 100%; max-height: 220px; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+  .pass-photo-remove{ text-align: center; }
+  .ui-page-body input.ui-mono:not([type=checkbox]){ font-family: 'Courier New', monospace; }
