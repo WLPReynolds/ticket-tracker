@@ -674,9 +674,12 @@ header.top.ui-home-head{
 
 /* Ticket purchase days (2026-11-12, Wayne): the whole cell is amber, in the
    week strip and the Month grid. The mark sits on a dark pill; today and the
-   selected day use a light outline, since amber on amber would vanish. */
+   selected day use a light outline, since amber on amber would vanish.
+   .cal-day.weekend.is-buy: a weekend buy day (e.g. Sun 22 Nov) must beat
+   app.css's later .cal-day.weekend{background:transparent}. */
 .ui-day.is-buy,
-.cal-day.is-buy{ background: var(--amber); border-color: var(--amber); color: var(--board); }
+.cal-day.is-buy,
+.cal-day.weekend.is-buy{ background: var(--amber); border-color: var(--amber); color: var(--board); }
 .ui-day.is-buy .ui-day-wk{ color: var(--board); opacity: 0.75; }
 .ui-day.is-buy .ui-day-date{ color: var(--board); }
 .ui-day.is-buy .ui-day-mark,
