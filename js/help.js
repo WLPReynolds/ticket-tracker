@@ -181,6 +181,8 @@ Open the **Buy** tab:
 * **Season Ticket:** Starts a new {{USES}}-use / {{PERIOD}}-day cycle from your chosen date and records the cost.
 * **Single Ticket:** Logs an individual day-return without disturbing your season ticket cycle.
 
+Pick Season or Single at the top, fill in the dates and cost, then tap **Save** (top right). The back arrow leaves without saving.
+
 ### Ticket Purchase Advisor
 Before you buy, the advisor checks your upcoming days (WFH, holidays and bank holidays included). If you have fewer than {{USES}} travel days planned in the next {{PERIOD}}, it tells you whether day returns would be cheaper.
 

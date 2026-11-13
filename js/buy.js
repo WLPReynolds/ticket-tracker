@@ -13,37 +13,52 @@ function shouldFetchFreshFares(today){
 }
 
 function openManagePurchases(){
+  // Facelift stage 6 (2026-11-13): a full-screen page. Opened from Money
+  // details, it stacks over that page and the back arrow returns to it.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
 
   function buildListHtml(){
     const sorted = [...purchases].sort((a, b) => a.date < b.date ? 1 : -1); // newest first
     if (sorted.length === 0){
-      return `<div class="sub">No purchases logged yet.</div>`;
+      return `<div class="ui-empty">No purchases logged yet.</div>`;
     }
-    return sorted.map(p => `
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
-        <span>${dateLabelShort(parseKey(p.date))} — £${p.cost.toFixed(2)}${p.type === 'single' ? ' <span style="color:var(--ink-dim); font-size:12px;">(single)</span>' : ''}</span>
-        <span class="modal-close" data-del-date="${p.date}" data-del-type="${p.type || 'season'}" style="margin:0; font-size:13px;">Remove</span>
-      </div>`).join('');
+    return `<div class="ui-card ui-card-flush ui-data-list">${sorted.map(p => `
+      <div class="ui-data-row">
+        <span class="ui-data-row-main">${dateLabelShort(parseKey(p.date))}${p.type === 'single' ? ' <span class="ui-dim">(single)</span>' : ''}</span>
+        <span class="ui-data-row-value">£${p.cost.toFixed(2)}</span>
+        <span class="ui-link ui-link-dim ui-inline-action" role="button" data-del-date="${p.date}" data-del-type="${p.type || 'season'}">Remove</span>
+      </div>`).join('')}</div>`;
   }
 
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Ticket purchases</h3>
-      <div class="sub">Every ticket you buy via "Set ticket start date" is logged here automatically. Add past ones below to backfill this year's total.</div>
-      <div id="purchases-list" style="margin:12px 0; max-height:220px; overflow-y:auto;">${buildListHtml()}</div>
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Add a past purchase</label>
-      <input type="date" id="backfill-date-input" style="margin-bottom:8px;" />
-      <input type="number" id="backfill-cost-input" placeholder="Cost (£)" step="0.01" min="0" value="${lastKnownPrice.toFixed(2)}" style="margin-bottom:12px;" />
-      <button class="save-btn" id="backfill-add-btn">Add purchase</button>
+    ${uiPageBar('Ticket purchases', { backId: 'purchases-close-btn', backLabel: 'Back' })}
+    <div class="ui-page-body">
+      <div class="sub">Every ticket you buy via the Buy screen is logged here automatically. Add past ones below to backfill this year's total.</div>
+      <div id="purchases-list">${buildListHtml()}</div>
 
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin:16px 0 6px;">Or bulk-import as JSON</label>
-      <textarea id="purchases-import-textarea" rows="4" style="width:100%; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:'Courier New',monospace; font-size:13px; margin-bottom:8px;" placeholder='[{"date":"2026-01-13","cost":153.60}, ...]'></textarea>
-      <div id="purchases-import-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;"></div>
-      <button class="save-btn" id="purchases-import-btn">Import list</button>
+      <div class="ui-subhead">Add a past purchase</div>
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="backfill-date-input">Ticket start date</label>
+          <input type="date" id="backfill-date-input" />
+        </div>
+        <div class="ui-field">
+          <label class="ui-field-label" for="backfill-cost-input">Cost (£)</label>
+          <input type="number" inputmode="decimal" id="backfill-cost-input" placeholder="Cost (£)" step="0.01" min="0" value="${lastKnownPrice.toFixed(2)}" />
+        </div>
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top" id="backfill-add-btn">Add purchase</button>
+      </div>
 
-      <div class="modal-close" id="purchases-close-btn">Close</div>
+      <div class="ui-subhead">Import</div>
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="purchases-import-textarea">Bulk-import as JSON</label>
+          <textarea id="purchases-import-textarea" class="ui-code" rows="4" placeholder='[{"date":"2026-01-13","cost":153.60}, ...]'></textarea>
+          <div class="ui-field-help" id="purchases-import-status"></div>
+        </div>
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top" id="purchases-import-btn">Import list</button>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -104,9 +119,8 @@ function openManagePurchases(){
   });
 
   document.getElementById('purchases-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
+    overlay.remove();
   });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
 }
 
 // Once-a-year live price check (see backlog discussion): only ever
@@ -147,49 +161,71 @@ function openBuyScreen(defaultType){
   const initialInfo = computeAdvisorInfo(suggested, lastKnownPrice);
   let buyType = defaultType || (initialInfo.recommendSingles ? 'single' : 'season');
 
+  // Facelift stage 6 (2026-11-13): a full-screen page with Save top-right
+  // and a Season / Single switch. Same ids and the same save logic.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Buy tickets</h3>
-      <div class="chip-row" style="margin-bottom:14px;">
-        <div class="chip ${buyType==='season'?'active':''}" data-buy-type="season">Season ticket</div>
-        <div class="chip ${buyType==='single'?'active':''}" data-buy-type="single">Single ticket</div>
+    ${uiPageBar('Buy tickets', { backId: 'buy-close-btn', backLabel: 'Back', saveId: 'buy-save-btn' })}
+    <div class="ui-page-body">
+      <div class="ui-segmented">
+        <button type="button" class="${buyType==='season'?'is-selected':''}" data-buy-type="season">Season ticket</button>
+        <button type="button" class="${buyType==='single'?'is-selected':''}" data-buy-type="single">Single ticket</button>
       </div>
 
-      <div id="advisor-note" style="font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:16px;"></div>
+      <div class="ui-notice ui-gap-top" id="advisor-note" hidden></div>
 
-      <div id="fare-update-banner" style="display:none; font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:16px; background:rgba(90,140,224,0.12); border:1px solid rgba(90,140,224,0.35);">
-        <div id="fare-update-text" style="margin-bottom:8px;"></div>
-        <div style="display:flex; gap:8px;">
-          <div class="chip" id="fare-update-accept" style="flex:1; text-align:center;">Use these prices</div>
-          <div class="chip" id="fare-update-decline" style="flex:1; text-align:center;">Keep mine</div>
+      <div class="ui-notice ui-notice-info ui-gap-top" id="fare-update-banner" hidden>
+        <div id="fare-update-text"></div>
+        <div class="ui-sheet-actions">
+          <button type="button" class="ui-btn-secondary" id="fare-update-decline">Keep mine</button>
+          <button type="button" class="ui-btn-primary" id="fare-update-accept">Use these prices</button>
         </div>
       </div>
 
-      <div id="buy-season-fields" style="${buyType==='season'?'':'display:none;'}">
-        <div class="sub" style="margin-top:0;">Every time you buy a new ticket, set the date it starts. Your 8 uses and 28-day window will be tracked fresh from that date.</div>
-        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Start date</label>
-        <input type="date" id="season-date-input" value="${suggested}" style="margin-bottom:12px;" />
-        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost of this ticket (£)</label>
-        <input type="number" id="season-cost-input" value="${lastKnownPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
-        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Bought on</label>
-        <input type="date" id="season-bought-input" value="${fmtKey(today)}" style="margin-bottom:12px;" />
+      <div id="buy-season-fields" class="ui-gap-top"${buyType==='season'?'':' hidden'}>
+        <div class="sub">Every time you buy a new ticket, set the date it starts. Your 8 uses and 28-day window will be tracked fresh from that date.</div>
+        <div class="ui-card">
+          <div class="ui-field">
+            <label class="ui-field-label" for="season-date-input">Start date</label>
+            <input type="date" id="season-date-input" value="${suggested}" />
+          </div>
+          <div class="ui-field">
+            <label class="ui-field-label" for="season-cost-input">Cost of this ticket (£)</label>
+            <input type="number" inputmode="decimal" id="season-cost-input" value="${lastKnownPrice.toFixed(2)}" step="0.01" min="0" />
+          </div>
+          <div class="ui-field">
+            <label class="ui-field-label" for="season-bought-input">Bought on</label>
+            <input type="date" id="season-bought-input" value="${fmtKey(today)}" />
+          </div>
+        </div>
       </div>
 
-      <div id="buy-single-fields" style="${buyType==='single'?'':'display:none;'}">
-        <div class="sub" style="margin-top:0;">For a day return bought instead of using your season ticket — doesn't affect your 8-use/28-day tracking, just logs the cost and marks that day as covered.</div>
-        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Date this ticket is for</label>
-        <input type="date" id="single-date-input" value="${suggested}" style="margin-bottom:12px;" />
-        <label style="display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px;">Cost (£)</label>
-        <input type="number" id="single-cost-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" style="margin-bottom:12px;" />
+      <div id="buy-single-fields" class="ui-gap-top"${buyType==='single'?'':' hidden'}>
+        <div class="sub">For a day return bought instead of using your season ticket — doesn't affect your 8-use/28-day tracking, just logs the cost and marks that day as covered.</div>
+        <div class="ui-card">
+          <div class="ui-field">
+            <label class="ui-field-label" for="single-date-input">Date this ticket is for</label>
+            <input type="date" id="single-date-input" value="${suggested}" />
+          </div>
+          <div class="ui-field">
+            <label class="ui-field-label" for="single-cost-input">Cost (£)</label>
+            <input type="number" inputmode="decimal" id="single-cost-input" value="${dayReturnPrice.toFixed(2)}" step="0.01" min="0" />
+          </div>
+        </div>
       </div>
-
-      <button class="save-btn" id="buy-save-btn">${buyType==='season' ? 'Set as new ticket start' : 'Log this ticket'}</button>
-      <div class="modal-close" id="buy-close-btn">Cancel</div>
+      <div class="ui-field-help ui-gap-top" id="buy-save-hint">${buyType==='season' ? 'Save sets this as your new ticket start.' : 'Save logs this single ticket.'}</div>
     </div>
   `;
   document.body.appendChild(overlay);
+
+  // Leaving Buy (back arrow or Save) returns to Home with the Home tab lit,
+  // since this page sits over the bottom nav.
+  function leave(){
+    if (overlay.isConnected) overlay.remove();
+    if (state.activeTab === 'buy') state.activeTab = 'today';
+    render();
+  }
 
   // Always reflects the season-vs-singles comparison, regardless of which
   // tab is currently active — it's relevant either way, since it's really
@@ -200,30 +236,26 @@ function openBuyScreen(defaultType){
     const startVal = document.getElementById('season-date-input').value;
     const costVal = parseFloat(document.getElementById('season-cost-input').value);
     const note = document.getElementById('advisor-note');
-    if (!startVal || isNaN(costVal)){ note.style.display = 'none'; return; }
+    if (!startVal || isNaN(costVal)){ note.hidden = true; return; }
     const info = computeAdvisorInfo(startVal, costVal);
-    note.style.display = 'block';
+    note.hidden = false;
+    note.classList.toggle('ui-notice-bad', info.recommendSingles);
+    note.classList.toggle('ui-notice-good', !info.recommendSingles);
     if (info.recommendSingles){
-      note.style.background = 'rgba(224,90,78,0.12)';
-      note.style.border = '1px solid rgba(224,90,78,0.35)';
-      note.style.color = '#ff8b7e';
       note.innerHTML = `Based on days already planned, you're likely to need ~${info.estDays} travel day${info.estDays===1?'':'s'} in this window. At £${dayReturnPrice.toFixed(2)} a day return, singles would cost £${info.singlesCost.toFixed(2)} vs £${costVal.toFixed(2)} for this ticket — singles may be cheaper this time.`;
     } else {
-      note.style.background = 'rgba(111,191,138,0.1)';
-      note.style.border = '1px solid rgba(111,191,138,0.3)';
-      note.style.color = 'var(--good)';
       note.innerHTML = `Based on days already planned, you're likely to need ~${info.estDays} travel day${info.estDays===1?'':'s'} in this window. The season ticket looks like the better value (£${costVal.toFixed(2)} vs £${info.singlesCost.toFixed(2)} for singles).`;
     }
   }
 
   function switchType(newType){
     buyType = newType;
-    overlay.querySelectorAll('[data-buy-type]').forEach(chip => {
-      chip.classList.toggle('active', chip.dataset.buyType === buyType);
+    overlay.querySelectorAll('[data-buy-type]').forEach(btn => {
+      btn.classList.toggle('is-selected', btn.dataset.buyType === buyType);
     });
-    document.getElementById('buy-season-fields').style.display = buyType === 'season' ? '' : 'none';
-    document.getElementById('buy-single-fields').style.display = buyType === 'single' ? '' : 'none';
-    document.getElementById('buy-save-btn').textContent = buyType === 'season' ? 'Set as new ticket start' : 'Log this ticket';
+    document.getElementById('buy-season-fields').hidden = buyType !== 'season';
+    document.getElementById('buy-single-fields').hidden = buyType !== 'single';
+    document.getElementById('buy-save-hint').textContent = buyType === 'season' ? 'Save sets this as your new ticket start.' : 'Save logs this single ticket.';
   }
 
   overlay.querySelectorAll('[data-buy-type]').forEach(chip => {
@@ -254,15 +286,15 @@ function openBuyScreen(defaultType){
         `${seasonChanged ? ` (currently £${lastKnownPrice.toFixed(2)})` : ''}` +
         ` · Day return: £${freshDayReturnPrice.toFixed(2)}` +
         `${dayReturnChanged ? ` (currently £${dayReturnPrice.toFixed(2)})` : ''}. Use the new prices?`;
-      banner.style.display = 'block';
+      banner.hidden = false;
       document.getElementById('fare-update-accept').addEventListener('click', () => {
         document.getElementById('season-cost-input').value = seasonPrice.toFixed(2);
         document.getElementById('single-cost-input').value = freshDayReturnPrice.toFixed(2);
-        banner.style.display = 'none';
+        banner.hidden = true;
         updateAdvisor();
       });
       document.getElementById('fare-update-decline').addEventListener('click', () => {
-        banner.style.display = 'none';
+        banner.hidden = true;
       });
     }).catch(e => {
       // Left unchecked so the next Buy screen open tries again — a
@@ -304,12 +336,7 @@ function openBuyScreen(defaultType){
       await savePurchases();
       await saveDayReturnPrice();
     }
-    document.body.removeChild(overlay);
-    state.activeTab = 'today';
-    render();
+    leave();
   });
-  document.getElementById('buy-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.getElementById('buy-close-btn').addEventListener('click', leave);
 }

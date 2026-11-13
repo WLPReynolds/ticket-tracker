@@ -8,7 +8,7 @@
 // keyed by the versioned URL). A file that can't be fetched and isn't cached
 // fails the load visibly (see the guard in js/init.js) rather than running a
 // mix of versions. A new version means a new cache; activate deletes old ones.
-const VERSION = '2026-11-13.1756';
+const VERSION = '2026-11-13.1813';
 const CACHE_NAME = 'ticket-tracker-' + VERSION;
 const V = '?v=' + VERSION;
 const ASSETS = [
