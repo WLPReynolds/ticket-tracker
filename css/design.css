@@ -786,3 +786,15 @@ header.top.ui-home-head{
 .ui-tabpage .ui-picker input.ui-picker-input{ padding-right: var(--tap); }
 .ui-btn-primary:disabled,
 .ui-btn-secondary:disabled{ opacity: 0.5; cursor: default; transform: none; }
+
+/* =====================================================================
+   Stage 6 parts (2026-11-13): data rows in a card, code textarea, status text.
+   ===================================================================== */
+.ui-card.ui-card-flush .ui-data-row{ padding: 0 var(--space-2) 0 var(--space-4); }
+.ui-page-body textarea.ui-code,
+.ui-sheet textarea.ui-code{ font-family: 'Courier New', monospace; font-size: var(--fs-small); }
+.ui-field-help.is-bad{ color: var(--salmon); }
+.ui-field-help.is-good{ color: var(--good); }
+.ui-field-help:empty{ display: none; }
+/* A file chooser inside a page: full width, no extra styling of the native control. */
+.ui-page-body input[type=file]{ min-height: 0; padding: var(--space-2) 0; border: none; background: none; }

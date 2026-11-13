@@ -19,46 +19,53 @@ function exportBackup(){
 }
 
 function openBackupRestore(){
+  // Facelift stage 6 (2026-11-13): a full-screen page in sections. Same ids
+  // and handlers; the on/off ticks are switch rows.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   const lastBackupLabel = lastDriveBackupTime
     ? new Date(lastDriveBackupTime).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
     : 'Never yet';
+  const gState = googleWorkerState();
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Backup &amp; restore</h3>
+    ${uiPageBar('Backup and restore', { backId: 'backup-close-btn', backLabel: 'Back' })}
+    <div class="ui-page-body">
       <div class="sub">Export your app data to a file you can keep safe (e.g. before switching phones), or restore from a previous export. Restoring replaces all current data. Not included: your Worker write secret, the drive-check home location and the pass photo — re-enter those after restoring. Google normally stays connected; reconnect only if Automatic sign-in below says it's needed.</div>
-      <button class="save-btn" id="backup-export-btn">Export backup</button>
-      <label style="display:block; font-size:13px; color:var(--ink-dim); margin:16px 0 6px;">Restore from a backup file</label>
-      <input type="file" id="backup-import-input" accept="application/json" style="margin-bottom:12px; width:100%;" />
-      <button class="save-btn" id="backup-import-btn">Restore from file</button>
-      <div id="backup-status" style="font-size:13px; color:var(--ink-dim); margin-top:10px;"></div>
 
-      <div class="rail-col-header">Automatic Drive backup</div>
-      <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
-        <input type="checkbox" id="drive-backup-toggle" ${driveBackupEnabled ? 'checked' : ''} style="width:16px; height:16px;" />
-        Automatically back up to Google Drive
-      </label>
-      <div class="sub" style="margin-bottom:10px;">Backs up whenever you leave the app, if something's changed and it's been at least 30 minutes since the last one. Keeps the 2 most recent backups in a "Ticket Tracker Backups" folder. Connect automatic sign-in once and backups run on their own from then on. If a backup still can't run and the last one is over a day old, a red banner will ask you to tap to back up.</div>
-      <div id="drive-backup-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">Last backup: ${lastBackupLabel}</div>
-      <button class="save-btn" id="drive-backup-now-btn" ${driveBackupEnabled ? '' : 'disabled'}>Back up now</button>
+      <div class="ui-subhead">This device</div>
+      <div class="ui-card">
+        <button type="button" class="ui-btn-secondary ui-btn-block" id="backup-export-btn">Export backup</button>
+        <div class="ui-field ui-gap-top">
+          <label class="ui-field-label" for="backup-import-input">Restore from a backup file</label>
+          <input type="file" id="backup-import-input" accept="application/json" />
+        </div>
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top-sm" id="backup-import-btn">Restore from file</button>
+        <div class="ui-field-help ui-gap-top-sm" id="backup-status"></div>
+      </div>
 
-      <div class="rail-col-header">Automatic sign-in</div>
-      <div class="sub" style="margin-bottom:10px;">Google's sign-in only lasts about an hour. Connect once and your own Worker keeps it renewed, so backups (and Calendar updates) don't need a tap. You may see a "Google hasn't verified this app" screen — tap Advanced, then Go to Ticket Tracker.</div>
-      <div id="google-worker-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">${escapeHtml(googleWorkerStatusText())}</div>
-      <button class="save-btn" id="google-connect-btn">${googleWorkerState() === 'connected' ? 'Reconnect automatic sign-in' : googleWorkerState() === 'needs-reconnect' ? 'Reconnect automatic sign-in' : 'Connect automatic sign-in'}</button>
-      <div class="settings-link" id="google-disconnect-link" style="margin-top:10px; ${googleWorkerState() === 'connected' ? '' : 'display:none;'}">Disconnect automatic sign-in</div>
+      <div class="ui-subhead">Automatic Drive backup</div>
+      <div class="ui-card">
+        ${uiCheck('drive-backup-toggle', 'Automatically back up to Google Drive', driveBackupEnabled)}
+        <div class="ui-field-help">Backs up whenever you leave the app, if something's changed and it's been at least 30 minutes since the last one. Keeps the 2 most recent backups in a "Ticket Tracker Backups" folder. Connect automatic sign-in once and backups run on their own from then on. If a backup still can't run and the last one is over a day old, a red banner will ask you to tap to back up.</div>
+        <div class="ui-gap-top" id="drive-backup-status">Last backup: ${lastBackupLabel}</div>
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top-sm" id="drive-backup-now-btn" ${driveBackupEnabled ? '' : 'disabled'}>Back up now</button>
+      </div>
 
-      <div class="rail-col-header">Share with Personal Finance</div>
-      <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:14px; color:var(--ink-dim); cursor:pointer;">
-        <input type="checkbox" id="transport-share-toggle" ${transportShareEnabled ? 'checked' : ''} style="width:16px; height:16px;" />
-        Share estimates with Personal Finance
-      </label>
-      <div class="sub" style="margin-bottom:10px;">Saves your "Set aside on payday" figures for this pay period and the next 12 to a small file in your "Ticket Tracker Backups" Drive folder, for your Personal Finance app to read. Works with automatic backup off. Updates by itself when the figures change, whenever you open or leave the app. Turning this off stops updates; the last file stays in Drive.</div>
-      <div id="transport-share-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">${escapeHtml(transportShareStatusText())}</div>
-      <button class="save-btn" id="transport-share-now-btn" ${transportShareEnabled ? '' : 'disabled'}>Share now</button>
+      <div class="ui-subhead">Automatic sign-in</div>
+      <div class="ui-card">
+        <div class="ui-field-help">Google's sign-in only lasts about an hour. Connect once and your own Worker keeps it renewed, so backups (and Calendar updates) don't need a tap. You may see a "Google hasn't verified this app" screen — tap Advanced, then Go to Ticket Tracker.</div>
+        <div class="ui-gap-top" id="google-worker-status">${escapeHtml(googleWorkerStatusText())}</div>
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top-sm" id="google-connect-btn">${gState === 'connected' || gState === 'needs-reconnect' ? 'Reconnect automatic sign-in' : 'Connect automatic sign-in'}</button>
+        <span class="ui-link ui-link-dim" role="button" id="google-disconnect-link"${gState === 'connected' ? '' : ' hidden'}>Disconnect automatic sign-in</span>
+      </div>
 
-      <div class="modal-close" id="backup-close-btn" style="margin-top:16px;">Close</div>
+      <div class="ui-subhead">Share with Personal Finance</div>
+      <div class="ui-card">
+        ${uiCheck('transport-share-toggle', 'Share estimates with Personal Finance', transportShareEnabled)}
+        <div class="ui-field-help">Saves your "Set aside on payday" figures for this pay period and the next 12 to a small file in your "Ticket Tracker Backups" Drive folder, for your Personal Finance app to read. Works with automatic backup off. Updates by itself when the figures change, whenever you open or leave the app. Turning this off stops updates; the last file stays in Drive.</div>
+        <div class="ui-gap-top" id="transport-share-status">${escapeHtml(transportShareStatusText())}</div>
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top-sm" id="transport-share-now-btn" ${transportShareEnabled ? '' : 'disabled'}>Share now</button>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -101,7 +108,7 @@ function openBackupRestore(){
   const refreshGoogleWorkerUi = () => {
     const state = googleWorkerState();
     googleConnectBtn.textContent = (state === 'connected' || state === 'needs-reconnect') ? 'Reconnect automatic sign-in' : 'Connect automatic sign-in';
-    googleDisconnectLink.style.display = state === 'connected' ? '' : 'none';
+    googleDisconnectLink.hidden = state !== 'connected';
   };
   googleConnectBtn.addEventListener('click', async () => {
     const connectPromise = connectGoogleViaWorker(); // first — opens Google's popup off this tap
@@ -185,29 +192,30 @@ function openBackupRestore(){
       }
       status.textContent = 'Restored — reloading…';
       await loadData();
-      document.body.removeChild(overlay);
+      overlay.remove();
       render();
     };
     reader.readAsText(file);
   });
 
-  document.getElementById('backup-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.getElementById('backup-close-btn').addEventListener('click', () => overlay.remove());
 }
 
 function openImportHistory(){
+  // Facelift stage 6: a full-screen page; Import sits top-right.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Bulk import comments</h3>
+    ${uiPageBar('Bulk import comments', { backId: 'import-close-btn', backLabel: 'Back', saveId: 'import-save-btn', saveLabel: 'Import' })}
+    <div class="ui-page-body">
       <div class="sub">Paste a JSON object of date → comment entries — WFH, holidays, or anything else — e.g. from an old spreadsheet export. Existing entries for the same date are kept as-is; only blank dates get filled in.</div>
-      <textarea id="import-textarea" rows="8" style="width:100%; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:'Courier New',monospace; font-size:13px; margin-bottom:12px;" placeholder='{"2025-09-26": "WFH", "2025-11-10": "HOLIDAY"}'></textarea>
-      <div id="import-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;"></div>
-      <button class="save-btn" id="import-save-btn">Import</button>
-      <div class="modal-close" id="import-close-btn">Cancel</div>
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="import-textarea">Comments as JSON</label>
+          <textarea id="import-textarea" class="ui-code" rows="8" placeholder='{"2025-09-26": "WFH", "2025-11-10": "HOLIDAY"}'></textarea>
+          <div class="ui-field-help" id="import-status"></div>
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -217,7 +225,7 @@ function openImportHistory(){
     const status = document.getElementById('import-status');
     if (!raw){
       status.textContent = 'Paste some JSON first.';
-      status.style.color = 'var(--danger)';
+      status.className = 'ui-field-help is-bad';
       return;
     }
     let parsed;
@@ -225,12 +233,12 @@ function openImportHistory(){
       parsed = JSON.parse(raw);
     }catch(e){
       status.textContent = 'That is not valid JSON — check for missing quotes or commas.';
-      status.style.color = 'var(--danger)';
+      status.className = 'ui-field-help is-bad';
       return;
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)){
       status.textContent = 'Expected a JSON object of "YYYY-MM-DD": "comment" pairs.';
-      status.style.color = 'var(--danger)';
+      status.className = 'ui-field-help is-bad';
       return;
     }
     let added = 0;
@@ -242,14 +250,11 @@ function openImportHistory(){
       }
     }
     await saveComments();
-    document.body.removeChild(overlay);
+    overlay.remove();
     render();
   });
 
-  document.getElementById('import-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.getElementById('import-close-btn').addEventListener('click', () => overlay.remove());
 }
 
 // Bulk-inserts/updates delayClaims from Avanti's own claims-history table —
@@ -263,16 +268,20 @@ function openImportHistory(){
 // added fresh. minutesLate: null marks a cancelled train, shown as
 // "Cancelled" rather than a delay figure on the claims manager screen.
 function openDelayClaimsImport(){
+  // Facelift stage 6: a full-screen page; Import sits top-right.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>Import delay repay claims</h3>
+    ${uiPageBar('Import claims', { backId: 'claims-import-close-btn', backLabel: 'Back', saveId: 'claims-import-save-btn', saveLabel: 'Import' })}
+    <div class="ui-page-body">
       <div class="sub">Paste a JSON array of claims from Avanti's claims history — each already verified as paid. Existing entries for the same date/direction are updated (claim ref, minutes late, amount corrected if needed); new ones are added. All entries are marked Confirmed. Include "trainKey" (e.g. "pm-1731") so the claim shows a scheduled time rather than just a direction.</div>
-      <textarea id="claims-import-textarea" rows="8" style="width:100%; background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:'Courier New',monospace; font-size:12px; margin-bottom:12px;" placeholder='[{"date":"2026-09-14","dir":"AM","claimRef":"AWC-3242-966-216","amount":2.4,"minutesLate":16,"trainKey":"am-0727"}]'></textarea>
-      <div id="claims-import-status" style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;"></div>
-      <button class="save-btn" id="claims-import-save-btn">Import</button>
-      <div class="modal-close" id="claims-import-close-btn">Cancel</div>
+      <div class="ui-card">
+        <div class="ui-field">
+          <label class="ui-field-label" for="claims-import-textarea">Claims as JSON</label>
+          <textarea id="claims-import-textarea" class="ui-code" rows="8" placeholder='[{"date":"2026-09-14","dir":"AM","claimRef":"AWC-3242-966-216","amount":2.4,"minutesLate":16,"trainKey":"am-0727"}]'></textarea>
+          <div class="ui-field-help" id="claims-import-status"></div>
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -282,7 +291,7 @@ function openDelayClaimsImport(){
     const status = document.getElementById('claims-import-status');
     if (!raw){
       status.textContent = 'Paste some JSON first.';
-      status.style.color = 'var(--danger)';
+      status.className = 'ui-field-help is-bad';
       return;
     }
     let parsed;
@@ -290,12 +299,12 @@ function openDelayClaimsImport(){
       parsed = JSON.parse(raw);
     }catch(e){
       status.textContent = 'That is not valid JSON — check for missing quotes or commas.';
-      status.style.color = 'var(--danger)';
+      status.className = 'ui-field-help is-bad';
       return;
     }
     if (!Array.isArray(parsed)){
       status.textContent = 'Expected a JSON array of claim entries.';
-      status.style.color = 'var(--danger)';
+      status.className = 'ui-field-help is-bad';
       return;
     }
     let added = 0, updated = 0, skipped = 0;
@@ -318,11 +327,8 @@ function openDelayClaimsImport(){
     }
     await saveDelayClaims();
     status.textContent = `${added} added, ${updated} updated${skipped ? `, ${skipped} skipped (bad date/dir)` : ''}.`;
-    status.style.color = 'var(--good)';
+    status.className = 'ui-field-help is-good';
   });
 
-  document.getElementById('claims-import-close-btn').addEventListener('click', () => {
-    document.body.removeChild(overlay);
-  });
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+  document.getElementById('claims-import-close-btn').addEventListener('click', () => overlay.remove());
 }
