@@ -203,24 +203,26 @@ function openAlternativeRoutesManager(cameFromSettings){
   // not plain inputs — re-created on every render() call, so their
   // onChange handlers always close over the current draftRoutes/render
   // rather than a stale copy from an earlier render.
+  // Stage 5: each route is a card; each leg stacks its From and To pickers
+  // (side by side they were too narrow on a phone), with a remove icon.
   function renderRoute(route, ri){
     const legRows = route.legs.map((leg, li) => `
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-        <span style="color:var(--ink-dim); font-size:12px; width:14px;">${li + 1}</span>
-        <div id="ar-${ri}-${li}-from" style="flex:1;"></div>
-        <span style="color:var(--ink-dim);">→</span>
-        <div id="ar-${ri}-${li}-to" style="flex:1;"></div>
-        <span class="modal-close" data-remove-leg data-ri="${ri}" data-li="${li}" style="margin:0; font-size:12px;">✕</span>
+      <div class="ar-leg">
+        <span class="ar-leg-num">${li + 1}</span>
+        <div class="ui-stack">
+          <div id="ar-${ri}-${li}-from"></div>
+          <div id="ar-${ri}-${li}-to"></div>
+        </div>
+        <button type="button" class="ui-icon-btn" data-remove-leg data-ri="${ri}" data-li="${li}" aria-label="Remove leg ${li + 1}">${UI_ICON_CLOSE}</button>
       </div>`).join('');
     return `
-      <div class="rail-detail-row" style="display:block; padding:12px;">
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-          <input type="text" class="ar-label-input" data-ri="${ri}" value="${escapeHtml(route.label || '')}" placeholder="Route label (e.g. Via Liverpool)"
-            style="flex:1; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--tile); color:var(--ink); box-sizing:border-box;" />
-          <span class="modal-close" data-remove-route data-ri="${ri}" style="margin:0; font-size:13px;">Remove route</span>
+      <div class="ui-card">
+        <div class="ui-inline">
+          <input type="text" class="ar-label-input" data-ri="${ri}" value="${escapeHtml(route.label || '')}" placeholder="Route label (e.g. Via Liverpool)" aria-label="Route label" />
+          <span class="ui-link ui-link-dim" role="button" data-remove-route data-ri="${ri}">Remove</span>
         </div>
-        ${route.legs.length ? legRows : '<div class="sub" style="margin-bottom:8px;">No legs yet — add at least one.</div>'}
-        <div class="settings-link" data-add-leg data-ri="${ri}" style="margin-top:2px;">+ Add leg</div>
+        <div class="ui-gap-top">${route.legs.length ? legRows : '<div class="ui-empty">No legs yet — add at least one.</div>'}</div>
+        <span class="ui-link" role="button" data-add-leg data-ri="${ri}">Add leg</span>
       </div>`;
   }
 
@@ -234,7 +236,7 @@ function openAlternativeRoutesManager(cameFromSettings){
     // work at all).
     if (stationIndexCache){
       const date = stationIndexCache.fetchedAt ? new Date(stationIndexCache.fetchedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'unknown date';
-      return `${stationIndexCache.list.length.toLocaleString()} stations · updated ${date} — <span id="ar-station-refresh-link" style="text-decoration:underline; cursor:pointer;">Refresh</span>`;
+      return `${stationIndexCache.list.length.toLocaleString()} stations · updated ${date} — <span class="live-text-link" role="button" id="ar-station-refresh-link">Refresh</span>`;
     }
     return `Loading station list… codes still work meanwhile (e.g. CRE, WGN).`;
   }
@@ -244,9 +246,9 @@ function openAlternativeRoutesManager(cameFromSettings){
       ${uiPageBar('Emergency routes', { backId: 'ar-close', backLabel: cameFromSettings ? 'Back to Settings' : 'Back', saveId: 'ar-save' })}
       <div class="ui-page-body">
         <div class="sub">Pre-define fallback journeys now, when calm, so the Emergency tab can check them live when disruption actually hits.</div>
-        <div class="sub" id="ar-station-status" style="font-size:11.5px; margin-bottom:12px;">${stationStatusHtml()}</div>
-        <div id="ar-list">${draftRoutes.map((r, ri) => renderRoute(r, ri)).join('') || '<div class="sub">No routes yet.</div>'}</div>
-        <div class="settings-link" id="ar-add-route" style="margin-top:6px; margin-bottom:16px;">+ Add route</div>
+        <div class="ui-field-help" id="ar-station-status">${stationStatusHtml()}</div>
+        <div id="ar-list" class="ui-gap-top">${draftRoutes.map((r, ri) => renderRoute(r, ri)).join('') || '<div class="ui-empty">No routes yet.</div>'}</div>
+        <span class="ui-link" role="button" id="ar-add-route">Add route</span>
       </div>
     `;
 

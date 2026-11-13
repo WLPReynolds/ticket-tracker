@@ -37,36 +37,27 @@ function depBoardRowData(s, isArrivals){
 }
 
 function openDepartureBoardView(){
+  // Facelift stage 5 (2026-11-13): a full-screen page with a back arrow.
+  // Step one picks the station; step two is the retro board itself, which
+  // keeps its own split-flap styling (.depboard-*), filling the page.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay modal-overlay-full';
-  overlay.style.alignItems = 'stretch';
+  overlay.className = 'ui-page';
   overlay.innerHTML = `
-    <div class="modal" style="display:flex; flex-direction:column; padding:0 0 calc(72px + env(safe-area-inset-bottom)) 0; border-radius:0; overflow:hidden;">
-      <!-- Height comes from .modal-overlay-full .modal's own 100dvh rule
-           now, not a bespoke calc here — that's the same rule Train
-           Progress already relies on with no reported bleed-through, so
-           matching it directly rather than maintaining a second,
-           separately-tuned height formula that turned out to leave a
-           gap at the bottom where the backdrop (and the page underneath
-           it) showed through. Bottom padding explicitly matches that
-           same class's own nav-bar-safe reservation — zeroing all
-           padding here (as the previous version did) would have quietly
-           thrown that away too, trapping Close underneath the nav bar
-           instead of leaving a visible gap, a related but different
-           problem this needs to avoid re-introducing. -->
-      <div id="depboard-picker-step" style="flex:1; display:flex; flex-direction:column; padding:20px 18px; overflow-y:auto;">
-        <h3>Station board</h3>
-        <div class="sub">A retro-style live departures and arrivals board for any station — refreshes every 30 seconds for 3 minutes, then waits for you to ask for more.</div>
-        <div id="depboard-picker-row" style="margin:14px 0;"></div>
-        <button class="save-btn" id="depboard-show-btn">Show board</button>
-        <div class="modal-close" id="depboard-picker-close-btn" style="margin-top:16px;">Close</div>
+    ${uiPageBar('Station board', { backId: 'depboard-close-btn', backLabel: 'Back' })}
+    <div class="ui-page-body" id="depboard-picker-step">
+      <div class="sub">A retro-style live departures and arrivals board for any station — refreshes every 30 seconds for 3 minutes, then waits for you to ask for more.</div>
+      <div class="ui-card">
+        <div class="ui-field">
+          <div class="ui-field-label">Station</div>
+          <div id="depboard-picker-row"></div>
+        </div>
       </div>
-      <div id="depboard-display-step" style="display:none; flex-direction:column; flex:1; min-height:0;">
-        <div id="depboard-dep-panel" class="depboard-panel" style="flex:1;"></div>
-        <div id="depboard-arr-panel" class="depboard-panel" style="flex:1; border-top:2px solid #333;"></div>
-        <div id="depboard-refresh-wrap" style="text-align:center; padding:10px 14px 0; background:var(--board-2);"></div>
-        <div class="modal-close" id="depboard-close-btn" style="margin-top:8px; margin-bottom:8px; background:var(--board-2);">Close</div>
-      </div>
+      <button type="button" class="ui-btn-primary ui-btn-block ui-gap-top" id="depboard-show-btn">Show board</button>
+    </div>
+    <div class="depboard-display" id="depboard-display-step" hidden>
+      <div id="depboard-dep-panel" class="depboard-panel"></div>
+      <div id="depboard-arr-panel" class="depboard-panel"></div>
+      <div class="depboard-refresh" id="depboard-refresh-wrap"></div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -78,10 +69,6 @@ function openDepartureBoardView(){
   // this is a fresh screen that's never triggered the load the way the
   // Tracked tab's own search does.
   loadStationIndex(false);
-  document.getElementById('depboard-picker-close-btn').addEventListener('click', () => {
-    teardown();
-    if (overlay.isConnected) document.body.removeChild(overlay);
-  });
 
   const ROWS_PER_PAGE = 5;
   const SESSION_LENGTH_MS = 3 * 60 * 1000;
@@ -135,7 +122,7 @@ function openDepartureBoardView(){
     // decorative extra, so silently hiding *why* it's empty just hides
     // a real problem behind what looks like a legitimately quiet board.
     const rowsHtml = fetchError
-      ? `<div style="padding:10px 0; color:#ff6a5a; font-size:12px;">Couldn't load: ${escapeHtml(fetchError)}</div>`
+      ? `<div class="depboard-msg">Couldn't load: ${escapeHtml(fetchError)}</div>`
       : (pageRows.length ? pageRows.map(s => {
       const d = depBoardRowData(s, isArrivals);
       const noteHtml = d.note ? `<div class="depboard-note-row">${escapeHtml(d.note)}</div>` : '';
@@ -145,7 +132,7 @@ function openDepartureBoardView(){
         <span>${escapeHtml(d.platform)}</span>
         <span>${escapeHtml(d.expected)}</span>
       </div>${noteHtml}`;
-    }).join('') : `<div style="padding:10px 0; opacity:0.7;">No services currently shown</div>`);
+    }).join('') : `<div class="depboard-msg is-dim">No services currently shown</div>`);
     panel.innerHTML = `
       <div class="depboard-title">${escapeHtml(stationName)} — ${title}</div>
       <div class="depboard-header-row">
@@ -198,7 +185,7 @@ function openDepartureBoardView(){
     // own refresh action, rather than the plain "↻ Refresh" text this
     // used before — one consistent look for "refresh this" across the
     // app instead of two different ones.
-    wrap.innerHTML = `<span id="depboard-refresh-btn" style="display:inline-flex; align-items:center; gap:6px; color:var(--good); font-size:14px; font-weight:700; cursor:pointer; -webkit-user-select:none; user-select:none; touch-action:manipulation;">${REFRESH_ICON} Refresh</span>`;
+    wrap.innerHTML = `<button type="button" class="ui-btn-secondary" id="depboard-refresh-btn">${REFRESH_ICON}&nbsp;Refresh</button>`;
     const btn = document.getElementById('depboard-refresh-btn');
     if (btn) btn.addEventListener('click', () => { if (active) startSession(); });
   }
@@ -221,9 +208,8 @@ function openDepartureBoardView(){
     stationCrs = picker.getCode();
     stationName = picker.getName() || stationCrs;
     if (!stationCrs) return;
-    document.getElementById('depboard-picker-step').style.display = 'none';
-    const displayStep = document.getElementById('depboard-display-step');
-    displayStep.style.display = 'flex';
+    document.getElementById('depboard-picker-step').hidden = true;
+    document.getElementById('depboard-display-step').hidden = false;
     // Ticks the visible clock every second, and separately advances
     // which page each panel is showing every few seconds if there's
     // more than one — independent of the 30-second data refresh, same

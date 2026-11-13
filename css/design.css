@@ -609,7 +609,8 @@ header.top.ui-home-head{
 .ui-picker{ position: relative; flex: 1; }
 .ui-picker input.ui-picker-input,
 .ui-page-body .ui-picker input.ui-picker-input,
-.ui-sheet .ui-picker input.ui-picker-input{
+.ui-sheet .ui-picker input.ui-picker-input,
+.ui-tabpage .ui-picker input.ui-picker-input{
   width: 100%;
   min-height: 48px;
   margin: 0;
@@ -689,3 +690,99 @@ header.top.ui-home-head{
 .ui-day.is-buy .ui-day-dot.confirmed,
 .ui-day.is-buy .ui-day-dot.declined,
 .cal-day.is-buy .cal-dot-row > span{ box-shadow: 0 0 0 1.5px var(--board); }
+
+/* =====================================================================
+   Stage 5 parts (2026-11-13): tab page, disclosure card, icon button.
+   Spec: claude/facelift-rollout-spec.md in the Project.
+   ===================================================================== */
+
+/* ---------- Tab page ----------
+   A bottom-nav tab drawn full screen with the nav still showing (Live).
+   It keeps .modal-overlay so closeAllModals() clears it when another tab
+   is tapped; it sits under the nav (55) and pages (60). */
+.modal-overlay.ui-tabpage{
+  display: block;
+  background: var(--board);
+  color: var(--ink);
+  overflow-y: auto;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+.ui-tabpage-head{
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: calc(var(--space-3) + env(safe-area-inset-top)) var(--margin) var(--space-3);
+  background: var(--board);
+  border-bottom: 1px solid var(--line);
+}
+.ui-tabpage-title{ font-size: var(--fs-title); font-weight: 700; margin-bottom: var(--space-3); }
+.ui-tabpage .ui-page-body{ padding-bottom: var(--space-5); }
+.ui-tabpage input:not([type=checkbox]):not([type=radio]),
+.ui-tabpage select{
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--tile);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  box-sizing: border-box;
+  color-scheme: dark;
+}
+.ui-tabpage [hidden]{ display: none !important; }
+
+/* Section label inside a padded page or tab body (no side margin of its own). */
+.ui-page-body .ui-section-head{ margin-left: 0; margin-right: 0; }
+.ui-page-body > .ui-section-head:first-child{ margin-top: 0; }
+
+/* ---------- Disclosure card: a one-line summary that opens to show more ---------- */
+.ui-disclosure-head{
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+.ui-disclosure-label{ flex: 0 0 auto; font-size: var(--fs-body); font-weight: 600; }
+.ui-disclosure-value{ flex: 1; min-width: 0; text-align: right; font-size: var(--fs-small); color: var(--ink-dim); }
+.ui-disclosure-chev{ display: flex; color: var(--ink-dim); transition: transform 0.15s; }
+.ui-disclosure-chev svg{ width: 18px; height: 18px; }
+.ui-disclosure.is-open .ui-disclosure-chev{ transform: rotate(90deg); }
+.ui-disclosure-body{ padding: 0 var(--space-4) var(--space-4); }
+.ui-card + .ui-card{ margin-top: var(--space-3); }
+
+/* ---------- Icon button: a 44px tap target around a line icon ---------- */
+.ui-icon-btn{
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ui-icon-btn svg{ width: 20px; height: 20px; }
+.ui-icon-btn.ui-icon-btn-bad{ color: var(--salmon); }
+.ui-icon-btn.ui-icon-btn-good{ color: var(--good); }
+
+/* Train lines listed on their own (Live) have no big train above them. */
+.ui-train-list > .ui-train-line:first-child{ border-top: none; }
+.ui-train-line.is-static{ cursor: default; }
+.ui-train-line .ui-pill{ flex: 0 0 auto; }
+
+/* The picker's own padding (room for its clear icon) wins inside a tab page too. */
+.ui-tabpage .ui-picker input.ui-picker-input{ padding-right: var(--tap); }
+.ui-btn-primary:disabled,
+.ui-btn-secondary:disabled{ opacity: 0.5; cursor: default; transform: none; }

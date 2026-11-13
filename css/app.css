@@ -985,3 +985,50 @@
   .dc-result-title{ font-size: var(--fs-body); font-weight: 700; }
   .dc-result-text{ white-space: pre-line; margin-bottom: var(--space-2); }
   .dc-result-checked{ margin-top: var(--space-1); color: var(--ink-dim); }
+
+  /* ---------- Live tab (facelift stage 5, 2026-11-13) ---------- */
+  .live-status{ font-size: var(--fs-small); color: var(--ink-dim); line-height: 1.4; margin: var(--space-4) 0 0; }
+  .live-target-row{ display: flex; align-items: center; gap: var(--space-2); }
+  .live-target-row + .live-target-row{ margin-top: var(--space-2); }
+  .live-target-row > span{ flex: 0 0 72px; font-size: var(--fs-small); color: var(--ink-dim); }
+  .live-target-date{ display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-3); font-size: var(--fs-small); color: var(--ink-dim); }
+  .live-target-date .ui-segmented{ flex: 0 0 180px; }
+  .live-note{ font-size: var(--fs-small); color: var(--ink-dim); margin-top: var(--space-2); line-height: 1.4; }
+  .live-drive-banner{ display: flex; gap: var(--space-2); align-items: flex-start; margin-bottom: var(--space-3); }
+  .live-drive-banner > div{ flex: 1; min-width: 0; }
+  .live-drive-banner-title{ font-size: var(--fs-body); font-weight: 700; }
+  .live-drive-banner .ui-icon-btn{ margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-3)) 0 0; }
+  .live-tracked-row{ display: flex; align-items: center; gap: var(--space-1); min-height: 56px; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+  .live-tracked-row + .live-tracked-row{ border-top: 1px solid var(--line); }
+  .live-tracked-main{ flex: 1; min-width: 0; }
+  .live-tracked-label{ font-size: var(--fs-body); font-weight: 600; }
+  .live-tracked-sub{ font-size: var(--fs-small); color: var(--ink-dim); }
+  .live-tracked-sub.is-bad{ color: var(--salmon); }
+  .live-pickers{ display: flex; flex-direction: column; gap: var(--space-2); }
+  .live-result-row{ display: grid; grid-template-columns: 48px 1fr auto; column-gap: var(--space-2); align-items: start; padding: var(--space-3) var(--space-4); font-size: var(--fs-small); cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+  .live-result-row + .live-result-row{ border-top: 1px solid var(--line); }
+  .live-result-row > span:first-child{ font-weight: 700; font-variant-numeric: tabular-nums; }
+  .live-result-row > span:last-child{ color: var(--ink-dim); text-align: right; white-space: nowrap; }
+  .live-result-msg{ grid-column: 1 / -1; margin-top: var(--space-1); color: var(--salmon); }
+  .live-result-msg.is-dim{ color: var(--ink-dim); }
+  .live-group-head{ margin: var(--space-5) 0 var(--space-2); font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--holiday); }
+  .live-route-head{ display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); font-size: var(--fs-body); font-weight: 700; }
+  .live-leg{ padding: var(--space-2) 0; font-size: var(--fs-body); }
+  .live-leg + .live-leg{ border-top: 1px solid var(--line); }
+  .live-leg-sub{ font-size: var(--fs-small); color: var(--ink-dim); margin-top: 2px; }
+  .live-leg-sub .is-bad{ color: var(--salmon); }
+  .live-text-link{ color: var(--amber); font-weight: 600; text-decoration: underline; cursor: pointer; }
+
+  /* ---------- Emergency routes manager (stage 5) ---------- */
+  .ar-leg{ display: grid; grid-template-columns: 20px 1fr auto; gap: var(--space-2); align-items: center; }
+  .ar-leg + .ar-leg{ margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
+  .ar-leg-num{ font-size: var(--fs-small); color: var(--ink-dim); align-self: start; padding-top: 14px; }
+
+  /* ---------- Station board as a page (stage 5) ---------- */
+  .depboard-display{ display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .depboard-display .depboard-panel{ flex: 1; }
+  .depboard-display .depboard-panel + .depboard-panel{ border-top: 2px solid #333; }
+  .depboard-refresh{ display: flex; justify-content: center; padding: var(--space-2) var(--margin) calc(var(--space-2) + env(safe-area-inset-bottom)); background: var(--board-2); }
+  .depboard-refresh:empty{ display: none; }
+  .depboard-msg{ padding: 10px 0; font-size: var(--fs-small); color: #ff6a5a; }
+  .depboard-msg.is-dim{ color: inherit; opacity: 0.7; }
