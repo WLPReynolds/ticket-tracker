@@ -607,8 +607,8 @@ function openTrainProgress(train, service){
   }
 
   // Facelift stage 8 (2026-11-13): a full-screen page with a back arrow.
-  // Only the frame, header and notes changed — the scroll area, line, blob,
-  // rows and formation are built and positioned exactly as before.
+  // The tidy-up after it moved the scroll area, line, blob, rows and
+  // formation onto .tp-* classes (css/app.css) — they look and move as before.
   const overlay = document.createElement('div');
   overlay.className = 'ui-page tp-page';
   overlay.innerHTML = `
@@ -633,10 +633,10 @@ function openTrainProgress(train, service){
         <span class="tp-text-link tp-dim" role="button" id="show-all-reasons-toggle">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
       </div>
       <div id="train-progress-formation-wrap">${initial.formationHtml}${initial.formationDebugHtml}</div>
-      <div id="train-progress-scroll" style="flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; padding-right:14px;">
-        <div style="position:relative; padding-left:6px;">
-          <div id="train-progress-line" style="position:absolute; left:11px; top:0px; width:2px; height:0px; background:var(--line);"></div>
-          <div id="train-progress-blob" style="position:absolute; left:6px; width:12px; height:12px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px rgba(242,169,59,0.7); top:0px; transition:top 1.2s ease; z-index:2;"></div>
+      <div class="tp-scroll" id="train-progress-scroll">
+        <div class="tp-track">
+          <div class="tp-line" id="train-progress-line"></div>
+          <div class="tp-blob" id="train-progress-blob"></div>
           <div id="train-progress-rows">${initial.rowsHtml}</div>
           <div class="tp-footnote" id="train-progress-operator">${service.operator ? `Operator: ${escapeHtml(service.operator)}` : ''}</div>
           <div class="tp-footnote" id="train-progress-formation-footnote"${initial.formationIsEstimated ? '' : ' style="display:none;"'}>* coach count estimated from formation length, not live per-coach data</div>

@@ -506,34 +506,9 @@
     display:flex; align-items:flex-end;
     z-index: 50;
   }
-  .modal{
-    background: var(--board-2);
-    width:100%;
-    border-radius: 16px 16px 0 0;
-    padding: 20px 18px 28px;
-    border-top: 1px solid var(--line);
-    /* A generous fixed ceiling, not dependent on measuring the bottom
-       bar's exact height — that measurement approach turned out to be
-       unreliable (the same root cause behind the old "Show more days"
-       bug). This guarantees any modal's own content, however long, can
-       always be reached via its own internal scroll rather than
-       potentially being trapped behind the bar with no way to reach it. */
-    max-height: calc(100vh - 80px - env(safe-area-inset-bottom));
-    overflow-y: auto;
-  }
-  .modal h3{ margin:0 0 4px; font-size:16px; }
-  .modal .sub{ color: var(--ink-dim); font-size:13px; margin-bottom:14px; }
-
-  /* .modal-overlay-full and .modal-overlay-nav-safe were removed in facelift
-     stage 8 (2026-11-13): every full-height screen is now a .ui-page or the
-     Live .ui-tabpage. */
-  .modal-close{
-    text-align:center;
-    margin-top: 14px;
-    color: var(--ink-dim);
-    font-size: 13px;
-    cursor:pointer;
-  }
+  /* The old .modal sheet, .modal-close link and their .sub/.h3 styles were
+     deleted in the facelift tidy-up (2026-11-13): sheets are .ui-sheet,
+     full screens are .ui-page, and Live is the only .modal-overlay left. */
   .loading{
     text-align:center;
     padding: 60px 20px;
@@ -1056,6 +1031,62 @@
   .tp-gap-sm{ margin-top: var(--space-1); }
   .tp-summary{ font-size: var(--fs-small); color: var(--amber); }
   .tp-footnote{ font-size: var(--fs-label); color: var(--ink-dim); margin-top: var(--space-1); }
+
+  /* Train progress timeline, formation strip and Staff arr/dep columns.
+     Moved off inline styles in the facelift tidy-up (2026-11-13) — same
+     look as before. What stays inline is set at run time: the line's
+     top/height and the blob's top (measured from the real rows), a coach
+     loading bar's width, and colours that come from the point's status. */
+  .tp-scroll{ flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; padding-right: 14px; }
+  .tp-track{ position: relative; padding-left: 6px; }
+  .tp-line{ position: absolute; left: 11px; top: 0; width: 2px; height: 0; background: var(--line); }
+  .tp-blob{ position: absolute; left: 6px; top: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 6px rgba(242,169,59,0.7); transition: top 1.2s ease; z-index: 2; }
+  .tp-summary-sub{ font-size: var(--fs-small); margin-top: var(--space-1); opacity: 0.9; }
+  .tp-summary-sub.is-reason{ opacity: 0.85; }
+  .tp-day{ text-align: center; font-size: var(--fs-small); color: var(--amber); padding: var(--space-2) 0; border-bottom: 1px solid var(--line); margin-left: 6px; }
+  /* min-height is only a floor — the line and blob are positioned from
+     the real measured row heights, not this. */
+  .rail-detail-row.tp-row{ align-items: center; min-height: 54px; padding-left: 22px; position: relative; }
+  .rail-detail-row.tp-row.is-mine{ background: color-mix(in srgb, var(--amber) 8%, transparent); }
+  .tp-dot{ position: absolute; left: 2px; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--line); transform: translateY(-50%); }
+  .tp-time{ min-width: 56px; }
+  .tp-where{ flex: 1; text-align: right; }
+  .tp-where .wx-badge{ margin-right: 6px; font-size: var(--fs-small); white-space: nowrap; }
+  .tp-name{ color: var(--ink); }
+  .tp-name.is-yours{ color: var(--amber); font-weight: 600; }
+  .tp-status{ font-size: var(--fs-small); margin-top: 1px; }
+  .tp-reason{ font-size: var(--fs-small); color: var(--salmon); margin-top: 1px; }
+  .tp-was{ text-decoration: line-through; color: var(--ink-dim); font-size: var(--fs-small); }
+  .tp-now{ font-weight: 600; }
+  .tp-est{ color: #e8935f; font-style: italic; }
+  .tp-pill{ color: #fff; font-weight: 700; font-size: var(--fs-label); letter-spacing: 0.3px; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+  .tp-pill-here{ background: #2fa360; }
+  .tp-pill-stuck{ background: #ff4d3d; }
+  .tp-raw{ font-family: monospace; font-size: 10px; color: #6a7a8a; margin-top: 2px; }
+  .tp-cols{ white-space: nowrap; }
+  .tp-col{ display: inline-block; min-width: 42px; vertical-align: top; }
+  .tp-col + .tp-col{ margin-left: 6px; }
+  .tp-col-label{ display: block; font-size: var(--fs-label); letter-spacing: 0.4px; text-transform: uppercase; color: var(--ink-dim); opacity: 0.8; }
+  .tp-col-sched{ display: block; color: var(--ink-dim); font-size: var(--fs-small); }
+  .tp-col-sched.is-changed{ text-decoration: line-through; }
+  .tp-col-time.is-late{ color: var(--salmon); }
+  .tp-col-time.is-ok{ color: var(--good); }
+  .tp-col-time.is-confirmed{ font-weight: 600; }
+  .tp-col-time.is-est{ font-style: italic; }
+  .tp-formation{ margin-bottom: 10px; }
+  .tp-formation-none{ margin-bottom: 10px; font-size: var(--fs-label); color: var(--ink-dim); }
+  .tp-formation-caption{ font-size: var(--fs-label); color: var(--ink-dim); margin-bottom: var(--space-1); }
+  .tp-coaches{ display: flex; align-items: center; overflow-x: auto; padding-bottom: 2px; }
+  .tp-nose{ flex: 0 0 auto; margin-right: 2px; display: flex; align-items: center; }
+  .tp-nose svg{ display: block; }
+  .tp-coach{ flex: 0 0 auto; position: relative; width: 36px; height: 34px; margin-right: 2px; background: var(--tile); border: 1px solid var(--line); border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: var(--fs-small); font-weight: 600; color: var(--ink); }
+  .tp-coach.is-first{ background: color-mix(in srgb, var(--amber) 20%, var(--tile)); }
+  .tp-load{ position: absolute; left: 3px; right: 3px; bottom: 2px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.15); overflow: hidden; }
+  .tp-load > div{ height: 100%; }
+  .tp-load.is-low > div{ background: var(--good); }
+  .tp-load.is-mid > div{ background: var(--amber); }
+  .tp-load.is-high > div{ background: var(--danger); }
+  .tp-formation-debug{ font-family: monospace; font-size: 10px; color: #6a7a8a; white-space: pre-wrap; margin-bottom: 10px; max-height: 160px; overflow-y: auto; border: 1px dashed var(--line); border-radius: 6px; padding: 6px; }
 
   /* ---------- Performance pages (facelift stage 8) ---------- */
   .ui-page.perf-page{ overflow: hidden; }
