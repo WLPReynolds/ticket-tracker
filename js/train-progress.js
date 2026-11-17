@@ -138,6 +138,17 @@ async function fetchWeatherForPoints(weatherPoints){
   return results;
 }
 
+// Banner text for the lost-connection state. The banner is tappable (it
+// forces an immediate refresh), so the text says so; it swaps to
+// RETRYING while that attempt is running.
+const OFFLINE_BANNER_TEXT = 'Lost connection — showing estimated progress based on the last data received. Tap to retry.';
+const OFFLINE_BANNER_RETRYING_TEXT = 'Retrying…';
+// After waking the screen the radio is often not ready on the first
+// request, so a failed wake-triggered refresh is retried quickly (a few
+// seconds) instead of waiting out the normal refresh cadence.
+const RESUME_RETRY_MS = 3000;
+const RESUME_RETRY_MAX = 2;
+
 function openTrainProgress(train, service){
   // See activeTrainProgressCleanup above — never let two of these run
   // at once, since they share element IDs and each runs its own timer.
@@ -422,6 +433,8 @@ function openTrainProgress(train, service){
   // network response arrives second silently overwriting the other,
   // regardless of which was actually more recent.
   let refreshInFlight = false;
+  // Quick retries left after a wake-triggered refresh fails; reset on each wake.
+  let resumeRetriesLeft = 0;
   // Same idea, scoped to weather: applyWeather() fetches independently of
   // the Darwin refresh cycle above, so an older weather request can still
   // be in flight when a newer Darwin refresh rebuilds the rows. Each
@@ -627,7 +640,7 @@ function openTrainProgress(train, service){
       <div class="tp-last-check" id="train-progress-last-check">Opened ${new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone: 'Europe/London'})}</div>
       <div class="tp-debug tp-board-debug" id="train-progress-board-debug" style="display:none;"></div>
       <div class="tp-debug tp-debug-box tp-staff-debug" id="train-progress-staff-debug" style="display:none;"></div>
-      <div class="ui-notice ui-notice-bad tp-gap" id="train-progress-offline-banner" style="display:none;">Lost connection — showing estimated progress based on the last data received.</div>
+      <div class="ui-notice ui-notice-bad tp-gap tp-offline-banner" id="train-progress-offline-banner" role="button" style="display:none;">${OFFLINE_BANNER_TEXT}</div>
       <div class="ui-notice ui-notice-warn tp-summary tp-gap" id="train-progress-summary">${initial.summaryHtml}</div>
       <div class="tp-gap" id="train-progress-reason-toggle-wrap"${initial.anyReasonSuppressed ? '' : ' style="display:none;"'}>
         <span class="tp-text-link tp-dim" role="button" id="show-all-reasons-toggle">${showAllReasons ? 'Hide repeated reasons' : 'A reason was hidden as likely outdated — show it anyway'}</span>
@@ -949,7 +962,10 @@ function openTrainProgress(train, service){
     refreshTimer = setTimeout(doRefresh, delayMs);
   }
 
-  async function doRefresh(){
+  // opts.resume is set by the wake-from-background path, so a failure
+  // there gets a quick retry (see RESUME_RETRY_MS).
+  async function doRefresh(opts){
+    const isResume = !!(opts && opts.resume);
     // An interval tick and a visibility-wake tick can otherwise overlap;
     // if one's already running, just let it finish rather than starting
     // a second one that could resolve out of order.
@@ -1173,7 +1189,10 @@ function openTrainProgress(train, service){
       renderGeneration++;
       applyWeather(stale.weatherPoints, stale.lastPassedIdx, stale.fraction, renderGeneration);
       if (reasonToggleWrap) reasonToggleWrap.style.display = stale.anyReasonSuppressed ? '' : 'none';
-      if (offlineBanner) offlineBanner.style.display = 'block';
+      if (offlineBanner){
+        offlineBanner.textContent = OFFLINE_BANNER_TEXT; // back from "Retrying…" if that was a tap
+        offlineBanner.style.display = 'block';
+      }
       if (blobEl) blobEl.classList.add('blob-pulsing');
       if (stale.journeyFinished){
         // Even the last data we successfully got already showed this
@@ -1184,6 +1203,13 @@ function openTrainProgress(train, service){
         const barWrap = overlay.querySelector('#train-progress-refresh-bar-wrap');
         if (barWrap) barWrap.style.display = 'none';
         if (lastCheckEl) lastCheckEl.style.display = 'none';
+      } else if (isResume && resumeRetriesLeft > 0){
+        // Woke from background and the first request failed — try again
+        // shortly rather than leaving the banner up for a full cycle.
+        resumeRetriesLeft--;
+        if (refreshTimer){ clearTimeout(refreshTimer); refreshTimer = null; }
+        resetRefreshBar(RESUME_RETRY_MS);
+        refreshTimer = setTimeout(() => doRefresh({ resume: true }), RESUME_RETRY_MS);
       } else {
         scheduleNextRefresh(stale);
       }
@@ -1198,7 +1224,20 @@ function openTrainProgress(train, service){
   // was left on it (which, during the pre-departure quiet period, could
   // be a long wait indeed).
   function onVisible(){
-    if (document.visibilityState === 'visible') doRefresh();
+    if (document.visibilityState === 'visible'){
+      resumeRetriesLeft = RESUME_RETRY_MAX;
+      doRefresh({ resume: true });
+    }
+  }
+
+  // Tapping the lost-connection banner forces an immediate retry.
+  const offlineBannerEl = overlay.querySelector('#train-progress-offline-banner');
+  if (offlineBannerEl){
+    offlineBannerEl.addEventListener('click', () => {
+      offlineBannerEl.textContent = OFFLINE_BANNER_RETRYING_TEXT;
+      resumeRetriesLeft = 0;
+      doRefresh();
+    });
   }
 
   if (initial.journeyFinished){
