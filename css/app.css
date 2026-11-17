@@ -1028,6 +1028,7 @@
   .tp-refresh-bar > div{ height: 100%; width: 0%; background: var(--amber); }
   .tp-last-check{ font-size: var(--fs-label); color: var(--ink-dim); text-align: right; margin-bottom: var(--space-2); }
   .tp-gap{ margin-bottom: var(--space-2); }
+  .tp-offline-banner{ cursor: pointer; }
   .tp-gap-sm{ margin-top: var(--space-1); }
   .tp-summary{ font-size: var(--fs-small); color: var(--amber); }
   .tp-footnote{ font-size: var(--fs-label); color: var(--ink-dim); margin-top: var(--space-1); }
