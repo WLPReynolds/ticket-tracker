@@ -296,6 +296,9 @@ header.top.ui-home-head{
 .ui-segments{ display: flex; gap: var(--space-1); margin-top: var(--space-4); }
 .ui-segments span{ flex: 1; height: 8px; border-radius: 4px; background: var(--line); }
 .ui-segments span.on{ background: var(--amber); }
+@keyframes ui-segment-blink{ 0%, 100%{ opacity: 1; } 50%{ opacity: 0.25; } }
+.ui-segments span.is-latest-pending{ animation: ui-segment-blink 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce){ .ui-segments span.is-latest-pending{ animation: none; opacity: 0.6; } }
 .ui-banner-note{ margin-top: var(--space-3); font-size: var(--fs-small); color: var(--ink-dim); }
 .ui-banner-note.ui-tap{ color: var(--amber); font-weight: 600; cursor: pointer; }
 
