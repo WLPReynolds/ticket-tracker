@@ -337,7 +337,17 @@ function render(){
       noteHtml = `<div class="ui-banner-note">Marked "${escapeHtml(todayComment)}" but counted</div>`;
     }
   }
-  const segments = Array.from({ length: 8 }, (_, i) => `<span class="${i < usedForBar ? 'on' : ''}"></span>`).join('');
+  // Today's segment blinks until a train is confirmed for today (manual Yes,
+  // Confirm train used, silent phone confirm or watch confirm all write
+  // confirmedTrains). Only when today actually counts against the ticket.
+  const todayConfirmed = confirmedTrains[todayKey] || {};
+  const todayCounts = !beforePeriod && !isPhantomToday && !todayState.inGap && !todayIsWeekend
+    && !(todayComment !== '' && !travelOverrides[todayKey]);
+  const blinkLatest = todayCounts && usedForBar > 0 && todayConfirmed.AM === undefined && todayConfirmed.PM === undefined;
+  const segments = Array.from({ length: 8 }, (_, i) => {
+    const cls = i < usedForBar ? (blinkLatest && i === usedForBar - 1 ? 'on is-latest-pending' : 'on') : '';
+    return `<span class="${cls}"></span>`;
+  }).join('');
   const rightHalf = buyToday
     ? `<button type="button" class="ui-pair-half ui-pair-buy ui-pair-action" id="renewal-banner-tap"><div class="ui-label">Buy next ticket</div><div class="ui-pair-big"><span class="ui-pair-num">${rightNum}</span><span class="ui-pair-unit ui-pair-unit-strong">${rightMonth}</span></div><div class="ui-train-sub">${rightSub}</div></button>`
     : `<div class="ui-pair-half"><div class="ui-label">Buy next ticket</div><div class="ui-pair-big"><span class="ui-pair-num">${rightNum}</span><span class="ui-pair-unit ui-pair-unit-strong">${rightMonth}</span></div><div class="ui-train-sub">${rightSub}</div></div>`;
