@@ -328,7 +328,12 @@ function openLiveScreen(initialSubTab){
       document.querySelectorAll('#live-board-content [data-train-key]').forEach(row => {
         row.addEventListener('click', () => {
           const m = matchedServices[row.dataset.trainKey];
-          if (m) openTrainProgress(m.train, m.service);
+          if (m){
+            openTrainProgress(m.train, m.service);
+            // openTrainProgress adds the train to trackedTrains straight
+            // away — refresh the "Tracked (n)" label now, not on next tab switch.
+            styleTabs();
+          }
         });
       });
     }).catch(err => {

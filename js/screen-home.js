@@ -291,7 +291,12 @@ function render(){
 
   let leftNum = '–', leftSub = '', usedForBar = 0;
   if (beforePeriod){
-    leftSub = `Starts ${dateLabelShort(parseKey(periodStart))}`;
+    // A ticket bought ahead of its start date is still a full ticket —
+    // show all 8 rather than a dash until the first day ticks over.
+    const startDate = parseKey(periodStart);
+    const daysToStart = Math.round((startDate.getTime() - today.getTime()) / 86400000);
+    leftNum = String(USES_PER_PERIOD);
+    leftSub = daysToStart === 1 ? 'Starts tomorrow' : `Starts ${dateLabelShort(startDate)}`;
   } else if (isPhantomToday){
     leftSub = 'No active ticket';
   } else if (todayState.inGap){
