@@ -333,7 +333,13 @@ async function checkPendingConfirmation(){
     }
   }
 
-  if (changed) saveConfirmedTrains();
+  if (changed){
+    saveConfirmedTrains();
+    // Re-render Home so anything driven by confirmedTrains (the blinking
+    // ticket segment, day strip) updates without reopening the app. The
+    // phone's own silent-confirm paths already do this.
+    render();
+  }
   if (catchupEntries.length){
     catchupBanner = { entries: catchupEntries, expanded: catchupEntries.length === 1 };
     renderCatchupBanner();
