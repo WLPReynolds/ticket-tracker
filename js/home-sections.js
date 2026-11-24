@@ -492,7 +492,7 @@ function openMoneyDetails(){
     let parking = '';
     if (offset <= 0){
       const v = homeParkingSavingsFor(today, offset);
-      parking = `<div class="ui-card ui-block"><div class="ui-block-title">Parking savings</div>
+      parking = `<div class="ui-card ui-block ui-card-tap" id="money-parking" role="button" tabindex="0" aria-label="Parking days for this period"><div class="ui-block-title ui-block-title-chev">Parking savings<span class="ui-row-chev">${UI_ICON_CHEV}</span></div>
         <div class="ui-figure-value ui-figure-large ui-num ${v >= 0 ? 'ui-good' : 'ui-bad'}">${v >= 0 ? '£' + v.toFixed(2) + ' saved' : '£' + Math.abs(v).toFixed(2) + ' over budget'}</div></div>`;
     }
     const year = today.getFullYear();
@@ -515,10 +515,83 @@ function openMoneyDetails(){
     document.getElementById('money-prev').addEventListener('click', () => { offset = Math.max(MIN, offset - 1); draw(); });
     document.getElementById('money-next').addEventListener('click', () => { offset = Math.min(MAX, offset + 1); draw(); });
     document.getElementById('money-manage').addEventListener('click', () => openManagePurchases());
+    const parkingCard = document.getElementById('money-parking');
+    if (parkingCard){
+      const open = () => openParkingDays(offset);
+      parkingCard.addEventListener('click', open);
+      parkingCard.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); } });
+    }
   }
   homePageRefresh = draw;
   document.getElementById('money-close-btn').addEventListener('click', () => {
     homePageRefresh = null;
+    overlay.remove();
+  });
+  draw();
+}
+
+// Parking days (2026-11-24): every day of a pay period with what was paid for parking.
+// Opened from the Parking savings card on Money details; stacks over it. Read-only.
+// Days up to today show the logged amount or £0.00, future days a dash. Weekends and
+// non-travel weekdays (a day comment, no travel override) are shaded but still show a
+// value, so an occasional weekend parking day just appears. Saved uses the same figure
+// as the card (live for this period, the locked snapshot for past periods).
+function openParkingDays(startOffset){
+  const overlay = document.createElement('div');
+  overlay.className = 'ui-page';
+  overlay.innerHTML = `${uiPageBar('Parking', { backId: 'parking-close-btn', backLabel: 'Back to Money' })}<div class="ui-page-body" id="parking-body"></div>`;
+  document.body.appendChild(overlay);
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const todayKey = fmtKey(today);
+  const MIN = -12;
+  let offset = Math.min(0, startOffset || 0);
+
+  function draw(){
+    const period = getPayPeriodByOffset(today, offset);
+    const label = `${dateLabelShort(period.start)} – ${dateLabelShort(period.end)}`;
+    const rows = [];
+    let paid = 0;
+    for (let d = new Date(period.start); d <= period.end; d = addDays(d, 1)){
+      const key = fmtKey(d);
+      const weekend = isWeekend(d);
+      const comment = (comments[key] || '').trim();
+      const nonTravel = !weekend && comment !== '' && !travelOverrides[key];
+      let cls = '';
+      if (weekend) cls = ' is-weekend';
+      else if (nonTravel) cls = ' is-nontravel';
+      let value;
+      if (key > todayKey){
+        value = '<span class="ui-dim">–</span>';
+      } else {
+        const cost = parkedDays[key] !== undefined ? Number(parkedDays[key]) : 0;
+        paid += cost;
+        value = `£${cost.toFixed(2)}`;
+      }
+      const note = nonTravel ? ` <span class="ui-data-row-sub">${escapeHtml(comment)}</span>` : '';
+      const todayTag = key === todayKey ? ' <span class="ui-data-row-sub">today</span>' : '';
+      rows.push(`<div class="ui-data-row${cls}"><span class="ui-data-row-main">${dayNameShort(d)} ${dateLabelShort(d)}${note}${todayTag}</span><span class="ui-data-row-value ui-num">${value}</span></div>`);
+    }
+    const saved = homeParkingSavingsFor(today, offset);
+    const savedText = saved >= 0 ? `£${saved.toFixed(2)}` : `£${Math.abs(saved).toFixed(2)} over`;
+
+    document.getElementById('parking-body').innerHTML = `
+      <div class="ui-period">
+        <button type="button" class="ui-period-btn" id="parking-prev" aria-label="Earlier pay period" ${offset <= MIN ? 'disabled' : ''}>&#8249;</button>
+        <div class="ui-period-label">Payday period ${label}${offset === 0 ? ' · this period' : ''}</div>
+        <button type="button" class="ui-period-btn" id="parking-next" aria-label="Later pay period" ${offset >= 0 ? 'disabled' : ''}>&#8250;</button>
+      </div>
+      <div class="ui-card ui-card-flush ui-data-list ui-parking-days">${rows.join('')}</div>
+      <div class="ui-card ui-card-flush ui-data-list">
+        <div class="ui-data-row"><span class="ui-data-row-main">${offset === 0 ? 'Paid so far' : 'Paid'}</span><span class="ui-data-row-value ui-num">£${paid.toFixed(2)}</span></div>
+        <div class="ui-data-row"><span class="ui-data-row-main">Saved</span><span class="ui-data-row-value ui-num ${saved >= 0 ? 'ui-good' : 'ui-bad'}">${savedText}</span></div>
+      </div>`;
+    document.getElementById('parking-prev').addEventListener('click', () => { offset = Math.max(MIN, offset - 1); draw(); });
+    document.getElementById('parking-next').addEventListener('click', () => { offset = Math.min(0, offset + 1); draw(); });
+  }
+  const previousRefresh = homePageRefresh;
+  homePageRefresh = () => { draw(); if (previousRefresh) previousRefresh(); };
+  document.getElementById('parking-close-btn').addEventListener('click', () => {
+    homePageRefresh = previousRefresh;
     overlay.remove();
   });
   draw();

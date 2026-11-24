@@ -167,7 +167,7 @@ Avanti asks for a photo of your ticket and your smartcard number. Add both once 
 ### Home Tab Money
 The money row at the bottom of Home shows the three figures; tap it for **Money** details, where the **‹** and **›** arrows move between pay periods.
 * **Set aside on payday:** Counts the tickets and parking days in your pay period (paid on the 28th, moved earlier for weekends and bank holidays) and totals what to set aside. Use the **‹** and **›** arrows to preview future periods. The same figures can be shared with your Personal Finance app — see **Sharing Estimates with Personal Finance** below.
-* **Savings card:** What parking has saved you this ticket period.
+* **Savings card:** What parking has saved you this pay period. Tap **Parking savings** on the Money page to see every day of the period with what you paid (£0.00 if you didn't park, a dash for days still to come), plus what you've paid so far and saved. Weekends and days you didn't travel are shaded.
 * **Spending card:** What you've spent on tickets this year.
 
 Any of these cards can be hidden or shown again in **Settings** (**Payday figure**, **Parking savings figure**, **Spending figure** under **Home screen**). Daily parking cost and day-return price live in **Settings → Costs**.
