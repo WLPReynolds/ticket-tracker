@@ -293,13 +293,6 @@ function homeTrainsInnerHtml(){
   const j = homeJourney();
   if (!j || !j.trains.length) return '';
 
-  const suggestion = likelyTrainSuggestion ? `
-    <div class="ui-train-suggest">
-      <div class="ui-train-suggest-title">Is this your train?</div>
-      <div class="ui-train-suggest-text">Looks like you might be on the delayed <strong class="ui-amber">${escapeHtml(likelyTrainSuggestion.label)}</strong> instead of your usual one.</div>
-      <div class="ui-train-suggest-btns"><button type="button" class="ui-btn-primary" id="likely-train-yes-btn">Yes, that's me</button><button type="button" class="ui-btn-secondary" id="likely-train-no-btn">No</button></div>
-    </div>` : '';
-
   // Trains that have left (or were cancelled and their time has passed) drop off the card.
   const rows = j.trains.map(t => {
     const svc = j.live ? homeServiceFor(t) : null;
@@ -333,7 +326,39 @@ function homeTrainsInnerHtml(){
   // Main first, then the others in time order.
   const mainIdx = rows.indexOf(main);
   const ordered = [html[mainIdx], ...html.filter((_, i) => i !== mainIdx)];
-  return `<div class="ui-card ui-card-flush">${ordered.join('')}${suggestion}</div>`;
+  return `<div class="ui-card ui-card-flush">${ordered.join('')}</div>`;
+}
+
+// 2026-11-24: the "Is this your train?" prompt used to sit at the bottom of
+// the Your trains card, so it was easy to miss and hidden altogether behind
+// the live progress page and the Live tab. It's now its own amber banner on
+// document.body, fixed just above the bottom nav, and shows over every
+// screen (pages included, sheets and toasts still on top) until answered.
+// Called from render() and homePaintTrains(); only rebuilt when the
+// suggestion itself changes, so a repaint doesn't swallow a tap.
+function paintTrainSuggestBanner(){
+  let el = document.getElementById('train-suggest-banner');
+  const s = likelyTrainSuggestion;
+  if (!s){
+    if (el) el.remove();
+    return;
+  }
+  const key = `${s.dateKey}-${s.direction}-${s.trainKey}`;
+  if (el && el.dataset.key === key) return;
+  if (!el){
+    el = document.createElement('div');
+    el.id = 'train-suggest-banner';
+    el.className = 'ui-train-suggest';
+    el.setAttribute('role', 'alertdialog');
+    el.setAttribute('aria-labelledby', 'train-suggest-title');
+    document.body.appendChild(el);
+  }
+  el.dataset.key = key;
+  el.innerHTML = `
+    <div class="ui-train-suggest-title" id="train-suggest-title">Is this your train?</div>
+    <div class="ui-train-suggest-text">Looks like you might be on the delayed <strong>${escapeHtml(s.label)}</strong> instead of your usual one.</div>
+    <div class="ui-train-suggest-btns"><button type="button" class="ui-btn-primary" id="likely-train-yes-btn">Yes, that's me</button><button type="button" class="ui-btn-secondary" id="likely-train-no-btn">No</button></div>`;
+  homeWireLikelyTrainButtons();
 }
 
 function homeWireLikelyTrainButtons(){
@@ -380,7 +405,6 @@ function homeWireTrains(){
       else homeOpenLive();
     });
   });
-  homeWireLikelyTrainButtons();
 }
 
 function homePaintTrains(){
@@ -388,6 +412,7 @@ function homePaintTrains(){
   if (!el) return;
   el.innerHTML = homeTrainsInnerHtml();
   homeWireTrains();
+  paintTrainSuggestBanner();
 }
 
 // Fetch live boards for the usual trains, at most once a minute, and only on a commute day.

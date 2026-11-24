@@ -689,4 +689,5 @@ function render(){
   }
 
   if (homePageRefresh) homePageRefresh(); // keeps an open Month view / Money details in step with the data
+  paintTrainSuggestBanner(); // 2026-11-24: shown over every screen, not just Home
 }
