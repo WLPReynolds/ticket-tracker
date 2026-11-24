@@ -536,6 +536,7 @@ function openMoneyDetails(){
 // non-travel weekdays (a day comment, no travel override) are shaded but still show a
 // value, so an occasional weekend parking day just appears. Saved uses the same figure
 // as the card (live for this period, the locked snapshot for past periods).
+// 2026-11-24 evening: paid amounts in amber; footer adds the parking budget (set aside).
 function openParkingDays(startOffset){
   const overlay = document.createElement('div');
   overlay.className = 'ui-page';
@@ -565,13 +566,16 @@ function openParkingDays(startOffset){
       } else {
         const cost = parkedDays[key] !== undefined ? Number(parkedDays[key]) : 0;
         paid += cost;
-        value = `£${cost.toFixed(2)}`;
+        value = cost > 0 ? `<span class="ui-amber">£${cost.toFixed(2)}</span>` : `£${cost.toFixed(2)}`;
       }
       const note = nonTravel ? ` <span class="ui-data-row-sub">${escapeHtml(comment)}</span>` : '';
       const todayTag = key === todayKey ? ' <span class="ui-data-row-sub">today</span>' : '';
       rows.push(`<div class="ui-data-row${cls}"><span class="ui-data-row-main">${dayNameShort(d)} ${dateLabelShort(d)}${note}${todayTag}</span><span class="ui-data-row-value ui-num">${value}</span></div>`);
     }
     const saved = homeParkingSavingsFor(today, offset);
+    // Budget: the parking part of the "Set aside on payday" figure (locked snapshot for past periods).
+    const startKey = fmtKey(period.start);
+    const budget = (offset < 0 && !paydayEstimateSnapshots[startKey]) ? null : estimateForPeriod(today, offset).parkingCost;
     const savedText = saved >= 0 ? `£${saved.toFixed(2)}` : `£${Math.abs(saved).toFixed(2)} over`;
 
     document.getElementById('parking-body').innerHTML = `
@@ -582,6 +586,7 @@ function openParkingDays(startOffset){
       </div>
       <div class="ui-card ui-card-flush ui-data-list ui-parking-days">${rows.join('')}</div>
       <div class="ui-card ui-card-flush ui-data-list">
+        <div class="ui-data-row"><span class="ui-data-row-main">Budget (set aside)</span><span class="ui-data-row-value ui-num">${budget === null ? '<span class="ui-dim">–</span>' : '£' + budget.toFixed(2)}</span></div>
         <div class="ui-data-row"><span class="ui-data-row-main">${offset === 0 ? 'Paid so far' : 'Paid'}</span><span class="ui-data-row-value ui-num">£${paid.toFixed(2)}</span></div>
         <div class="ui-data-row"><span class="ui-data-row-main">Saved</span><span class="ui-data-row-value ui-num ${saved >= 0 ? 'ui-good' : 'ui-bad'}">${savedText}</span></div>
       </div>`;
