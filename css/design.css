@@ -330,12 +330,30 @@ header.top.ui-home-head{
 .ui-train-line .ui-train-line-time{ font-size: var(--fs-title); font-weight: 700; font-variant-numeric: tabular-nums; }
 .ui-train-line .ui-train-line-text{ flex: 1; min-width: 0; font-size: var(--fs-small); color: var(--ink-dim); }
 .ui-train-line.is-gone .ui-train-line-time{ color: var(--ink-dim); }
-.ui-train-suggest{ padding: var(--space-4); border-top: 1px solid var(--line); }
+/* "Is this your train?" — action needed, so a solid amber banner with dark
+   text (2026-11-24, Wayne). Fixed above the bottom nav and shown over every
+   screen: z-index 64 is above pages (60) and the nav (55), below sheets (65)
+   so a sheet's own buttons are never covered, and below toasts (300). */
+.ui-train-suggest{
+  position: fixed;
+  left: var(--margin); right: var(--margin);
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  z-index: 64;
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--amber);
+  color: var(--board);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.55);
+}
 .ui-train-suggest-title{ font-size: var(--fs-body); font-weight: 700; }
-.ui-train-suggest-text{ font-size: var(--fs-small); color: var(--ink-dim); margin: var(--space-1) 0 var(--space-3); }
+.ui-train-suggest-text{ font-size: var(--fs-small); margin: var(--space-1) 0 var(--space-3); }
+.ui-train-suggest-text strong{ font-weight: 700; }
 .ui-train-suggest-btns{ display: flex; gap: var(--space-3); }
 .ui-train-suggest-btns .ui-btn-primary,
 .ui-train-suggest-btns .ui-btn-secondary{ flex: 1; }
+/* Inverted buttons on the amber: Yes dark with amber text, No outlined. */
+.ui-train-suggest-btns .ui-btn-primary{ background: var(--board); color: var(--amber); }
+.ui-train-suggest-btns .ui-btn-secondary{ background: transparent; border: 1.5px solid var(--board); color: var(--board); }
 .ui-train-chev{ display: flex; color: var(--ink-dim); }
 .ui-train-chev svg{ width: 18px; height: 18px; }
 
