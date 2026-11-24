@@ -586,7 +586,7 @@ function openParkingDays(startOffset){
       </div>
       <div class="ui-card ui-card-flush ui-data-list ui-parking-days">${rows.join('')}</div>
       <div class="ui-card ui-card-flush ui-data-list">
-        <div class="ui-data-row"><span class="ui-data-row-main">Budget (set aside)</span><span class="ui-data-row-value ui-num">${budget === null ? '<span class="ui-dim">–</span>' : '£' + budget.toFixed(2)}</span></div>
+        <div class="ui-data-row"><span class="ui-data-row-main">Budget</span><span class="ui-data-row-value ui-num">${budget === null ? '<span class="ui-dim">–</span>' : '£' + budget.toFixed(2)}</span></div>
         <div class="ui-data-row"><span class="ui-data-row-main">${offset === 0 ? 'Paid so far' : 'Paid'}</span><span class="ui-data-row-value ui-num">£${paid.toFixed(2)}</span></div>
         <div class="ui-data-row"><span class="ui-data-row-main">Saved</span><span class="ui-data-row-value ui-num ${saved >= 0 ? 'ui-good' : 'ui-bad'}">${savedText}</span></div>
       </div>`;
