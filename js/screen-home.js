@@ -349,6 +349,11 @@ function render(){
   const todayCounts = !beforePeriod && !isPhantomToday && !todayState.inGap && !todayIsWeekend
     && !(todayComment !== '' && !travelOverrides[todayKey]);
   const blinkLatest = todayCounts && usedForBar > 0 && todayConfirmed.AM === undefined && todayConfirmed.PM === undefined;
+  // Until a train is confirmed, today's ticket hasn't really been used yet —
+  // show it as still left (and flash the number with the bar). Display only;
+  // the ticket maths in computeStates is unchanged.
+  if (blinkLatest) leftNum = String(todayState.unusedRemaining + 1);
+  const leftNumCls = blinkLatest ? 'ui-pair-num is-latest-pending' : 'ui-pair-num';
   const segments = Array.from({ length: 8 }, (_, i) => {
     const cls = i < usedForBar ? (blinkLatest && i === usedForBar - 1 ? 'on is-latest-pending' : 'on') : '';
     return `<span class="${cls}"></span>`;
@@ -426,7 +431,7 @@ function render(){
       <div class="ui-pair">
         <div class="ui-pair-half">
           <div class="ui-label">Tickets left</div>
-          <div class="ui-pair-big"><span class="ui-pair-num">${leftNum}</span><span class="ui-pair-unit">of 8</span></div>
+          <div class="ui-pair-big"><span class="${leftNumCls}">${leftNum}</span><span class="ui-pair-unit">of 8</span></div>
           <div class="ui-train-sub">${leftSub}</div>
         </div>
         ${rightHalf}
