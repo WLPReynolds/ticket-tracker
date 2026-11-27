@@ -66,6 +66,14 @@ function openBackupRestore(){
         <div class="ui-gap-top" id="transport-share-status">${escapeHtml(transportShareStatusText())}</div>
         <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top-sm" id="transport-share-now-btn" ${transportShareEnabled ? '' : 'disabled'}>Share now</button>
       </div>
+
+      <div class="ui-subhead">Parking from Personal Finance</div>
+      <div class="ui-card">
+        ${uiCheck('parking-import-toggle', 'Read parking from Personal Finance', parkingImportEnabled)}
+        <div class="ui-field-help">Marks a day as parked when you record a parking payment in Personal Finance (tick Parking on the payment), so you only record it once. Turning this on creates a small parking-transactions.json file in your "Ticket Tracker Backups" Drive folder for Personal Finance to fill in. Only payments dated from the day you first turn this on are used, and a day you've already marked yourself is never changed. Checks whenever you open the app. Turning this off stops reading; days already marked stay as they are.</div>
+        <div class="ui-gap-top" id="parking-import-status">${escapeHtml(parkingImportStatusText())}</div>
+        <button type="button" class="ui-btn-secondary ui-btn-block ui-gap-top-sm" id="parking-import-now-btn" ${parkingImportEnabled ? '' : 'disabled'}>Read now</button>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -154,6 +162,34 @@ function openBackupRestore(){
     }
   });
   transportNowBtn.addEventListener('click', () => { runTransportShare('Sharing…'); });
+
+  // 2026-11-27 — Read parking from Personal Finance. Both handlers call
+  // attemptParkingImport() before anything is awaited, so Google's popup
+  // (if a sign-in is needed) still has the tap behind it.
+  const parkingToggle = document.getElementById('parking-import-toggle');
+  const parkingStatus = document.getElementById('parking-import-status');
+  const parkingNowBtn = document.getElementById('parking-import-now-btn');
+  const runParkingImport = async () => {
+    const importPromise = attemptParkingImport({ interactive: true, force: true });
+    parkingNowBtn.disabled = true;
+    parkingStatus.textContent = 'Reading…';
+    const r = await importPromise;
+    parkingNowBtn.disabled = !parkingImportEnabled;
+    parkingStatus.textContent = r.ok ? parkingImportStatusText() : `Couldn't read: ${r.reason} — tap Read now to retry`;
+  };
+  parkingToggle.addEventListener('change', () => {
+    parkingImportEnabled = parkingToggle.checked;
+    if (parkingImportEnabled && !parkingImportSince) parkingImportSince = fmtKey(state.today); // first switch-on only (decision 1)
+    saveParkingImportSettings();
+    if (parkingImportEnabled){
+      runParkingImport();
+    } else {
+      if (parkingImportTimer){ clearTimeout(parkingImportTimer); parkingImportTimer = null; }
+      parkingNowBtn.disabled = true;
+      parkingStatus.textContent = parkingImportStatusText();
+    }
+  });
+  parkingNowBtn.addEventListener('click', () => { runParkingImport(); });
 
   driveNowBtn.addEventListener('click', async () => {
     driveStatus.textContent = 'Backing up…';

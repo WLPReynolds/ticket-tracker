@@ -190,7 +190,8 @@ function fetchGoogleTokenFromWorker(){
 // doesn't depend on a network round trip while the page is being frozen.
 function maybeRefreshGoogleTokenFromWorker(){
   // 2026-10-06: also when sharing with Personal Finance, which works with Drive backups off (addendum 2b).
-  if (!driveBackupEnabled && !gcalEnabled && !transportShareEnabled) return;
+  // 2026-11-27: and when reading parking from Personal Finance.
+  if (!driveBackupEnabled && !gcalEnabled && !transportShareEnabled && !parkingImportEnabled) return;
   if (!pwaWriteSecret) return;
   const state = googleWorkerState();
   if (state === 'not-connected' || state === 'needs-reconnect') return; // only a tap (Connect / Reconnect) changes these

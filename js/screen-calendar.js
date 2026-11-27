@@ -11,6 +11,7 @@ function openDayEditor(key){
   // the two ticks save when changed, Save stores a typed reason.
   const customValue = current && !PRESET_TAGS.includes(current.toUpperCase()) ? current : '';
   const parked = parkedDays[key] !== undefined;
+  const importedEntry = parkingImportedEntryFor(key); // 2026-11-27 — set from Personal Finance (parking-import.js)
   const { overlay, close } = uiOpenSheet(dateLabel(d), `
       <div class="ui-sheet-sub">${weekend ? 'Weekend day — always skipped' : 'Add a reason this day doesn\'t count, or leave it blank for a normal travel day.'}</div>
       <div class="ui-chips" id="modal-chip-row">
@@ -29,6 +30,7 @@ function openDayEditor(key){
           <label class="ui-inline-label" for="modal-parked-cost-input">Parking cost (£)</label>
           <input type="number" inputmode="decimal" class="ui-input-short" id="modal-parked-cost-input" value="${(parked ? parkedDays[key] : parkingCost).toFixed(2)}" step="0.01" min="0" />
         </div>
+        ${importedEntry ? `<div class="ui-field-help" id="modal-parked-source">From Personal Finance${importedEntry.accounts && importedEntry.accounts.length ? ` (${escapeHtml(importedEntry.accounts.join(', '))})` : ''}. Changing it here means Personal Finance won't update this day any more.</div>` : ''}
       </div>` : ''}
       <div class="ui-sheet-actions"><button type="button" class="ui-btn-primary" id="modal-save-btn">Save</button></div>
   `, { id: 'day-editor-sheet' });
@@ -60,6 +62,7 @@ function openDayEditor(key){
       } else {
         modalParkedCostWrap.hidden = true;
         delete parkedDays[key];
+        const src = document.getElementById('modal-parked-source'); if (src) src.hidden = true;
       }
       await saveParkedDays();
       render();
