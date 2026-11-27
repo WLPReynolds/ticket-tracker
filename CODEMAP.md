@@ -9,7 +9,7 @@ The repo is public: structure only, never secrets.
 - `index.html` — just the `<head>`, the `#app` div, two `<link>`s (`design.css`, `app.css`) and the `<script>` tags. No code.
 - `css/design.css` — design tokens (type scale, radii, spacing) and the shared `ui-` parts (card, row, switch, button, figure, pill, page frame…). Loaded before `app.css`. **Read `STYLEGUIDE.md` before writing any new styling.**
 - `css/app.css` — every other style (one file, ~32 KB), including the colour palette in `:root`.
-- `js/*.js` — 31 plain script files (not ES modules), loaded in the order below. They share one global scope, exactly as the old single `<script>` block did, so any function can call any other.
+- `js/*.js` — 32 plain script files (not ES modules), loaded in the order below. They share one global scope, exactly as the old single `<script>` block did, so any function can call any other.
 - `sw.js` — service worker. Network-first, cache as offline fallback, one cache per version.
 - `tools/stamp-version.sh`, `tools/check.sh` — the release routine (below).
 - Unchanged: `manifest.json`, `privacy.html`, `icons/`, `CNAME`.
@@ -41,6 +41,7 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 7. `stations.js` — station list and index, `stationNameForCrs`, `createStationPicker`.
 8. `google.js` — Google sign-in, Worker-held token, Drive backup (`attemptDriveBackup`), backup nudge, Calendar sync, `fireBuyDateChangeActions`.
 9. `transport-estimates.js` — the Personal Finance shared estimates file (`scheduleTransportPublish`, `flushTransportPublish`).
+   - `parking-import.js` (loads straight after it) — reads parking payments from Personal Finance's `parking-transactions.json` and marks parked days (`scheduleParkingImport`, `attemptParkingImport`, `applyParkingTotals`). Spec: `claude/parking-transactions-spec.md`.
 10. `watch-sync.js` — `buildWatchConfigBody`, `pushWatchConfig`, `schedulePushWatchConfig`, `checkPendingConfirmation`, target trains, non-travel dates, geofence radii, drive-check payload.
 11. `confirm-train.js` — `checkLikelyTrain`, `checkLikelyArrival`, the check timer, `openConfirmTrain`.
 12. `journey-share.js` — Copy for WhatsApp, silent-confirm banner, catch-up banner.
@@ -75,6 +76,7 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 - Kept elsewhere, device-only (not backed up):
   - `google.js` — `google-token-cache`, `google-worker-status`, `drive-backup-dirty`, `drive-backup-last-time`, `google-silent-refresh-log`
   - `transport-estimates.js` — `transport-estimates-file-id`, `-published`, `-last-shared`, `-last-error` (the setting `transport-estimates-enabled` is backed up)
+  - `parking-import.js` — `parking-import-file-id`, `-seen`, `-last-read`, `-last-summary`, `-last-error` (backed up: `parking-import-enabled`, `-since`, `-ledger`; loaded by `loadParkingImportState`, called from `loadData`)
   - `train-status.js` — `confirmed-point-status-cache`, `last-seen-journey-state`, `last-seen-staff-match`
   - `screen-live.js` — `drive-banner-dismissed`, `live-target-strip-open`
   - `tickets.js` / `screen-home.js` — `bank-holidays-cache`
@@ -112,6 +114,7 @@ Each version gets its own service-worker cache and every CSS/JS URL carries `?v=
 - **stations.js** (11 KB) — `getCachedStationList`, `parseCsvLine`, `parseStationCsv`, `buildStationIndex`, `loadStationIndex`, `stationNameForCrs`, `stationCoordsForCrs`, `createStationPicker`
 - **google.js** (30 KB) — `ensureGoogleTokenClient`, `getGoogleAccessToken`, `requestGoogleTokenViaPopup`, `saveGoogleTokenCache`, `loadGoogleTokenCache`, `clearGoogleTokenCache`, `googleWorkerState`, `setGoogleWorkerState`, `fetchWithTimeout`, `acceptWorkerGoogleToken`, `fetchGoogleTokenFromWorker`, `maybeRefreshGoogleTokenFromWorker`, `connectGoogleViaWorker`, `disconnectGoogleViaWorker`, `googleWorkerStatusText`, `ensureDriveBackupFolder`, `buildBackupPayload`, `uploadBackupToDrive`, `pruneOldDriveBackups`, `attemptDriveBackup`, `driveBackupReasonText`, `backupNudgeShouldShow`, `mountBackupNudge`, `runBackupNudge`, `renderBackupNudge`, `syncGoogleCalendarEvent`, `deleteGoogleCalendarEvent`, `fireBuyDateChangeActions`
 - **transport-estimates.js** (14 KB) — `saveTransportShareEnabled`, `transportEstimatesToday`, `buildTransportEstimatesBody`, `seasonTicketEndKey`, `buildTransportTickets`, `buildTransportEstimatesFile`, `findTransportEstimatesFileId`, `uploadTransportEstimates`, `attemptTransportPublish`, `scheduleTransportPublish`, `flushTransportPublish`, `transportShareStatusText`
+- **parking-import.js** (15 KB) — `saveParkingImportSettings`, `saveParkingImportLedger`, `loadParkingImportState`, `parkingPenceOf`, `buildEmptyParkingFile`, `parkingFileProblem`, `parkingTotalsByDay`, `applyParkingTotals`, `parkingImportSummaryText`, `findParkingImportFileId`, `createParkingImportFile`, `attemptParkingImport`, `scheduleParkingImport`, `parkingImportedEntryFor`, `parkingImportStatusText`
 - **watch-sync.js** (16 KB) — `isValidLatLng`, `fetchDriveCheckNow`, `driveCheckIsSetUp`, `parseLatLng`, `fmtLatLng`, `buildDriveCheckPayload`, `defaultTrainAlertConfigFor`, `defaultTargetTrainsFor`, `pruneTargetTrainOverrides`, `nonTravelLabelFor`, `computeNonTravelDates`, `geofenceRadiusForCrs`, `buildWatchConfigBody`, `pushWatchConfig`, `schedulePushWatchConfig`, `flushWatchConfigPush`, `pushConfirmedTrain`, `pushManualConfirmedTrain`, `checkPendingConfirmation`
 - **confirm-train.js** (22 KB) — `checkLikelyTrain`, `checkLikelyArrival`, `computeLikelyTrainCheckDelay`, `runLikelyTrainCycle`, `startLikelyTrainChecks`, `stopLikelyTrainChecks`, `openConfirmTrain`
 - **journey-share.js** (19 KB) — `mountSilentConfirmBanner`, `renderSilentConfirmBanner`, `journeyTodayKey`, `getJourneyCopyState`, `getJourneyCopyStatus`, `setJourneyCopyStatus`, `isJourneyCopyDone`, `journeyIsClockTime`, `journeyClockMinutes`, `journeyMinutesToClock`, `findJourneyArrivalService`, `journeyPointDelay`, `journeyCarriedDelay`, `buildJourneyShareText`, `fetchJourneyArrivals`, `buildJourneyTextsForAllPm`, `bannerJourneyTarget`, `suggestionJourneyTarget`, `currentJourneyTextTarget`, `stopJourneyTextRefresh`, `noteJourneyTextTarget`, `refreshJourneyText`, `maybeCopyJourneyText`, `copyJourneyText`, `mountCatchupBanner`, `renderCatchupBanner`

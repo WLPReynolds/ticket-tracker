@@ -18,6 +18,7 @@
     'stations.js':             typeof createStationPicker !== 'undefined',
     'google.js':               typeof attemptDriveBackup !== 'undefined',
     'transport-estimates.js':  typeof scheduleTransportPublish !== 'undefined',
+    'parking-import.js':       typeof scheduleParkingImport !== 'undefined',
     'watch-sync.js':           typeof pushWatchConfig !== 'undefined',
     'confirm-train.js':        typeof openConfirmTrain !== 'undefined',
     'journey-share.js':        typeof mountCatchupBanner !== 'undefined',
@@ -83,6 +84,7 @@
   // delayed by a network call. Re-render only if new dates were filled in.
   syncBankHolidays().then((changed) => { if (changed) render(); })
     .finally(scheduleTransportPublish); // 2026-10-06 — after the sync, since bank holidays feed the estimate
+  scheduleParkingImport(); // 2026-11-27 — parking payments from Personal Finance; no download if the file hasn't changed
   railSyncMissingDates();
   ensureReasonCodes();
 
@@ -112,6 +114,7 @@
       maybeRefreshGoogleTokenFromWorker(); // 2026-10-04 — so the next backup on leaving has a token (replaces the 2026-10-02 quiet refresh)
       schedulePushWatchConfig(); // 2026-09-18 — foreground counts as "app open" for keeping the rolling non-travel window fresh
       scheduleTransportPublish(); // 2026-10-06 — e.g. a new payday since the app was last in front
+      scheduleParkingImport(); // 2026-11-27 — a parking payment may have been logged in Personal Finance while away
       // Same ordering as startup — the watch may have resolved
       // something while the phone was locked/backgrounded.
       checkPendingConfirmation().finally(startLikelyTrainChecks);

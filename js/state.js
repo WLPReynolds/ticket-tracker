@@ -366,6 +366,7 @@ async function loadData(){
   workStation = loadJSON('work-station', { code: 'WGN', name: 'Wigan North Western' });
   driveBackupEnabled = loadJSON('drive-backup-enabled', false);
   transportShareEnabled = loadJSON('transport-estimates-enabled', false); // 2026-10-06 — Share estimates with Personal Finance
+  loadParkingImportState(); // 2026-11-27 — Read parking from Personal Finance (parking-import.js)
   driveBackupDirty = loadJSON('drive-backup-dirty', false);
   lastDriveBackupTime = loadJSON('drive-backup-last-time', 0);
   driveBackupFolderId = loadJSON('drive-backup-folder-id', null);

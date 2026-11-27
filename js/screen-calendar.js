@@ -11,6 +11,9 @@ function openDayEditor(key){
   // the two ticks save when changed, Save stores a typed reason.
   const customValue = current && !PRESET_TAGS.includes(current.toUpperCase()) ? current : '';
   const parked = parkedDays[key] !== undefined;
+  // 2026-11-27 — a day set from Personal Finance (parking-import.js): the tick and
+  // cost are locked here; change or delete the payment in Personal Finance instead.
+  const importedEntry = parkingImportedEntryFor(key);
   const { overlay, close } = uiOpenSheet(dateLabel(d), `
       <div class="ui-sheet-sub">${weekend ? 'Weekend day — always skipped' : 'Add a reason this day doesn\'t count, or leave it blank for a normal travel day.'}</div>
       <div class="ui-chips" id="modal-chip-row">
@@ -24,11 +27,12 @@ function openDayEditor(key){
       ${!weekend ? `
       <div class="ui-gap-top">
         ${uiCheck('modal-override-checkbox', 'I still used the ticket this day', !!travelOverrides[key])}
-        ${uiCheck('modal-parked-checkbox', 'I parked today', parked)}
+        ${uiCheck('modal-parked-checkbox', 'I parked today', parked, importedEntry ? { extra: 'disabled' } : undefined)}
         <div class="ui-inline" id="modal-parked-cost-wrap"${parked ? '' : ' hidden'}>
           <label class="ui-inline-label" for="modal-parked-cost-input">Parking cost (£)</label>
-          <input type="number" inputmode="decimal" class="ui-input-short" id="modal-parked-cost-input" value="${(parked ? parkedDays[key] : parkingCost).toFixed(2)}" step="0.01" min="0" />
+          <input type="number" inputmode="decimal" class="ui-input-short" id="modal-parked-cost-input" value="${(parked ? parkedDays[key] : parkingCost).toFixed(2)}" step="0.01" min="0"${importedEntry ? ' disabled' : ''} />
         </div>
+        ${importedEntry ? '<div class="ui-field-help" id="modal-parked-source">Set from Personal Finance</div>' : ''}
       </div>` : ''}
       <div class="ui-sheet-actions"><button type="button" class="ui-btn-primary" id="modal-save-btn">Save</button></div>
   `, { id: 'day-editor-sheet' });

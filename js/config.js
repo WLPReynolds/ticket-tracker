@@ -16,7 +16,7 @@ const NAV_ICONS = {
 // to enable the Google Calendar sync feature. Safe to be public — a
 // client ID is not a secret, unlike an API key or password.
 const GOOGLE_CLIENT_ID = '130585374763-he5hjhlgigril8otmlcalp4llonefl4e.apps.googleusercontent.com';
-const APP_VERSION = 'v2026-11-25.19:03'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
+const APP_VERSION = 'v2026-11-27.19:35'; // bump this on every deploy — lets you confirm what's actually running vs what's on GitHub
 const DRIVE_BACKUP_THROTTLE_MS = 30 * 60 * 1000; // 30 minutes
 const DRIVE_BACKUP_FOLDER_NAME = 'Ticket Tracker Backups';
 const DRIVE_BACKUP_KEEP_COUNT = 2;
@@ -262,6 +262,10 @@ const CONFIRMED_CATCHUP_LOOKBACK_DAYS = 7; // matches the Worker's CONFIRMED_TRA
 // the Google token/status keys (the Worker holds the refresh token, so the
 // connection normally survives a restore), and the transport-estimates-*
 // bookkeeping (device-only, re-found or re-published).
+// 2026-11-27: added 'parking-import-enabled', '-since' and '-ledger' (Read
+// parking from Personal Finance). The ledger goes with 'parked-days' so a
+// restore keeps the two in step; the other parking-import-* keys are
+// device-only, like the transport-estimates ones.
 const BACKUP_KEYS = [
   'alternative-routes','bank-holidays-cache','confirmed-trains','debug-mode-enabled','delay-claims',
   'dismissed-parking-savings-periods','drive-backup-enabled','drive-backup-folder-id','drive-check-config',
@@ -269,7 +273,7 @@ const BACKUP_KEYS = [
   'gcal-enabled','gcal-event-id','gcal-pending-sync',
   'geofence-crewe-matches-wigan','geofence-radius-crewe','geofence-radius-wigan','geofence-wigan-matches-crewe',
   'home-station',
-  'parked-days','parking-budget-days','parking-savings-snapshots',
+  'parked-days','parking-budget-days','parking-import-enabled','parking-import-ledger','parking-import-since','parking-savings-snapshots',
   'payday-estimate-snapshots','poll-before-departure-min','poll-check-in-interval-min','preferred-google-email',
   'produce-claim-details-file','rail-perf-cache','rail-trains','smartcard-number',
   'ticket-comments','ticket-day-return-price','ticket-dismissed-months','ticket-fare-checked-year',

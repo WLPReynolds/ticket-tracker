@@ -40,7 +40,7 @@ Your Flexi Season Ticket gives you **{{USES}} day-passes** to use within a **{{P
 If you tagged a day but commuted anyway, tick **"I still used the ticket this day"** in that day's editor. Your note is kept and a pass is still deducted.
 
 ### Parking
-Tick **"I parked today"** in a day's editor to record what you actually paid (it defaults to your daily parking cost from **Settings → Costs**).
+Tick **"I parked today"** in a day's editor to record what you actually paid (it defaults to your daily parking cost from **Settings → Costs**). If you record parking in Personal Finance instead, the app can mark the day for you — see **Parking from Personal Finance** below.
 
 ### UK Bank Holidays
 The app checks the official gov.uk bank holiday feed and tags weekday public holidays as **BANK HOLIDAY** automatically.
@@ -211,6 +211,15 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 5. **Share now** sends the figures straight away (and signs in to Google if needed). Turning the setting off stops updates; the last file stays in Drive.
 6. The file also lists your season tickets — the ones bought in the last 90 days, with the date you bought them and the price paid, and the ones still to buy, on the evening before they start at today's price — so Personal Finance can show each purchase on your card. Single tickets aren't included.
 7. The Buy screen's **Bought on** date (today unless you change it) is the purchase date that's shared. Always buy the ticket first, then log it here.
+
+### Parking from Personal Finance
+1. On **More → Backup & restore**, tick **Read parking from Personal Finance**. This creates a small \`parking-transactions.json\` file in the \`Ticket Tracker Backups\` folder. Then, in Personal Finance, turn on **Share parking with the ticket tracker** and tick **Parking** on each parking payment.
+2. Whenever you open the app, it marks each of those days as parked at the amount you paid. Two payments on one day are added together. Use the payment's date in Personal Finance for the day you parked, even if you log it later.
+3. Only payments dated from the day you first turned this on are used — earlier days stay as you recorded them.
+4. A day you've already marked yourself is never changed.
+5. A day marked from Personal Finance shows **Set from Personal Finance** in its editor, with **I parked today** and the cost locked. To change it, edit the payment's amount or date in Personal Finance, or delete it, and the day here follows.
+6. A payment back-dated into a pay period that's already finished still marks the day, but that period's **Parking saved** figure stays as it was locked.
+7. **Read now** checks straight away (and signs in to Google if needed). Turning the setting off stops reading; days already marked stay as they are.
 
 ---
 
