@@ -216,8 +216,8 @@ Before you buy, the advisor checks your upcoming days (WFH, holidays and bank ho
 1. On **More → Backup & restore**, tick **Read parking from Personal Finance**. This creates a small \`parking-transactions.json\` file in the \`Ticket Tracker Backups\` folder. Then, in Personal Finance, turn on **Share parking with the ticket tracker** and tick **Parking** on each parking payment.
 2. Whenever you open the app, it marks each of those days as parked at the amount you paid. Two payments on one day are added together. Use the payment's date in Personal Finance for the day you parked, even if you log it later.
 3. Only payments dated from the day you first turned this on are used — earlier days stay as you recorded them.
-4. A day you've already marked yourself is never changed. A day marked from Personal Finance says so in its editor; if you change or untick it there, Personal Finance stops updating that day.
-5. Editing a payment's amount or date in Personal Finance, or deleting it, updates the day here — as long as you haven't changed that day by hand.
+4. A day you've already marked yourself is never changed.
+5. A day marked from Personal Finance shows **Set from Personal Finance** in its editor, with **I parked today** and the cost locked. To change it, edit the payment's amount or date in Personal Finance, or delete it, and the day here follows.
 6. A payment back-dated into a pay period that's already finished still marks the day, but that period's **Parking saved** figure stays as it was locked.
 7. **Read now** checks straight away (and signs in to Google if needed). Turning the setting off stops reading; days already marked stay as they are.
 

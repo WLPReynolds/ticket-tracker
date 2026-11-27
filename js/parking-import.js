@@ -19,6 +19,8 @@
 //   set that day itself (owned). When the file changes, only owned days are
 //   updated or removed, and only while parkedDays still holds exactly what
 //   this app put there. A day edited by hand stops being owned for good.
+//   (The day editor locks the tick and cost on owned days, so in practice
+//   that only matters if a restore ever leaves the two out of step.)
 // - Several payments on one day are added together.
 // - A file this app has just created (source.app 'ticket-tracker') holds
 //   nothing from Personal Finance yet, so it's never applied: that stops an
@@ -31,7 +33,7 @@
 // localStorage:
 //   'parking-import-enabled'      the setting — in BACKUP_KEYS
 //   'parking-import-since'        YYYY-MM-DD switch-on date — in BACKUP_KEYS
-//   'parking-import-ledger'       { days: { key: { pence, owned, accounts[] } } } — in BACKUP_KEYS,
+//   'parking-import-ledger'       { days: { key: { pence, owned } } } — in BACKUP_KEYS,
 //                                 because it must stay in step with 'parked-days'
 //   'parking-import-file-id'      Drive file id — device-only, re-found by name if lost
 //   'parking-import-seen'         Drive modifiedTime of the last file applied — device-only
@@ -89,7 +91,7 @@ function parkingFileProblem(file){
   return null;
 }
 
-// { key: { pence, accounts[] } } — total per day, from valid transactions dated
+// { key: { pence } } — total per day, from valid transactions dated
 // on or after `sinceKey`. Bad entries are skipped rather than failing the file.
 function parkingTotalsByDay(transactions, sinceKey){
   const totals = {};
@@ -98,10 +100,8 @@ function parkingTotalsByDay(transactions, sinceKey){
     if (typeof t.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(t.date)) return;
     if (!Number.isInteger(t.amountPence) || t.amountPence <= 0) return;
     if (sinceKey && t.date < sinceKey) return;
-    const day = totals[t.date] || (totals[t.date] = { pence: 0, accounts: [] });
-    day.pence += t.amountPence;
-    const acct = typeof t.account === 'string' ? t.account.trim() : '';
-    if (acct && !day.accounts.includes(acct)) day.accounts.push(acct);
+    const day = totals[t.date] || (totals[t.date] = { pence: 0 });
+    day.pence += t.amountPence; // `account` is ignored — the card isn't shown (Wayne, 27 Nov)
   });
   return totals;
 }
@@ -117,10 +117,10 @@ function applyParkingTotals(totals, parked, ledger){
     const entry = days[key];
     if (!entry){
       if (parked[key] !== undefined){
-        days[key] = { pence: want.pence, owned: false, accounts: want.accounts }; // marked by hand — never touched
+        days[key] = { pence: want.pence, owned: false }; // marked by hand — never touched
       } else {
         parked[key] = want.pence / 100;
-        days[key] = { pence: want.pence, owned: true, accounts: want.accounts };
+        days[key] = { pence: want.pence, owned: true };
         result.added++;
       }
       return;
@@ -136,7 +136,7 @@ function applyParkingTotals(totals, parked, ledger){
       }
     }
     entry.pence = want.pence;
-    entry.accounts = want.accounts;
+    delete entry.accounts; // dropped 2026-11-27 (an earlier build of the same day kept it)
   });
   Object.keys(days).forEach(key => {
     if (totals[key]) return;
@@ -282,7 +282,7 @@ function scheduleParkingImport(){
   parkingImportTimer = setTimeout(() => { parkingImportTimer = null; attemptParkingImport(); }, PARKING_IMPORT_DEBOUNCE_MS);
 }
 
-// For the day editor: the ledger entry if this app set the day from
+// For the day editor (locks the tick and cost): the ledger entry if this app set the day from
 // Personal Finance and it still holds that amount, otherwise null.
 function parkingImportedEntryFor(key){
   const entry = parkingImportLedger.days[key];
