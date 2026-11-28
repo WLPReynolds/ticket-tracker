@@ -627,20 +627,32 @@ function openParkingDays(startOffset){
 // Money details; stacks over it. Read-only. Same period range as Money (-12 to +24).
 // Future periods are the live projection, worked out exactly as estimateForPeriod does.
 // Locked periods use the locked totals: parking days come from the locked budget-day set
-// when it agrees with the locked count (otherwise worked out from today's tags), and the
-// ticket buy date is worked out again from today's data (the lock keeps no dates), so it
-// can move if days were re-tagged after payday. Day prices are the locked total divided
+// when it agrees with the locked count (otherwise worked out from today's tags). Ticket
+// days before today come from the purchases log (day bought); today on, the projected
+// buy day, which can move if days are re-tagged. Day prices are the locked total divided
 // by the locked count, so the running total lands on the locked figure.
 function setAsideBreakdown(today, offset){
   const period = getPayPeriodByOffset(today, offset);
   const startKey = fmtKey(period.start);
   const est = estimateForPeriod(today, offset);
   const states = computeStates(period.end);
+  const todayKey = fmtKey(today);
+  // Past tickets (2026-11-28): the buy-day projection only runs forward from the current
+  // ticket's start, so days before today take season tickets from the purchases log, on
+  // the day bought ("Bought on"; older entries without it use the day before the start,
+  // as the projection does). Today and later use the projected buy day.
+  const bought = new Set();
+  purchases.forEach(pu => {
+    if (!pu || pu.type === 'single' || !pu.date) return;
+    const k = /^\d{4}-\d{2}-\d{2}$/.test(pu.purchasedOn || '') ? pu.purchasedOn : fmtKey(addDays(parseKey(pu.date), -1));
+    bought.add(k);
+  });
   const ticketKeys = new Set();
   const liveParking = [];
   for (let d = new Date(period.start); d <= period.end; d = addDays(d, 1)){
     const key = fmtKey(d);
-    if (states[key] && states[key].buyFlag) ticketKeys.add(key);
+    if (key <= todayKey && bought.has(key)) ticketKeys.add(key);
+    if (key >= todayKey && states[key] && states[key].buyFlag) ticketKeys.add(key);
     const comment = (comments[key] || '').trim();
     if (!isWeekend(d) && (comment === '' || travelOverrides[key])) liveParking.push(key);
   }
@@ -700,7 +712,7 @@ function openSetAsideDays(startOffset){
         rows.push(`<div class="ui-data-row${cls}"><span class="ui-data-row-main">${dayNameShort(d)} ${dateLabelShort(d)}${what}${note}${todayTag}</span><span class="ui-data-row-value ui-num">${value}</span><span class="ui-data-row-value ui-data-row-run ui-num">${run}</span></div>`);
       }
       const e = b.est;
-      const moved = b.datesMoved ? '<div class="ui-field-help" style="margin:0 0 var(--space-3);">Some days have been re-tagged since payday, so the days above no longer add up to the figure set aside. The totals below are what was set aside.</div>' : '';
+      const moved = b.datesMoved ? '<div class="ui-field-help" style="margin:0 0 var(--space-3);">Things have changed since payday (days re-tagged, or a different number of tickets bought), so the days above no longer add up to the figure set aside. The totals below are what was set aside.</div>' : '';
       body = `<div class="ui-card ui-card-flush ui-data-list ui-parking-days"><div class="ui-data-row ui-data-head"><span class="ui-data-row-main">Day</span><span class="ui-data-row-value">Adds</span><span class="ui-data-row-value ui-data-row-run">Total</span></div>${rows.join('')}</div>
       ${moved}
       <div class="ui-card ui-card-flush ui-data-list">
