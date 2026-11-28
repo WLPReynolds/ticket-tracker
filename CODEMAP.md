@@ -48,7 +48,7 @@ Since the split, a syntax error stops only its own file, not the whole app — t
 13. `emergency-routes.js` — `checkEmergencyRoute`, `checkAllEmergencyRoutes`, `openAlternativeRoutesManager`.
 
 **Screens**
-14. `home-sections.js` — Home's building blocks (declarations only): the day strip and day panel (`homeDayInfo`, `homeBuildStrip`, `homeBuildDayPanel`), holiday line and countdown card, Your trains card (`homeJourney` picks the trains, `homeHasDeparted`, `homeTrainsInnerHtml`, `homeEnsureBoards`), money row and `openMoneyDetails`.
+14. `home-sections.js` — Home's building blocks (declarations only): the day strip and day panel (`homeDayInfo`, `homeBuildStrip`, `homeBuildDayPanel`), holiday line and countdown card, Your trains card (`homeJourney` picks the trains, `homeHasDeparted`, `homeTrainsInnerHtml`, `homeEnsureBoards`), money row and `openMoneyDetails`, with the Parking days and Set aside days pages it opens.
 15. `screen-home.js` — `render()`: the Home tab and bottom nav, assembled from the `home-sections.js` parts.
 15a. `screen-calendar.js` — `openDayEditor`, `openCalendarView` (the Month page).
 16. `screen-live.js` — `openLiveScreen`: the Live tab, drawn as a tab page (`.ui-tabpage`, nav still showing; stage 5).
@@ -119,7 +119,7 @@ Each version gets its own service-worker cache and every CSS/JS URL carries `?v=
 - **confirm-train.js** (22 KB) — `checkLikelyTrain`, `checkLikelyArrival`, `computeLikelyTrainCheckDelay`, `runLikelyTrainCycle`, `startLikelyTrainChecks`, `stopLikelyTrainChecks`, `openConfirmTrain`
 - **journey-share.js** (19 KB) — `mountSilentConfirmBanner`, `renderSilentConfirmBanner`, `journeyTodayKey`, `getJourneyCopyState`, `getJourneyCopyStatus`, `setJourneyCopyStatus`, `isJourneyCopyDone`, `journeyIsClockTime`, `journeyClockMinutes`, `journeyMinutesToClock`, `findJourneyArrivalService`, `journeyPointDelay`, `journeyCarriedDelay`, `buildJourneyShareText`, `fetchJourneyArrivals`, `buildJourneyTextsForAllPm`, `bannerJourneyTarget`, `suggestionJourneyTarget`, `currentJourneyTextTarget`, `stopJourneyTextRefresh`, `noteJourneyTextTarget`, `refreshJourneyText`, `maybeCopyJourneyText`, `copyJourneyText`, `mountCatchupBanner`, `renderCatchupBanner`
 - **emergency-routes.js** (18 KB) — `checkEmergencyRoute`, `checkAllEmergencyRoutes`, `openAlternativeRoutesManager`
-- **home-sections.js** — `homeDayCtx`, `homeDayInfo`, `homeBuildStrip`, `homeShiftWeek`, `homeBuildDayPanel`, `homeWireDayPanel`, `homeHolidayLineHtml`, `homeCountdownCardHtml`, `homeTrainsInnerHtml`, `homeWireTrains`, `paintTrainSuggestBanner` (the amber "Is this your train?" banner, fixed over every screen), `homeEnsureBoards`, `homeMoneyRowHtml`, `openMoneyDetails`
+- **home-sections.js** — `homeDayCtx`, `homeDayInfo`, `homeBuildStrip`, `homeShiftWeek`, `homeBuildDayPanel`, `homeWireDayPanel`, `homeHolidayLineHtml`, `homeCountdownCardHtml`, `homeTrainsInnerHtml`, `homeWireTrains`, `paintTrainSuggestBanner` (the amber "Is this your train?" banner, fixed over every screen), `homeEnsureBoards`, `homeMoneyRowHtml`, `openMoneyDetails`, `openParkingDays`, `setAsideBreakdown`, `openSetAsideDays`
 - **screen-home.js** — `render`
 - **screen-calendar.js** — `openDayEditor`, `openCalendarView`
 - **screen-live.js** (57 KB) — `openLiveScreen`

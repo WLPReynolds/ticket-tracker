@@ -481,13 +481,14 @@ function openMoneyDetails(){
     const label = `${dateLabelShort(period.start)} – ${dateLabelShort(period.end)}`;
     const nowLabel = offset === 0 ? ' · this period' : '';
 
-    let setAside;
+    let setAsideCard;
     if (offset < 0 && !paydayEstimateSnapshots[startKey]){
-      setAside = '<div class="ui-train-sub">No payday figure was kept for this period.</div>';
+      setAsideCard = `<div class="ui-card ui-block" style="margin-top:var(--space-2);"><div class="ui-block-title">Set aside on payday</div><div class="ui-train-sub">No payday figure was kept for this period.</div></div>`;
     } else {
       const est = estimateForPeriod(today, offset);
-      setAside = `<div class="ui-figure-value ui-figure-large ui-amber ui-num">£${est.total.toFixed(2)}</div>
-        <div class="ui-train-sub" style="margin-top:6px;">${est.ticketCount} ticket${est.ticketCount === 1 ? '' : 's'} (£${est.ticketCost.toFixed(2)}) + ${est.parkingDays} parking day${est.parkingDays === 1 ? '' : 's'} (£${est.parkingCost.toFixed(2)})</div>`;
+      setAsideCard = `<div class="ui-card ui-block ui-card-tap" id="money-setaside" role="button" tabindex="0" aria-label="How the set aside figure is made up" style="margin-top:var(--space-2);"><div class="ui-block-title ui-block-title-chev">Set aside on payday<span class="ui-row-chev">${UI_ICON_CHEV}</span></div>
+        <div class="ui-figure-value ui-figure-large ui-amber ui-num">£${est.total.toFixed(2)}</div>
+        <div class="ui-train-sub" style="margin-top:6px;">${est.ticketCount} ticket${est.ticketCount === 1 ? '' : 's'} (£${est.ticketCost.toFixed(2)}) + ${est.parkingDays} parking day${est.parkingDays === 1 ? '' : 's'} (£${est.parkingCost.toFixed(2)})</div></div>`;
     }
     let parking = '';
     if (offset <= 0){
@@ -505,7 +506,7 @@ function openMoneyDetails(){
         <div class="ui-period-label">Payday period ${label}${nowLabel}</div>
         <button type="button" class="ui-period-btn" id="money-next" aria-label="Later pay period" ${offset >= MAX ? 'disabled' : ''}>&#8250;</button>
       </div>
-      <div class="ui-card ui-block" style="margin-top:var(--space-2);"><div class="ui-block-title">Set aside on payday</div>${setAside}</div>
+      ${setAsideCard}
       ${parking}
       <div class="ui-card ui-block"><div class="ui-block-title">This year</div>
         <div class="ui-figure-value ui-figure-large ui-num">£${spent.toFixed(2)}</div>
@@ -515,6 +516,12 @@ function openMoneyDetails(){
     document.getElementById('money-prev').addEventListener('click', () => { offset = Math.max(MIN, offset - 1); draw(); });
     document.getElementById('money-next').addEventListener('click', () => { offset = Math.min(MAX, offset + 1); draw(); });
     document.getElementById('money-manage').addEventListener('click', () => openManagePurchases());
+    const setAsideEl = document.getElementById('money-setaside');
+    if (setAsideEl){
+      const openSA = () => openSetAsideDays(offset);
+      setAsideEl.addEventListener('click', openSA);
+      setAsideEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openSA(); } });
+    }
     const parkingCard = document.getElementById('money-parking');
     if (parkingCard){
       const open = () => openParkingDays(offset);
@@ -552,6 +559,10 @@ function openParkingDays(startOffset){
     const label = `${dateLabelShort(period.start)} – ${dateLabelShort(period.end)}`;
     const rows = [];
     let paid = 0;
+    // Running saved (2026-11-28): same rule as computeParkingSavingsForPeriod, day by day,
+    // against the period's locked budget days. Stops at today; future days show a dash.
+    const budgetSet = new Set(getOrLockParkingBudgetDays(period.start, period.end, today) || []);
+    let running = 0;
     for (let d = new Date(period.start); d <= period.end; d = addDays(d, 1)){
       const key = fmtKey(d);
       const weekend = isWeekend(d);
@@ -560,17 +571,26 @@ function openParkingDays(startOffset){
       let cls = '';
       if (weekend) cls = ' is-weekend';
       else if (nonTravel) cls = ' is-nontravel';
-      let value;
+      let value, run;
       if (key > todayKey){
         value = '<span class="ui-dim">–</span>';
+        run = '<span class="ui-dim">–</span>';
       } else {
-        const cost = parkedDays[key] !== undefined ? Number(parkedDays[key]) : 0;
+        const logged = parkedDays[key] !== undefined ? Number(parkedDays[key]) : undefined;
+        const cost = logged !== undefined ? logged : 0;
         paid += cost;
         value = cost > 0 ? `<span class="ui-amber">£${cost.toFixed(2)}</span>` : `£${cost.toFixed(2)}`;
+        const before = running;
+        if (!weekend){
+          if (budgetSet.has(key)) running += parkingCost - cost;
+          else if (logged !== undefined) running -= logged;
+        }
+        const runText = running >= 0 ? `£${running.toFixed(2)}` : `−£${Math.abs(running).toFixed(2)}`;
+        run = running === before ? `<span class="ui-dim">${runText}</span>` : `<span class="${running >= 0 ? 'ui-good' : 'ui-bad'}">${runText}</span>`;
       }
       const note = nonTravel ? ` <span class="ui-data-row-sub">${escapeHtml(comment)}</span>` : '';
       const todayTag = key === todayKey ? ' <span class="ui-data-row-sub">today</span>' : '';
-      rows.push(`<div class="ui-data-row${cls}"><span class="ui-data-row-main">${dayNameShort(d)} ${dateLabelShort(d)}${note}${todayTag}</span><span class="ui-data-row-value ui-num">${value}</span></div>`);
+      rows.push(`<div class="ui-data-row${cls}"><span class="ui-data-row-main">${dayNameShort(d)} ${dateLabelShort(d)}${note}${todayTag}</span><span class="ui-data-row-value ui-num">${value}</span><span class="ui-data-row-value ui-data-row-run ui-num">${run}</span></div>`);
     }
     const saved = homeParkingSavingsFor(today, offset);
     // Budget: the parking part of the "Set aside on payday" figure (locked snapshot for past periods).
@@ -584,7 +604,7 @@ function openParkingDays(startOffset){
         <div class="ui-period-label">Payday period ${label}${offset === 0 ? ' · this period' : ''}</div>
         <button type="button" class="ui-period-btn" id="parking-next" aria-label="Later pay period" ${offset >= 0 ? 'disabled' : ''}>&#8250;</button>
       </div>
-      <div class="ui-card ui-card-flush ui-data-list ui-parking-days">${rows.join('')}</div>
+      <div class="ui-card ui-card-flush ui-data-list ui-parking-days"><div class="ui-data-row ui-data-head"><span class="ui-data-row-main">Day</span><span class="ui-data-row-value">Paid</span><span class="ui-data-row-value ui-data-row-run">Saved</span></div>${rows.join('')}</div>
       <div class="ui-card ui-card-flush ui-data-list">
         <div class="ui-data-row"><span class="ui-data-row-main">Budget</span><span class="ui-data-row-value ui-num">${budget === null ? '<span class="ui-dim">–</span>' : '£' + budget.toFixed(2)}</span></div>
         <div class="ui-data-row"><span class="ui-data-row-main">${offset === 0 ? 'Paid so far' : 'Paid'}</span><span class="ui-data-row-value ui-num">£${paid.toFixed(2)}</span></div>
@@ -596,6 +616,106 @@ function openParkingDays(startOffset){
   const previousRefresh = homePageRefresh;
   homePageRefresh = () => { draw(); if (previousRefresh) previousRefresh(); };
   document.getElementById('parking-close-btn').addEventListener('click', () => {
+    homePageRefresh = previousRefresh;
+    overlay.remove();
+  });
+  draw();
+}
+
+// Set aside days (2026-11-28): every day of a pay period with what it adds to the
+// "Set aside on payday" figure and a running total. Opened from the Set aside card on
+// Money details; stacks over it. Read-only. Same period range as Money (-12 to +24).
+// Future periods are the live projection, worked out exactly as estimateForPeriod does.
+// Locked periods use the locked totals: parking days come from the locked budget-day set
+// when it agrees with the locked count (otherwise worked out from today's tags), and the
+// ticket buy date is worked out again from today's data (the lock keeps no dates), so it
+// can move if days were re-tagged after payday. Day prices are the locked total divided
+// by the locked count, so the running total lands on the locked figure.
+function setAsideBreakdown(today, offset){
+  const period = getPayPeriodByOffset(today, offset);
+  const startKey = fmtKey(period.start);
+  const est = estimateForPeriod(today, offset);
+  const states = computeStates(period.end);
+  const ticketKeys = new Set();
+  const liveParking = [];
+  for (let d = new Date(period.start); d <= period.end; d = addDays(d, 1)){
+    const key = fmtKey(d);
+    if (states[key] && states[key].buyFlag) ticketKeys.add(key);
+    const comment = (comments[key] || '').trim();
+    if (!isWeekend(d) && (comment === '' || travelOverrides[key])) liveParking.push(key);
+  }
+  let parkingKeys = liveParking;
+  const lockedSet = parkingBudgetDays[startKey];
+  if (est.locked && Array.isArray(lockedSet) && lockedSet.length === est.parkingDays) parkingKeys = lockedSet;
+  const ticketPrice = est.ticketCount ? est.ticketCost / est.ticketCount : lastKnownPrice;
+  const parkPrice = est.parkingDays ? est.parkingCost / est.parkingDays : parkingCost;
+  const datesMoved = est.locked && (ticketKeys.size !== est.ticketCount || parkingKeys.length !== est.parkingDays);
+  return { period, est, ticketKeys, parkingKeys: new Set(parkingKeys), ticketPrice, parkPrice, datesMoved };
+}
+
+function openSetAsideDays(startOffset){
+  const overlay = document.createElement('div');
+  overlay.className = 'ui-page';
+  overlay.innerHTML = `${uiPageBar('Set aside', { backId: 'setaside-close-btn', backLabel: 'Back to Money' })}<div class="ui-page-body" id="setaside-body"></div>`;
+  document.body.appendChild(overlay);
+  const today = new Date(state.today.getFullYear(), state.today.getMonth(), state.today.getDate());
+  const todayKey = fmtKey(today);
+  const MIN = -12, MAX = 24;
+  let offset = startOffset || 0;
+
+  function draw(){
+    const period = getPayPeriodByOffset(today, offset);
+    const startKey = fmtKey(period.start);
+    const label = `${dateLabelShort(period.start)} – ${dateLabelShort(period.end)}`;
+    const head = `<div class="ui-period">
+        <button type="button" class="ui-period-btn" id="setaside-prev" aria-label="Earlier pay period" ${offset <= MIN ? 'disabled' : ''}>&#8249;</button>
+        <div class="ui-period-label">Payday period ${label}${offset === 0 ? ' · this period' : ''}</div>
+        <button type="button" class="ui-period-btn" id="setaside-next" aria-label="Later pay period" ${offset >= MAX ? 'disabled' : ''}>&#8250;</button>
+      </div>`;
+    let body;
+    if (offset < 0 && !paydayEstimateSnapshots[startKey]){
+      body = '<div class="ui-card ui-block" style="margin-top:var(--space-2);"><div class="ui-train-sub">No payday figure was kept for this period.</div></div>';
+    } else {
+      const b = setAsideBreakdown(today, offset);
+      const rows = [];
+      let running = 0;
+      for (let d = new Date(period.start); d <= period.end; d = addDays(d, 1)){
+        const key = fmtKey(d);
+        const weekend = isWeekend(d);
+        const comment = (comments[key] || '').trim();
+        const nonTravel = !weekend && comment !== '' && !travelOverrides[key];
+        let cls = '';
+        if (weekend) cls = ' is-weekend';
+        else if (nonTravel) cls = ' is-nontravel';
+        const parts = [];
+        let add = 0;
+        if (b.ticketKeys.has(key)){ add += b.ticketPrice; parts.push('ticket'); }
+        if (b.parkingKeys.has(key)){ add += b.parkPrice; parts.push('parking'); }
+        running += add;
+        const what = parts.length ? ` <span class="ui-data-row-sub">${parts.join(' + ')}</span>` : '';
+        const note = nonTravel ? ` <span class="ui-data-row-sub">${escapeHtml(comment)}</span>` : '';
+        const todayTag = key === todayKey ? ' <span class="ui-data-row-sub">today</span>' : '';
+        const value = add > 0 ? `<span class="ui-amber">£${add.toFixed(2)}</span>` : '<span class="ui-dim">–</span>';
+        const run = add > 0 ? `£${running.toFixed(2)}` : `<span class="ui-dim">£${running.toFixed(2)}</span>`;
+        rows.push(`<div class="ui-data-row${cls}"><span class="ui-data-row-main">${dayNameShort(d)} ${dateLabelShort(d)}${what}${note}${todayTag}</span><span class="ui-data-row-value ui-num">${value}</span><span class="ui-data-row-value ui-data-row-run ui-num">${run}</span></div>`);
+      }
+      const e = b.est;
+      const moved = b.datesMoved ? '<div class="ui-field-help" style="margin:0 0 var(--space-3);">Some days have been re-tagged since payday, so the days above no longer add up to the figure set aside. The totals below are what was set aside.</div>' : '';
+      body = `<div class="ui-card ui-card-flush ui-data-list ui-parking-days"><div class="ui-data-row ui-data-head"><span class="ui-data-row-main">Day</span><span class="ui-data-row-value">Adds</span><span class="ui-data-row-value ui-data-row-run">Total</span></div>${rows.join('')}</div>
+      ${moved}
+      <div class="ui-card ui-card-flush ui-data-list">
+        <div class="ui-data-row"><span class="ui-data-row-main">Tickets <span class="ui-data-row-sub">${e.ticketCount} × £${b.ticketPrice.toFixed(2)}</span></span><span class="ui-data-row-value ui-num">£${e.ticketCost.toFixed(2)}</span></div>
+        <div class="ui-data-row"><span class="ui-data-row-main">Parking <span class="ui-data-row-sub">${e.parkingDays} × £${b.parkPrice.toFixed(2)}</span></span><span class="ui-data-row-value ui-num">£${e.parkingCost.toFixed(2)}</span></div>
+        <div class="ui-data-row"><span class="ui-data-row-main">Set aside</span><span class="ui-data-row-value ui-num ui-amber">£${e.total.toFixed(2)}</span></div>
+      </div>`;
+    }
+    document.getElementById('setaside-body').innerHTML = head + body;
+    document.getElementById('setaside-prev').addEventListener('click', () => { offset = Math.max(MIN, offset - 1); draw(); });
+    document.getElementById('setaside-next').addEventListener('click', () => { offset = Math.min(MAX, offset + 1); draw(); });
+  }
+  const previousRefresh = homePageRefresh;
+  homePageRefresh = () => { draw(); if (previousRefresh) previousRefresh(); };
+  document.getElementById('setaside-close-btn').addEventListener('click', () => {
     homePageRefresh = previousRefresh;
     overlay.remove();
   });
