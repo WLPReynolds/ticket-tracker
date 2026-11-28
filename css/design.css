@@ -833,3 +833,7 @@ header.top.ui-home-head{
 .ui-parking-days{ margin-top: var(--space-2); margin-bottom: var(--space-3); }
 .ui-parking-days .ui-data-row.is-weekend{ background: rgba(0,0,0,0.22); color: var(--ink-dim); }
 .ui-parking-days .ui-data-row.is-nontravel{ background: rgba(154,157,176,0.08); color: var(--ink-dim); }
+
+/* Running-total column (2026-11-28): Parking days and Set aside days pages. */
+.ui-data-row-run{ min-width: 5.5em; }
+.ui-data-row.ui-data-head{ min-height: 0; padding-top: var(--space-2); padding-bottom: var(--space-1); font-size: var(--fs-small); color: var(--ink-dim); }
